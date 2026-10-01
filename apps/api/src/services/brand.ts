@@ -16,17 +16,26 @@ const rulesInput = z.object({
   checklist: z.array(z.string().trim().min(1).max(200)).max(20),
 });
 
+/** When publishing starts before the hour, and how late the app will still publish by itself. */
+const publishingInput = z.object({
+  prepare_lead_minutes: z.number().int().min(12).max(1440),
+  late_tolerance_minutes: z.number().int().min(0).max(240),
+});
+
+const publishingOf = (brand: { publishing?: Record<string, number> }) => ({ prepare_lead_minutes: 30, late_tolerance_minutes: 15, ...(brand.publishing ?? {}) });
+
 export const brandPatch = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   timezone: z.string().refine(isValidZone, 'Not a valid IANA time zone').optional(),
   locale: z.string().trim().min(2).max(10).optional(),
   rules: rulesInput.partial().optional(),
+  publishing: publishingInput.partial().optional(),
 });
 
 export async function getBrand(ctx: Ctx, p: Principal, brandId: string) {
   const role = await authorize(ctx.db, p, brandId, 'brand.view');
   const b = await loadBrand(ctx.db, brandId);
-  return { id: b.id, name: b.name, timezone: b.timezone, locale: b.locale, paused: b.paused, rules: rulesOf(b), role };
+  return { id: b.id, name: b.name, timezone: b.timezone, locale: b.locale, paused: b.paused, rules: rulesOf(b), publishing: publishingOf(b as never), role };
 }
 
 export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: unknown) {
@@ -35,15 +44,16 @@ export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: 
     await authorize(db, p, brandId, 'brand.manage');
     const before = await loadBrand(db, brandId);
     const rules = { ...rulesOf(before), ...(input.rules ?? {}) };
+    const publishing = { ...publishingOf(before as never), ...(input.publishing ?? {}) };
     await db.query(
-      'update brand set name = coalesce($2, name), timezone = coalesce($3, timezone), locale = coalesce($4, locale), approval_rules = $5 where id = $1',
-      [brandId, input.name ?? null, input.timezone ?? null, input.locale ?? null, JSON.stringify(rules)],
+      'update brand set name = coalesce($2, name), timezone = coalesce($3, timezone), locale = coalesce($4, locale), approval_rules = $5, publishing = $6 where id = $1',
+      [brandId, input.name ?? null, input.timezone ?? null, input.locale ?? null, JSON.stringify(rules), JSON.stringify(publishing)],
     );
     const after = await loadBrand(db, brandId);
     await audit(db, p, brandId, 'brand.updated', 'brand', brandId,
-      { name: before.name, timezone: before.timezone, rules: rulesOf(before) },
-      { name: after.name, timezone: after.timezone, rules: rulesOf(after) });
-    return { id: after.id, name: after.name, timezone: after.timezone, locale: after.locale, paused: after.paused, rules: rulesOf(after) };
+      { name: before.name, timezone: before.timezone, rules: rulesOf(before), publishing: publishingOf(before as never) },
+      { name: after.name, timezone: after.timezone, rules: rulesOf(after), publishing: publishingOf(after as never) });
+    return { id: after.id, name: after.name, timezone: after.timezone, locale: after.locale, paused: after.paused, rules: rulesOf(after), publishing: publishingOf(after as never) };
   });
 }
 
@@ -128,12 +138,22 @@ export const accountInput = z.object({
   displayName: z.string().trim().min(1).max(200),
 });
 
+const SHOWN_DATA = ['audited', 'username', 'pageId', 'channelId', 'missingScopes', 'dataAccessExpiresAt'];
+
 export async function listAccounts(ctx: Ctx, p: Principal, brandId: string) {
   await authorize(ctx.db, p, brandId, 'brand.view');
-  return ctx.db.query(
-    'select id, network, external_id, display_name, status, created_at from social_account where brand_id = $1 order by network, display_name',
+  const rows = await ctx.db.query(
+    `select id, network, external_id, display_name, status, created_at, (token_encrypted is not null) as connected,
+       last_error, last_health_at, provider_data
+     from social_account where brand_id = $1 order by network, display_name`,
     [brandId],
   );
+  return rows.map(({ provider_data, ...a }) => ({
+    ...a,
+    // Whether publishing to it needs no person: connected, in good standing, and this server has the connector.
+    automated: a.connected && a.status === 'active' && ctx.connectors.connector(a.network) !== null,
+    details: Object.fromEntries(Object.entries(provider_data ?? {}).filter(([k]) => SHOWN_DATA.includes(k))),
+  }));
 }
 
 export async function addAccount(ctx: Ctx, p: Principal, brandId: string, raw: unknown) {

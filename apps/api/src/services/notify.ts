@@ -8,7 +8,12 @@ export type NotifyKind =
   | 'version.approved'
   | 'publication.due'
   | 'publication.reapproval'
-  | 'publication.on_hold';
+  | 'publication.on_hold'
+  | 'publication.published'
+  | 'publication.failed'
+  | 'publication.private'
+  | 'account.reconnect'
+  | 'account.expiring';
 
 /**
  * In-app notifications (and email if SMTP is configured, see background.ts).

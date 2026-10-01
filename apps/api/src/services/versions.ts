@@ -4,11 +4,13 @@ import { actorCols, authorize, type Principal } from '../auth/principal.js';
 import { mediaSource, type Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { fingerprintOf } from '../domain/fingerprint.js';
+import type { ProbeResult } from '../media/ffmpeg.js';
 import { badRequest, conflict, forbidden } from '../errors.js';
 import { audit } from './audit.js';
 import { loadVariant, loadVersion } from './loaders.js';
 import { notifyRoles } from './notify.js';
 import { refreshPieceState } from './pieces.js';
+import { probeMeta } from './renditions.js';
 
 const MAX_BYTES = 4 * 1024 ** 3;
 const UPLOAD_TTL_SEC = 3600;
@@ -81,7 +83,7 @@ interface Resolved {
   upload: { id: string; storage_key: string; name: string; mime: string; bytes: number; sha256: string };
   kind: AssetKind;
   position: number;
-  meta: { width: number | null; height: number | null; durationMs: number | null; fps: number | null };
+  meta: ProbeResult;
 }
 
 /** Which files each variant format accepts. */
@@ -168,11 +170,13 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
        where variant_id = $1 and review_state in ('in_review','changes_requested','approved')`,
       [variantId],
     );
+    // Anything not yet out is held. One a network is already holding is taken down by the worker, starting now; one that is
+    // being published this very moment cannot be stopped and goes out as approved.
     const held = await db.query(
-      `update publication set status = 'on_hold', updated_at = now(),
-         hold_reason = 'A new version is awaiting approval'
-       where variant_id = $1 and status in ('scheduled','awaiting_reapproval') returning id`,
-      [variantId],
+      `update publication set status = 'on_hold', updated_at = now(), hold_reason = 'A new version is awaiting approval',
+         next_run_at = case when native_scheduled then $2::timestamptz else null end
+       where variant_id = $1 and status in ('scheduled','awaiting_reapproval','preparing','ready') returning id`,
+      [variantId, ctx.now()],
     );
 
     const version = (await db.one(
@@ -182,10 +186,10 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
     ))!;
     for (const r of resolved) {
       await db.query(
-        `insert into asset (version_id, kind, position, storage_key, name, mime, width, height, duration_ms, fps, bytes, sha256)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        `insert into asset (version_id, kind, position, storage_key, name, mime, width, height, duration_ms, fps, bytes, sha256, meta)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [version.id, r.kind, r.position, r.upload.storage_key, r.upload.name, r.upload.mime, r.meta.width, r.meta.height,
-          r.meta.durationMs, r.meta.fps, r.upload.bytes, r.upload.sha256],
+          r.meta.durationMs, r.meta.fps, r.upload.bytes, r.upload.sha256, JSON.stringify(probeMeta(r.meta))],
       );
     }
     await db.query('update upload set consumed_at = now() where id = any($1)', [ids]);

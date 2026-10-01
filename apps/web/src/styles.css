@@ -113,7 +113,7 @@ textarea { resize: vertical; min-height: 84px; }
 .notice-info { background: var(--accent-soft); color: var(--accent); }
 
 .chip { display: inline-block; padding: .1rem .55rem; border-radius: 999px; font-size: .75rem; font-weight: 600; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
-.chip-in_review, .chip-scheduled { background: var(--accent-soft); color: var(--accent); }
+.chip-in_review, .chip-scheduled, .chip-preparing, .chip-ready, .chip-publishing { background: var(--accent-soft); color: var(--accent); }
 .chip-approved, .chip-published { background: var(--good-soft); color: var(--good); }
 .chip-changes_requested, .chip-on_hold, .chip-awaiting_reapproval { background: var(--warn-soft); color: var(--warn); }
 .chip-failed { background: var(--bad-soft); color: var(--bad); }
@@ -197,6 +197,9 @@ th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color:
 .cal-item { display: block; font-size: .75rem; padding: .15rem .35rem; border-radius: 5px; background: var(--accent-soft); color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: grab; border: 0; text-align: left; width: 100%; font: inherit; font-size: .75rem; }
 .cal-item.published { background: var(--good-soft); color: var(--good); cursor: default; }
 .cal-item.on_hold, .cal-item.awaiting_reapproval { background: var(--warn-soft); color: var(--warn); }
+.cal-item.failed { background: var(--bad-soft); color: var(--bad); }
+.cal-item.preparing, .cal-item.ready, .cal-item.publishing { background: var(--accent-soft); color: var(--accent); cursor: default; }
+.cal-item.published.private { background: var(--warn-soft); color: var(--warn); }
 .cal-slot { font-size: .75rem; padding: .15rem .35rem; border-radius: 5px; border: 1px dashed var(--muted); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-slot.past { opacity: .5; }
 
@@ -221,3 +224,22 @@ th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color:
   .cal-item span.t { display: none; }
   h1 { font-size: 1.25rem; }
 }
+
+/* per-network text */
+.counters { gap: .75rem; }
+.counter { font-size: .8125rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.counter[data-over] { color: var(--bad); font-weight: 700; }
+.preview-text { border: 1px solid var(--border); border-radius: 8px; padding: .55rem .7rem; background: var(--surface-2, var(--surface)); white-space: pre-wrap; overflow-wrap: anywhere; }
+.preview-more { color: var(--muted); font-weight: 600; }
+.issues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
+.issues li { padding: .45rem .65rem; border-radius: 8px; font-size: .9rem; }
+.issue-error { background: var(--bad-soft); color: var(--bad); }
+.issue-warn { background: var(--warn-soft); color: var(--warn); }
+
+/* safe zones: what a network's own interface covers */
+.safe-zone { position: absolute; inset: 0; pointer-events: none; }
+.safe-band { position: absolute; background: rgb(0 0 0 / 45%); }
+.safe-frame { position: absolute; border: 1px dashed rgb(255 255 255 / 80%); }
+.safe-label { position: absolute; top: 4px; left: 6px; font-size: 11px; line-height: 1.2; color: #fff; background: rgb(0 0 0 / 60%); padding: 2px 5px; border-radius: 4px; }
+
+.auto-dot { opacity: .75; }

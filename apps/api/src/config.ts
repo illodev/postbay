@@ -27,11 +27,37 @@ const schema = z.object({
   MAIL_FROM: z.string().default('Estudio <no-reply@localhost>'),
   AUTH_DEV_LOGIN: bool,
   WEB_DIST: z.string().optional(),
+
+  // Connected accounts (phase 2)
+  /** Master key for the stored network tokens, 32 bytes in base64: openssl rand -base64 32 */
+  TOKEN_KEY: z.string().optional(),
+  META_APP_ID: z.string().optional(),
+  META_APP_SECRET: z.string().optional(),
+  META_GRAPH_VERSION: z.string().default('v23.0'),
+  META_GRAPH_URL: z.string().default('https://graph.facebook.com'),
+  META_OAUTH_URL: z.string().default('https://www.facebook.com'),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_OAUTH_URL: z.string().default('https://accounts.google.com/o/oauth2/v2/auth'),
+  GOOGLE_TOKEN_URL: z.string().default('https://oauth2.googleapis.com/token'),
+  YOUTUBE_API_URL: z.string().default('https://www.googleapis.com'),
+  /** How long the files handed to a network by URL stay downloadable. */
+  PUBLIC_MEDIA_TTL_SECONDS: z.coerce.number().int().min(300).default(6 * 3600),
+  // Workers (phase 2)
+  /** Run the queue workers inside the API process. Turn off when a separate worker process runs them. */
+  RUN_WORKERS: z.enum(['true', 'false', '1', '0', '']).default('true').transform((v) => v !== 'false' && v !== '0'),
+  /** How often the worker looks for publications that need attention. */
+  WORKER_SWEEP_SECONDS: z.coerce.number().int().min(1).default(15),
   // Extra origins the browser may load media from or upload to (space separated), e.g. a bucket host.
   MEDIA_ORIGINS: z.string().default(''),
 });
 
-export type Config = z.infer<typeof schema> & { devLogin: boolean; isProd: boolean };
+export type Config = z.infer<typeof schema> & {
+  devLogin: boolean;
+  isProd: boolean;
+  metaEnabled: boolean;
+  googleEnabled: boolean;
+};
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const parsed = schema.safeParse(env);
@@ -45,5 +71,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     throw new Error('Invalid configuration: STORAGE_DRIVER=s3 requires S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY');
   }
   // Development sign-in never applies in production, even if someone turns it on.
-  return { ...c, isProd, devLogin: c.AUTH_DEV_LOGIN && !isProd };
+  if (c.TOKEN_KEY && Buffer.from(c.TOKEN_KEY, 'base64').length !== 32) {
+    throw new Error('Invalid configuration: TOKEN_KEY must be 32 bytes in base64 (openssl rand -base64 32)');
+  }
+  const metaEnabled = !!(c.META_APP_ID && c.META_APP_SECRET);
+  const googleEnabled = !!(c.GOOGLE_CLIENT_ID && c.GOOGLE_CLIENT_SECRET);
+  if ((metaEnabled || googleEnabled) && !c.TOKEN_KEY) {
+    throw new Error('Invalid configuration: connecting accounts needs TOKEN_KEY, the key that seals their tokens');
+  }
+  return { ...c, isProd, devLogin: c.AUTH_DEV_LOGIN && !isProd, metaEnabled, googleEnabled };
 }

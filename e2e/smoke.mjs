@@ -232,7 +232,7 @@ await step('approver: schedules the approved version five days out', async () =>
   await d.getByLabel(/Date and time/).fill(`${day}T19:00`);
   await d.getByLabel('Text').fill('Our spring menu is here. Which one are you trying first?');
   await d.getByRole('button', { name: 'Schedule', exact: true }).click();
-  await p.getByText('Scheduled', { exact: true }).first().waitFor();
+  await p.getByText('Scheduled: someone has to publish it').waitFor();
 });
 
 await step('approver: the scheduled post shows on the piece page', async () => {

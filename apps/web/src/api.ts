@@ -32,7 +32,8 @@ export const api = {
 export type Role = 'admin' | 'approver' | 'reviewer' | 'producer' | 'reader';
 export type PieceState = 'draft' | 'in_review' | 'changes_requested' | 'approved' | 'discarded';
 export type VersionState = 'in_review' | 'changes_requested' | 'approved' | 'superseded' | 'discarded';
-export type PublicationStatus = 'scheduled' | 'awaiting_reapproval' | 'on_hold' | 'published' | 'cancelled' | 'failed';
+export type PublicationStatus = 'scheduled' | 'awaiting_reapproval' | 'on_hold' | 'preparing' | 'ready' | 'publishing' | 'published' | 'cancelled' | 'failed';
+export type Visibility = 'public' | 'private' | 'processing' | 'scheduled' | 'unknown';
 
 export interface Me {
   user: { id: string; email: string; name: string | null };
@@ -47,6 +48,7 @@ export interface BrandSettings {
   paused: boolean;
   role: Role;
   rules: { required_approvals: number; reapprove_on_move: boolean; checklist: string[] };
+  publishing: { prepare_lead_minutes: number; late_tolerance_minutes: number };
 }
 
 export interface PieceSummary {
@@ -92,6 +94,12 @@ export interface PublicationRow {
   version_number: number;
   variant_id: string;
   social_account_id: string;
+  manual: boolean;
+  visibility: Visibility | null;
+  placement: string | null;
+  native_scheduled: boolean;
+  last_error: string | null;
+  last_error_class: string | null;
 }
 
 export interface PieceDetail {
@@ -185,7 +193,80 @@ export interface Account {
   network: string;
   external_id: string;
   display_name: string;
-  status: string;
+  status: 'active' | 'reconnect_required' | 'manual';
+  connected: boolean;
+  /** The app publishes to it by itself. */
+  automated: boolean;
+  last_error: string | null;
+  last_health_at: string | null;
+  details: { audited?: boolean; username?: string; missingScopes?: string[]; dataAccessExpiresAt?: string };
+}
+
+export interface PlacementSpec {
+  id: string;
+  label: string;
+  accepts: ('video' | 'image')[];
+  items: { min: number; max: number };
+  aspect?: { min: number; max: number };
+  recommendedAspect?: { min: number; max: number };
+  durationSec?: { min: number; max: number };
+  safeZones?: { top: number; bottom: number; left: number; right: number };
+  nativeScheduling: boolean;
+}
+
+export interface Capabilities {
+  network: string;
+  placements: PlacementSpec[];
+  text: { maxChars: number; maxHashtags?: number; maxMentions?: number; previewCutoff?: number; firstComment: boolean; firstCommentMaxChars?: number };
+  aiLabel: boolean;
+  nativeScheduling: { minLeadMinutes: number; maxLeadDays: number } | null;
+}
+
+export interface Integrations {
+  providers: { id: 'meta' | 'google'; label: string; networks: string[]; configured: boolean }[];
+  capabilities: Record<string, Capabilities>;
+}
+
+export interface Issue {
+  severity: 'error' | 'warning';
+  code: string;
+  message: string;
+  field?: string;
+}
+
+export interface Plan {
+  automated: boolean;
+  placement: string | null;
+  placements: { id: string; label: string }[];
+  issues: Issue[];
+  manualReason?: string;
+}
+
+export interface Attempt {
+  id: number;
+  step: 'prepare' | 'publish' | 'verify' | 'discard';
+  attempt: number;
+  started_at: string;
+  outcome: 'ok' | 'pending' | 'error';
+  error_class: string | null;
+  http_status: number | null;
+  detail: { message?: string; visibility?: string; note?: string; retryAfterSec?: number };
+}
+
+export interface Candidate {
+  key: string;
+  network: string;
+  externalId: string;
+  displayName: string;
+  providerData: { missingScopes?: string[]; username?: string };
+  existing: { id: string; status: string } | null;
+}
+
+export interface PendingConnection {
+  id: string;
+  provider: 'meta' | 'google';
+  candidates: Candidate[];
+  reconnect: { id: string; network: string; display_name: string; status: string } | null;
 }
 
 export interface CalendarData {

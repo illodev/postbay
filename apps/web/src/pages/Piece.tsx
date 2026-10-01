@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type PieceDetail, type PublicationRow, type Variant, type BrandSettings } from '../api';
-import { MarkPublishedDialog, MoveDialog, PackDialog, RescheduleDialog } from '../components/publications';
+import { AttemptsDialog, MarkPublishedDialog, MoveDialog, PackDialog, PublicationBadges, PublicationNote, RescheduleDialog, RetryDialog } from '../components/publications';
 import { UploadDialog } from '../components/UploadDialog';
 import { Chip, Dialog, Empty, ErrorBox, Field, Spinner, useToast, errorMessage } from '../components/ui';
 import { fmtDateTime, fmtDay, fmtShort, NETWORK_LABEL } from '../lib/format';
@@ -109,9 +109,15 @@ function PublicationsTable({ piece, brand, zone }: { piece: PieceDetail; brand: 
   const [resched, setResched] = useState<PublicationRow | null>(null);
   const [mark, setMark] = useState<string | null>(null);
   const [pack, setPack] = useState<string | null>(null);
+  const [attempts, setAttempts] = useState<string | null>(null);
+  const [retry, setRetry] = useState<PublicationRow | null>(null);
   const act = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: 'cancel' | 'confirm' }) => api.post(`/api/publications/${id}/${action}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['piece', piece.id] }),
+    mutationFn: ({ id, action }: { id: string; action: 'cancel' | 'confirm' | 'hand-over' | 'recheck' }) => api.post(`/api/publications/${id}/${action}`),
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ['piece', piece.id] });
+      if (v.action === 'hand-over') toast('Handed over: it is on the Publish page at the time');
+      if (v.action === 'recheck') toast('Checking again');
+    },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
   if (piece.publications.length === 0) return null;
@@ -131,26 +137,36 @@ function PublicationsTable({ piece, brand, zone }: { piece: PieceDetail; brand: 
                   <td>{fmtDateTime(p.scheduled_at, zone)}</td>
                   <td>v{p.version_number}</td>
                   <td>
-                    <Chip state={p.status} />
+                    <div className="row" style={{ gap: '.3rem' }}>
+                      <Chip state={p.status} />
+                      <PublicationBadges pub={p} />
+                    </div>
                     {p.hold_reason && <div className="muted small">{p.hold_reason}</div>}
+                    <PublicationNote pub={p} />
                     {p.url && <div><a href={p.url} target="_blank" rel="noreferrer">Open post</a></div>}
                   </td>
                   <td>
-                    {can('schedule') && (
-                      <div className="row">
-                        {p.status === 'scheduled' && (
-                          <>
-                            <button className="btn btn-small" onClick={() => setPack(p.id)}>Publish…</button>
-                            <button className="btn btn-small" onClick={() => setMove(p)}>Move</button>
-                          </>
-                        )}
-                        {p.status === 'awaiting_reapproval' && <button className="btn btn-small" onClick={() => act.mutate({ id: p.id, action: 'confirm' })} title={`Someone other than you has to confirm it (you are ${me.user.email})`}>Confirm</button>}
-                        {p.status === 'on_hold' && <button className="btn btn-small" onClick={() => setResched(p)}>Reschedule…</button>}
-                        {['scheduled', 'awaiting_reapproval', 'on_hold'].includes(p.status) && (
-                          <button className="btn btn-small btn-danger" onClick={() => confirm('Cancel this publication?') && act.mutate({ id: p.id, action: 'cancel' })}>Cancel</button>
-                        )}
-                      </div>
-                    )}
+                    <div className="row">
+                      {!p.manual && <button className="btn btn-small" onClick={() => setAttempts(p.id)}>History</button>}
+                      {can('schedule') && (
+                        <>
+                          {p.status === 'scheduled' && p.manual && <button className="btn btn-small" onClick={() => setPack(p.id)}>Publish…</button>}
+                          {p.status === 'scheduled' && <button className="btn btn-small" onClick={() => setMove(p)}>Move</button>}
+                          {p.status === 'failed' && !p.manual && <button className="btn btn-small btn-primary" onClick={() => setRetry(p)}>Try again…</button>}
+                          {p.status === 'published' && !p.manual && p.visibility === 'private' && (
+                            <button className="btn btn-small" onClick={() => act.mutate({ id: p.id, action: 'recheck' })} title="Look at the post again, for example after the project passed its audit and you made it public">Check again</button>
+                          )}
+                          {!p.manual && (p.status === 'failed' || (p.status === 'scheduled' && !p.native_scheduled)) && (
+                            <button className="btn btn-small" onClick={() => confirm('Publish this one by hand instead? The app will stop trying.') && act.mutate({ id: p.id, action: 'hand-over' })}>I'll do it by hand</button>
+                          )}
+                          {p.status === 'awaiting_reapproval' && <button className="btn btn-small" onClick={() => act.mutate({ id: p.id, action: 'confirm' })} title={`Someone other than you has to confirm it (you are ${me.user.email})`}>Confirm</button>}
+                          {p.status === 'on_hold' && <button className="btn btn-small" onClick={() => setResched(p)}>Reschedule…</button>}
+                          {['scheduled', 'awaiting_reapproval', 'on_hold', 'preparing', 'ready', 'failed'].includes(p.status) && (
+                            <button className="btn btn-small btn-danger" onClick={() => confirm(p.native_scheduled ? 'Cancel this publication? It is taken down from the network too.' : 'Cancel this publication?') && act.mutate({ id: p.id, action: 'cancel' })}>Cancel</button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -158,7 +174,7 @@ function PublicationsTable({ piece, brand, zone }: { piece: PieceDetail; brand: 
           </tbody>
         </table>
       </div>
-      {move && <MoveDialog pub={move} zone={zone} needsConfirmation={!!brand?.rules.reapprove_on_move} onClose={() => setMove(null)} />}
+      {move && <MoveDialog pub={move} brandId={piece.brand_id} zone={zone} needsConfirmation={!!brand?.rules.reapprove_on_move} onClose={() => setMove(null)} />}
       {resched && (
         <RescheduleDialog
           pub={resched}
@@ -169,6 +185,8 @@ function PublicationsTable({ piece, brand, zone }: { piece: PieceDetail; brand: 
       )}
       {pack && <PackDialog pubId={pack} zone={zone} onClose={() => setPack(null)} onPublished={() => { setMark(pack); setPack(null); }} />}
       {mark && <MarkPublishedDialog pubId={mark} onClose={() => setMark(null)} />}
+      {attempts && <AttemptsDialog pubId={attempts} zone={zone} onClose={() => setAttempts(null)} />}
+      {retry && <RetryDialog pub={retry} zone={zone} onClose={() => setRetry(null)} />}
     </section>
   );
 }

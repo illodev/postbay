@@ -17,7 +17,8 @@
     "test": "npm run test -w @estudio/api",
     "bootstrap": "npm run bootstrap -w @estudio/api --",
     "e2e:assets": "sh e2e/make-assets.sh",
-    "e2e": "node e2e/smoke.mjs"
+    "e2e": "node e2e/smoke.mjs",
+    "e2e:phase2": "sh e2e/phase2.sh"
   },
   "devDependencies": {
     "playwright-core": "^1.63.0"

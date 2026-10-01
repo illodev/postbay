@@ -9,6 +9,11 @@ const SUBJECTS: Record<string, string> = {
   'publication.due': 'A publication is due: it needs to go out now',
   'publication.reapproval': 'A change to a scheduled publication needs your confirmation',
   'publication.on_hold': 'Scheduled publications were put on hold by a new version',
+  'publication.published': 'A post went out',
+  'publication.failed': 'A post could not be published',
+  'publication.private': 'A video was uploaded but is private: a person has to make it public',
+  'account.reconnect': 'An account needs to be reconnected',
+  'account.expiring': 'An account connection is about to expire',
 };
 
 /** Emails the notifications that have not been sent yet. Without SMTP they end up in the server log. */
@@ -49,7 +54,7 @@ export async function notifyDuePublications(ctx: Ctx): Promise<number> {
     const due = await db.query(
       `update publication pub set due_notified_at = now()
        from variant v join piece p on p.id = v.piece_id join brand b on b.id = p.brand_id
-       where v.id = pub.variant_id and pub.status = 'scheduled' and pub.scheduled_at <= now()
+       where v.id = pub.variant_id and pub.manual and pub.status = 'scheduled' and pub.scheduled_at <= now()
          and pub.due_notified_at is null and not b.paused
        returning pub.id, p.brand_id, p.id as piece_id`,
     );

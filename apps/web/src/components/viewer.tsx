@@ -154,6 +154,33 @@ export function PdfCanvas({ url, page, onPages }: { url: string; page: number; o
   return <canvas ref={canvas} aria-label={`PDF page ${page}`} style={{ background: '#fff' }} />;
 }
 
+// ───────────────────────────── safe zones ─────────────────────────────
+
+/** Fractions of the frame that a network's own interface (name, caption, buttons) covers. */
+export interface SafeZone {
+  label: string;
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/** Shades the areas a network covers with its interface. Drawn over the picture and never takes a click. */
+export function SafeZoneOverlay({ zone }: { zone: SafeZone | null | undefined }) {
+  if (!zone) return null;
+  const pct = (n: number) => `${n * 100}%`;
+  return (
+    <div className="safe-zone" aria-hidden="true" data-testid="safe-zone">
+      {zone.top > 0 && <div className="safe-band" style={{ top: 0, left: 0, right: 0, height: pct(zone.top) }} />}
+      {zone.bottom > 0 && <div className="safe-band" style={{ bottom: 0, left: 0, right: 0, height: pct(zone.bottom) }} />}
+      {zone.left > 0 && <div className="safe-band" style={{ top: pct(zone.top), bottom: pct(zone.bottom), left: 0, width: pct(zone.left) }} />}
+      {zone.right > 0 && <div className="safe-band" style={{ top: pct(zone.top), bottom: pct(zone.bottom), right: 0, width: pct(zone.right) }} />}
+      <div className="safe-frame" style={{ top: pct(zone.top), bottom: pct(zone.bottom), left: pct(zone.left), right: pct(zone.right) }} />
+      <span className="safe-label">{zone.label}</span>
+    </div>
+  );
+}
+
 // ───────────────────────────── video player ─────────────────────────────
 
 interface VideoProps {
@@ -167,9 +194,10 @@ interface VideoProps {
   focus: string | null;
   onFocus: (id: string) => void;
   jump: Jump | null;
+  safeZone?: SafeZone | null;
 }
 
-function VideoPlayer({ asset, poster, threads, firstVideoPosition, draft, onDraft, canAnnotate, focus, onFocus, jump }: VideoProps) {
+function VideoPlayer({ asset, poster, threads, firstVideoPosition, draft, onDraft, canAnnotate, focus, onFocus, jump, safeZone }: VideoProps) {
   const ref = useRef<HTMLVideoElement>(null);
   const [t, setT] = useState(0);
   const [dur, setDur] = useState(asset.duration_ms ? asset.duration_ms / 1000 : 0);
@@ -241,7 +269,10 @@ function VideoPlayer({ asset, poster, threads, firstVideoPosition, draft, onDraf
       aria-label="Video player. Press comma and full stop to step one frame."
     >
       <div className="stage-media">
-        <video ref={ref} src={asset.url} poster={poster} controls playsInline preload="metadata" />
+        <div className="stage-inner">
+          <video ref={ref} src={asset.url} poster={poster} controls playsInline preload="metadata" />
+          <SafeZoneOverlay zone={safeZone} />
+        </div>
       </div>
       <div
         className="timeline"
@@ -305,6 +336,7 @@ export interface StageProps {
   focus: string | null;
   onFocus: (id: string) => void;
   jump: Jump | null;
+  safeZone?: SafeZone | null;
 }
 
 /** Shows a version's pages one at a time: a video, an image, a carousel item or a PDF page, with its comments on top. */
@@ -360,11 +392,13 @@ export function Stage(p: StageProps) {
           focus={p.focus}
           onFocus={p.onFocus}
           jump={p.jump}
+          safeZone={p.safeZone}
         />
       ) : current ? (
         <div className="stage-media">
           <div className="stage-inner">
             <img src={current.url} alt={current.name} draggable={false} />
+            <SafeZoneOverlay zone={p.safeZone} />
             <RegionLayer {...regionProps} />
           </div>
         </div>

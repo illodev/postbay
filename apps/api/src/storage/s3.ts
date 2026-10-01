@@ -1,3 +1,6 @@
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import type { Readable } from 'node:stream';
 import {
   GetObjectCommand,
   HeadObjectCommand,
@@ -70,6 +73,18 @@ export class S3Storage implements Storage {
 
   async put(key: string, data: Buffer, mime: string): Promise<void> {
     await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: data, ContentType: mime }));
+  }
+
+  async putFile(key: string, source: string, mime: string): Promise<void> {
+    const { size } = await stat(source);
+    await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: createReadStream(source), ContentLength: size, ContentType: mime }));
+  }
+
+  async open(key: string, start = 0): Promise<{ stream: Readable; size: number }> {
+    const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+    const size = Number(head.ContentLength ?? 0);
+    const out = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key, ...(start > 0 ? { Range: `bytes=${start}-` } : {}) }));
+    return { stream: out.Body as Readable, size };
   }
 
   async get(key: string): Promise<Buffer | null> {

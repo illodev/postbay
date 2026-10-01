@@ -7,6 +7,7 @@ import * as approvals from '../services/approvals.js';
 import * as authSvc from '../services/auth.js';
 import * as brand from '../services/brand.js';
 import * as comments from '../services/comments.js';
+import * as connections from '../services/connections.js';
 import * as pieces from '../services/pieces.js';
 import * as pubs from '../services/publications.js';
 import * as versions from '../services/versions.js';
@@ -86,6 +87,47 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.delete('/api/brands/:brandId/accounts/:accountId', async (req) => {
     const { brandId, accountId } = params(req, 'brandId', 'accountId');
     return brand.removeAccount(ctx, P(req), brandId, accountId);
+  });
+
+  // ───────────────────────────── connecting accounts ─────────────────────────────
+
+  app.get('/api/brands/:brandId/integrations', async (req) => connections.integrations(ctx, P(req), params(req, 'brandId').brandId));
+  app.post('/api/brands/:brandId/connections/:provider', async (req) => {
+    const { brandId } = params(req, 'brandId');
+    const provider = z.enum(['meta', 'google']).parse((req.params as { provider: string }).provider);
+    const { reconnectAccountId } = z.object({ reconnectAccountId: z.string().uuid().optional() }).parse(req.body ?? {});
+    return connections.startConnection(ctx, P(req), brandId, provider, reconnectAccountId);
+  });
+  app.get('/api/brands/:brandId/connections/:pendingId', async (req) => {
+    const { brandId, pendingId } = params(req, 'brandId', 'pendingId');
+    return connections.getPending(ctx, P(req), brandId, pendingId);
+  });
+  app.post('/api/brands/:brandId/connections/:pendingId/select', async (req) => {
+    const { brandId, pendingId } = params(req, 'brandId', 'pendingId');
+    return connections.selectCandidates(ctx, P(req), brandId, pendingId, req.body);
+  });
+  app.post('/api/brands/:brandId/accounts/:accountId/disconnect', async (req) => {
+    const { brandId, accountId } = params(req, 'brandId', 'accountId');
+    return connections.disconnectAccount(ctx, P(req), brandId, accountId);
+  });
+  app.patch('/api/brands/:brandId/accounts/:accountId', async (req) => {
+    const { brandId, accountId } = params(req, 'brandId', 'accountId');
+    return connections.updateAccountSettings(ctx, P(req), brandId, accountId, req.body);
+  });
+
+  // The network sends the browser here after the person has signed in there. The session cookie identifies who is back.
+  app.get('/api/oauth/callback', async (req, reply) => {
+    const q = z
+      .object({ code: z.string().optional(), state: z.string().optional(), error: z.string().optional(), error_description: z.string().optional() })
+      .parse(req.query);
+    // A browser coming back from the network without a session goes to sign in, not to a JSON error.
+    if (req.principal?.kind !== 'user') return reply.redirect('/login');
+    const out = await connections.finishOAuth(ctx, req.principal.userId, q);
+    const to = new URL('/settings', ctx.config.APP_URL);
+    to.searchParams.set('tab', 'accounts');
+    if (out.pendingId) to.searchParams.set('connection', out.pendingId);
+    if (out.error) to.searchParams.set('connect_error', out.error);
+    return reply.redirect(to.toString());
   });
 
   app.get('/api/brands/:brandId/tokens', async (req) => brand.listTokens(ctx, P(req), params(req, 'brandId').brandId));
@@ -178,6 +220,11 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/publications/:id/confirm', async (req) => pubs.confirmPublication(ctx, P(req), params(req, 'id').id));
   app.post('/api/publications/:id/cancel', async (req) => pubs.cancelPublication(ctx, P(req), params(req, 'id').id));
   app.post('/api/publications/:id/reschedule', async (req) => pubs.reschedulePublication(ctx, P(req), params(req, 'id').id, req.body));
+  app.post('/api/versions/:id/publications/validate', async (req) => pubs.validatePublication(ctx, P(req), params(req, 'id').id, req.body));
+  app.post('/api/publications/:id/retry', async (req) => pubs.retryPublication(ctx, P(req), params(req, 'id').id, req.body));
+  app.post('/api/publications/:id/hand-over', async (req) => pubs.handOverPublication(ctx, P(req), params(req, 'id').id));
+  app.post('/api/publications/:id/recheck', async (req) => pubs.recheckPublication(ctx, P(req), params(req, 'id').id));
+  app.get('/api/publications/:id/attempts', async (req) => pubs.listAttempts(ctx, P(req), params(req, 'id').id));
   app.post('/api/publications/:id/mark-published', async (req) => pubs.markPublished(ctx, P(req), params(req, 'id').id, req.body ?? {}));
   app.get('/api/publications/:id/pack', async (req) => pubs.publicationPack(ctx, P(req), params(req, 'id').id));
 

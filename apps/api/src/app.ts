@@ -10,12 +10,14 @@ import type { Ctx } from './context.js';
 import type { Db } from './db.js';
 import { AppError, forbidden } from './errors.js';
 import { CSRF_HEADER, SESSION_COOKIE } from './http.js';
-import { createMailer, type Mailer } from './mailer.js';
-import { createMedia, type Media } from './media/ffmpeg.js';
+import type { ConnectorSet } from './connectors/types.js';
+import type { Mailer } from './mailer.js';
+import type { Media } from './media/ffmpeg.js';
 import { registerRoutes } from './routes/index.js';
 import { mediaRoutes } from './routes/media.js';
 import * as authSvc from './services/auth.js';
-import { createStorage, type Storage } from './storage/index.js';
+import { createContext } from './runtime.js';
+import type { Storage } from './storage/index.js';
 
 export interface AppDeps {
   config: Config;
@@ -23,20 +25,17 @@ export interface AppDeps {
   storage?: Storage;
   mailer?: Mailer;
   media?: Media;
+  connectors?: ConnectorSet;
+  now?: () => Date;
   logger?: boolean;
 }
 
 export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; ctx: Ctx }> {
   const { config, db } = deps;
   const app = Fastify({ logger: deps.logger ?? config.NODE_ENV !== 'test', trustProxy: true });
-  const ctx: Ctx = {
-    db,
-    config,
-    storage: deps.storage ?? createStorage(config),
-    mailer: deps.mailer ?? createMailer(config, app.log),
-    media: deps.media ?? createMedia(app.log),
-    log: app.log,
-  };
+  const ctx: Ctx = createContext(config, db, app.log, {
+    storage: deps.storage, mailer: deps.mailer, media: deps.media, connectors: deps.connectors, now: deps.now,
+  });
 
   await app.register(cookie);
   await app.register(rateLimit, { global: false });

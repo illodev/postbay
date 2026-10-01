@@ -8,9 +8,12 @@ It does not generate content, it orchestrates it. The producer can be an AI agen
 same kind of client (a producer token or a signed-in user). It serves one brand or several, and nothing in it is
 specific to any client: names, time zones, languages and review rules are configuration, never code.
 
-> **Status: phase 1 of 4.** Review, approval, calendar and assisted publishing work end to end. Publishing straight to
-> the networks' APIs, the agent loop and the extra connectors are the next phases. See [docs/phase-1.md](docs/phase-1.md)
-> for exactly what is done, what is deliberately left out, and the decisions taken where the spec left room.
+> **Status: phase 2 of 4.** Review, approval, calendar and assisted publishing work end to end (phase 1), and the app can
+> now publish by itself to Instagram, Facebook Pages and YouTube (phase 2). **Phase 2 was built and tested against fake
+> Meta and Google servers: no real network was reachable, so a first run with real accounts is still to do.** The agent
+> loop and the remaining networks are the next phases. See [docs/phase-1.md](docs/phase-1.md) and
+> [docs/phase-2.md](docs/phase-2.md) for exactly what is done, what is left out, and the decisions taken where the spec
+> left room.
 
 ## What phase 1 does
 
@@ -29,6 +32,22 @@ specific to any client: names, time zones, languages and review rules are config
 - **Roles per brand.** Admin, approver, reviewer, producer, reader. The same person can hold different roles in
   different brands, and nothing crosses from one workspace to another.
 - **Audit log** that can only be added to, and **notifications** in the app and by email.
+
+## What phase 2 adds
+
+- **Connect accounts.** Sign in with Meta or Google from *Settings → Accounts*, choose which Pages, Instagram accounts
+  and channels this brand publishes to, and reconnect or disconnect later. Tokens are sealed with AES-256-GCM.
+- **Publish by itself.** A connected account is published to by a worker: it prepares the post shortly before the hour
+  (converting the file only when the network would not take it as it is), publishes at the hour, then checks the post is
+  really live. Facebook and YouTube hold the post themselves until the hour, so those go out even if the app is down.
+- **Failures with a plan.** Revoked connection, rate limit, refused file, temporary error, unsupported content and a
+  missed hour each have their own handling, and every attempt is on record. A failed post can be tried again or handed to
+  a person.
+- **Per-network editing.** The schedule dialog says whether the app or a person will publish, shows each network's limits
+  next to the text, what the feed shows before "more", and what would block publishing. The review screen can draw what
+  each network's own interface covers over the picture.
+- **YouTube before Google's audit.** Uploads are private until the project passes the audit; the app treats that as a
+  state, tells the team, and lets an admin flip the account once it passes.
 
 ## Quick start
 
@@ -62,10 +81,12 @@ apps/api    Node 22, TypeScript, Fastify, PostgreSQL (plain SQL), zod
   src/services    one module per concern; every write is a transaction that also writes the audit log
   src/routes      thin HTTP layer
   src/storage     signed-URL storage: local disk for development, S3-compatible (MinIO, S3, R2) for real use
+  src/connectors  one connector per network behind a common interface (Instagram, Facebook, YouTube), file profiles, validators
+  src/worker.ts   the queue (pg-boss): wakes the publisher; all state lives in ordinary rows
   src/migrations  SQL; the database itself refuses edits to versions, files, approvals and the audit log
 apps/web    React, Vite, TanStack Query; plain CSS, light and dark, works on a phone
-e2e         a real-browser smoke test over the whole flow
-deploy      Docker Compose with PostgreSQL, MinIO, Caddy (TLS) and the app
+e2e         real-browser tests: phase 1's flow, and phase 2's publishing against fake networks
+deploy      Docker Compose with PostgreSQL, MinIO, Caddy (TLS), the app and a worker
 ```
 
 Files never pass through the app: the producer asks for signed URLs and uploads straight to storage, then closes the
@@ -85,6 +106,9 @@ declared.
 | Only what is approved, for the accounts approved, can be scheduled | `services/publications.ts` |
 | A producer token never approves, schedules or manages anything | role resolution in `auth/principal.ts` |
 | Times are stored in UTC with the brand's IANA zone, so 19:00 stays 19:00 after a clock change | `domain/time.ts`, tested across both clock changes |
+| The approval is re-checked from the stored files right before anything is sent to a network | `services/publisher.ts` |
+| A post that would go out after its hour plus the tolerance is not sent late | `services/publisher.ts` |
+| Network tokens are sealed, bound to their account, and never returned, logged or stored in the attempt history | `crypto.ts`, `connectors/http.ts` |
 
 ### Roles
 
@@ -111,7 +135,10 @@ scripts use `Authorization: Bearer <producer token>`.
 | `GET /brands/:id/slots?status=empty&from=&to=` | Calendar slots that still ask for content |
 | `POST /versions/:id/approvals`, `/request-changes` | Decide on a version |
 | `POST /versions/:id/publications` | Schedule an approved version on an account |
-| `GET /brands/:id/calendar`, `GET /brands/:id/publications/due` | What is planned and what is due now |
+| `GET /brands/:id/calendar`, `GET /brands/:id/publications/due` | What is planned (with how each post goes out) and what a person has to publish now |
+| `POST /versions/:id/publications/validate` | How a post would go out, and what would block it, before scheduling |
+| `POST /brands/:id/connections/:provider` and the pending-connection routes | Connect, choose accounts, reconnect (`meta`, `google`) |
+| `POST /publications/:id/retry`, `/hand-over`, `/recheck`; `GET /publications/:id/attempts` | Act on a failed or private post; read every attempt |
 
 ## Configuration
 
@@ -125,30 +152,37 @@ See [`.env.example`](.env.example). The ones that matter:
 | `STORAGE_DRIVER` | `local` for development, `s3` for MinIO, S3 or R2 (`S3_*` variables, and `S3_PUBLIC_ENDPOINT` when browsers reach the bucket on a different address than the app does) |
 | `SMTP_URL`, `MAIL_FROM` | Email; without it, messages go to the log |
 | `WEB_DIST` | Folder with the built web app, so the API serves it |
+| `TOKEN_KEY` | 32 bytes in base64 (`openssl rand -base64 32`). Seals network tokens; required once Meta or Google is set. **Keep a copy: losing it means connecting every account again** |
+| `META_APP_ID`, `META_APP_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | The developer apps ([setup in docs/phase-2.md](docs/phase-2.md#setting-up-the-networks)). Without them accounts stay manual |
+| `RUN_WORKERS` | `true` (default) runs the queue inside the API process; `false` when a separate worker runs |
 
 ## Tests
 
 ```sh
-npm test                 # 77 tests against a real PostgreSQL
+npm test                 # 180 tests against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
 npm run typecheck
 ```
 
 The API tests create a throwaway database per file, so they need a PostgreSQL they can create databases in. Point
 `TEST_DATABASE_ADMIN_URL` at it (default `postgres://postgres@localhost:5433/postgres`). They cover the rules above, the
 database guarantees (by trying to break them), permissions, isolation between brands, sign-in, and the calendar across
-clock changes.
+clock changes, and, for phase 2, the connectors against fake Meta and Google servers and the whole publishing state
+machine on a controlled clock.
 
-The end-to-end test drives the real app in a real browser, with real ffmpeg: see [e2e/README.md](e2e/README.md).
+The end-to-end tests drive the real app in a real browser, with real ffmpeg: phase 1's whole flow, and phase 2's
+connecting and publishing against fake networks. See [e2e/README.md](e2e/README.md).
 
 ## Deploying
 
-[`deploy/`](deploy) has a Docker Compose file with PostgreSQL, MinIO (private, versioned bucket), the app and Caddy for
-automatic TLS on the app and the media domain. It has not been run in the environment this phase was built in (no Docker
-daemon there); the Compose file validates, and the application it starts is the one the end-to-end test exercises.
+[`deploy/`](deploy) has a Docker Compose file with PostgreSQL, MinIO (private, versioned bucket), the app, a worker and
+Caddy for automatic TLS on the app and the media domain. The web server runs with `RUN_WORKERS=false`; the worker is the
+same image running `worker-main`. It has not been run in the environment this was built in (no Docker daemon there); the
+Compose file validates, and the application it starts is the one the end-to-end tests exercise. The media domain has to
+be reachable from the internet, because Meta downloads the files it publishes from it.
 
-## Not in phase 1
+## Not yet
 
-Connecting accounts through each network's API and publishing automatically, the agent loop (webhooks, agent runner),
-the remaining connectors, metrics, and automatic prize delivery. Also not yet: SSO and two-factor sign-in, push and Slack
-notifications, safe-zone overlays and per-network previews and text counters (they depend on what each connector
-declares), and subtitle display. Details and reasons in [docs/phase-1.md](docs/phase-1.md).
+The agent loop (webhooks, agent runner), TikTok, LinkedIn, X, Threads, Pinterest and Bluesky, metrics, and automatic
+prize delivery. Also not yet: SSO and two-factor sign-in, push and Slack notifications, and subtitle display. Details and
+reasons in [docs/phase-1.md](docs/phase-1.md) and [docs/phase-2.md](docs/phase-2.md), which also lists what could not be
+verified in phase 2.

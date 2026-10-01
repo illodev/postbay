@@ -1,11 +1,14 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import pg from 'pg';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { loadConfig, type Config } from '../src/config.js';
+import { dueForAttention, advance } from '../src/services/publisher.js';
+import { FakeGoogle } from './fakes/google.js';
+import { FakeMeta } from './fakes/meta.js';
 import type { Ctx } from '../src/context.js';
 import { createDb, type Db } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
@@ -42,6 +45,22 @@ export interface Env {
   makePiece: (as: Actor, kind?: string, format?: string) => Promise<{ pieceId: string; variantId: string }>;
   approve: (as: Actor, versionId: string, accountIds?: string[], extra?: Record<string, unknown>) => Promise<{ status: number; body: any }>;
   close: () => Promise<void>;
+  /** Present when the environment was created with `fakes: true`. */
+  meta: FakeMeta;
+  google: FakeGoogle;
+  /** The clock the app and both fake networks agree on. */
+  clock: { now: () => Date; set: (d: Date) => void; advance: (ms: number) => void };
+  /** Lets the worker do everything that is due at the current time, until nothing more is. Returns what happened. */
+  settle: (rounds?: number) => Promise<string[]>;
+  /** Creates an account already connected to a network, with the token sealed as the app would. */
+  connect: (network: 'instagram' | 'facebook' | 'youtube', o?: Partial<{ externalId: string; name: string; token: string; refreshToken: string; expiresAt: string; providerData: Record<string, unknown> }>) => Promise<string>;
+}
+
+export interface EnvOptions {
+  /** Start fake Meta and Google servers and configure the app to use them, with a controllable clock. */
+  fakes?: boolean;
+  /** Use the real ffprobe/ffmpeg instead of the stub. */
+  realMedia?: boolean;
 }
 
 export interface UploadSpec {
@@ -54,17 +73,47 @@ export interface UploadSpec {
 
 /** Stub for ffprobe/ffmpeg: tests exercise the rules, not the media tools (the end-to-end run uses the real ones). */
 export const fakeMedia: Media = {
-  async probe() {
+  async probe(src) {
+    // Images are 4:5 (a feed-shaped photo); everything else is a 9:16 video.
+    if (/\.(png|jpe?g)$/i.test(src)) return { width: 1080, height: 1350, durationMs: null, fps: null };
     return { width: 1080, height: 1920, durationMs: 10_000, fps: 30 };
   },
   async frame() {
     return Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
   },
+  async transcode(src, dest) {
+    await copyFile(src, dest);
+  },
 };
 
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 
-export async function createEnv(overrides: Partial<Record<string, string>> = {}): Promise<Env> {
+export async function createEnv(overrides: Partial<Record<string, string>> = {}, opts: EnvOptions = {}): Promise<Env> {
+  const meta = new FakeMeta();
+  const google = new FakeGoogle();
+  if (opts.fakes) {
+    await meta.start();
+    await google.start();
+  }
+  let current = new Date();
+  let moved = false;
+  const clock = {
+    now: () => (moved ? new Date(current) : new Date()),
+    set: (d: Date) => { current = new Date(d); moved = true; },
+    advance: (ms: number) => { current = new Date((moved ? current : new Date()).getTime() + ms); moved = true; },
+  };
+  if (opts.fakes) {
+    meta.now = () => clock.now().getTime();
+    google.now = () => clock.now().getTime();
+  }
+  const fakeConfig: Record<string, string> = opts.fakes
+    ? {
+        TOKEN_KEY: Buffer.alloc(32, 7).toString('base64'),
+        META_APP_ID: 'app', META_APP_SECRET: 'secret', META_GRAPH_URL: meta.url, META_OAUTH_URL: meta.url,
+        GOOGLE_CLIENT_ID: 'gid', GOOGLE_CLIENT_SECRET: 'gsecret', GOOGLE_OAUTH_URL: `${google.url}/auth`, GOOGLE_TOKEN_URL: `${google.url}/token`, YOUTUBE_API_URL: google.url,
+        WORKER_SWEEP_SECONDS: '1',
+      }
+    : {};
   const dbName = `estudio_test_${randomBytes(6).toString('hex')}`;
   const admin = new pg.Client({ connectionString: ADMIN_URL });
   await admin.connect();
@@ -79,6 +128,7 @@ export async function createEnv(overrides: Partial<Record<string, string>> = {})
     STORAGE_LOCAL_DIR: dir,
     APP_URL: 'http://app.test',
     MEDIA_URL: 'http://media.test',
+    ...fakeConfig,
     ...overrides,
   });
   const db = createDb(config.DATABASE_URL);
@@ -87,7 +137,8 @@ export async function createEnv(overrides: Partial<Record<string, string>> = {})
   const { app, ctx } = await buildApp({
     config,
     db,
-    media: fakeMedia,
+    media: opts.realMedia ? undefined : fakeMedia,
+    now: opts.fakes ? clock.now : undefined,
     mailer: { async send(to, subject, text) { mails.push({ to, subject, text }); } },
     logger: !!process.env.TEST_LOG,
   });
@@ -170,10 +221,52 @@ export async function createEnv(overrides: Partial<Record<string, string>> = {})
   const approve: Env['approve'] = (as, versionId, accountIds = [accounts.instagram], extra = {}) =>
     call(as, 'POST', `/api/versions/${versionId}/approvals`, { decision: 'approve', accountIds, ...extra });
 
+  const connect: Env['connect'] = async (network, o = {}) => {
+    const defaults = {
+      instagram: { externalId: '222', name: '@lumen.coffee', token: 'page-token-111', providerData: { igUserId: '222', pageId: '111' } },
+      facebook: { externalId: '111', name: 'Lumen Coffee', token: 'page-token-111', providerData: { pageId: '111' } },
+      youtube: { externalId: 'UC-lumen', name: 'Lumen Coffee TV', token: '', providerData: { channelId: 'UC-lumen', audited: false } },
+    }[network];
+    const id = randomUUID();
+    let token = o.token ?? defaults.token;
+    let refresh = o.refreshToken;
+    let expiresAt = o.expiresAt;
+    if (network === 'youtube' && !token) {
+      // A real access token from the fake, so the fake accepts it.
+      token = `access-${++google.tokenSeq}`;
+      google.accessTokens.add(token);
+      refresh ??= 'refresh-1';
+      expiresAt ??= new Date(clock.now().getTime() + 3600_000).toISOString();
+    }
+    await db.query(
+      `insert into social_account (id, brand_id, network, external_id, display_name, token_encrypted, token_expires_at, provider_data, status, connected_by, connected_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9, now())`,
+      [id, brand.id, network, o.externalId ?? defaults.externalId, o.name ?? defaults.name,
+        ctx.vault!.seal({ accessToken: token, refreshToken: refresh, expiresAt }, `account:${id}`), expiresAt ?? null,
+        JSON.stringify({ ...defaults.providerData, ...(o.providerData ?? {}) }), users.admin.id],
+    );
+    return id;
+  };
+
+  const settle: Env['settle'] = async (rounds = 60) => {
+    const log: string[] = [];
+    for (let i = 0; i < rounds; i++) {
+      const due = await dueForAttention(ctx);
+      if (due.length === 0) break;
+      for (const d of due) log.push(`${d.id.slice(0, 4)}:${await advance(ctx, d.id)}`);
+    }
+    return log;
+  };
+
   return {
     app, ctx, db, mails, brandId: brand.id, workspaceId: workspace.id, accounts, users, call, upload, newVersion, makePiece, approve,
+    meta, google, clock, settle, connect,
     async close() {
       await app.close();
+      if (opts.fakes) {
+        await meta.stop();
+        await google.stop();
+      }
       await db.close();
       await rm(dir, { recursive: true, force: true });
       const a = new pg.Client({ connectionString: ADMIN_URL });

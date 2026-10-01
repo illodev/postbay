@@ -3,6 +3,7 @@ import { DateTime } from 'luxon';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Account, type CalendarData } from '../api';
+import { PublicationBadges } from '../components/publications';
 import { Chip, Dialog, ErrorBox, errorMessage, Field, Spinner, useToast } from '../components/ui';
 import { fmtDateTime, NETWORK_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -127,9 +128,10 @@ export function CalendarPage() {
               className={`cal-item ${p.status}`}
               draggable={draggable}
               onDragStart={(e) => e.dataTransfer.setData('text/plain', p.id)}
-              title={`${p.piece_title} · ${NETWORK_LABEL[p.network] ?? p.network} · ${p.status}`}
+              title={`${p.piece_title} · ${NETWORK_LABEL[p.network] ?? p.network} · ${p.status}${p.manual ? ' · by hand' : ' · automatic'}${p.last_error ? ` · ${p.last_error}` : ''}`}
             >
               <span className="t">{DateTime.fromISO(p.scheduled_at, { zone }).toFormat('HH:mm')} </span>
+              {!p.manual && <span className="auto-dot" aria-label="Automatic" title="Published by the app">⚙ </span>}
               {p.piece_title}
             </Link>
           );
@@ -196,6 +198,7 @@ export function CalendarPage() {
                     <Link to={`/pieces/${p.piece_id}`} className="grow">{p.piece_title}</Link>
                     <span className="muted small">{NETWORK_LABEL[p.network] ?? p.network} · {p.account_name}</span>
                     <Chip state={p.status} />
+                    <PublicationBadges pub={p} />
                   </div>
                 ))}
                 {daySlots.map((s) => (

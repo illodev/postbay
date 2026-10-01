@@ -38,7 +38,7 @@ export async function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/media/*', async (req, reply) => {
     const q = req.query as Record<string, string>;
-    const r = await storage.open(keyOf(req.params), q);
+    const r = await storage.serve(keyOf(req.params), q);
     if (r.status !== 200) return reply.code(r.status).send({ error: r.error });
     reply.header('accept-ranges', 'bytes').header('content-type', lookup(keyOf(req.params))).header('cache-control', 'private, max-age=3600');
     if (r.filename) reply.header('content-disposition', `attachment; filename="${r.filename.replace(/["\r\n]/g, '')}"`);

@@ -102,7 +102,9 @@ export async function getPiece(ctx: Ctx, p: Principal, pieceId: string) {
     [pieceId],
   );
   const publications = await ctx.db.query(
-    `select pub.*, sa.network, sa.display_name as account_name, ver.number as version_number
+    `select pub.id, pub.variant_id, pub.social_account_id, pub.version_id, pub.status, pub.scheduled_at, pub.text, pub.first_comment, pub.hold_reason,
+       pub.url, pub.manual, pub.visibility, pub.placement, pub.native_scheduled, pub.last_error, pub.last_error_class, pub.published_at,
+       sa.network, sa.display_name as account_name, ver.number as version_number
      from publication pub
      join variant v on v.id = pub.variant_id
      join social_account sa on sa.id = pub.social_account_id
@@ -169,9 +171,9 @@ export async function discardPiece(ctx: Ctx, p: Principal, pieceId: string) {
       [pieceId],
     );
     await db.query(
-      `update publication set status = 'cancelled', updated_at = now()
-       where variant_id in (select id from variant where piece_id = $1) and status in ('scheduled','awaiting_reapproval','on_hold')`,
-      [pieceId],
+      `update publication set status = 'cancelled', updated_at = now(), next_run_at = case when native_scheduled then $2::timestamptz else null end
+       where variant_id in (select id from variant where piece_id = $1) and status in ('scheduled','awaiting_reapproval','on_hold','preparing','ready')`,
+      [pieceId, ctx.now()],
     );
     await db.query('update piece set discarded_at = now() where id = $1', [pieceId]);
     await refreshPieceState(db, pieceId);

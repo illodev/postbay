@@ -14,6 +14,11 @@ const KIND_TEXT: Record<string, string> = {
   'publication.due': 'A publication is due',
   'publication.reapproval': 'A change needs your confirmation',
   'publication.on_hold': 'Scheduled posts put on hold by a new version',
+  'publication.published': 'A post went out',
+  'publication.failed': 'A post could not be published',
+  'publication.private': 'A video is private: it needs making public',
+  'account.reconnect': 'An account needs reconnecting',
+  'account.expiring': 'An account connection is about to expire',
 };
 
 function Bell() {

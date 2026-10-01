@@ -45,6 +45,9 @@ export const STATE_LABEL: Record<string, string> = {
   discarded: 'Discarded',
   superseded: 'Superseded',
   scheduled: 'Scheduled',
+  preparing: 'Preparing',
+  ready: 'Ready',
+  publishing: 'Publishing',
   awaiting_reapproval: 'Awaiting confirmation',
   on_hold: 'On hold',
   published: 'Published',
@@ -70,4 +73,29 @@ export const ROLE_LABEL: Record<string, string> = {
   reviewer: 'Reviewer',
   producer: 'Producer',
   reader: 'Reader',
+};
+
+export const VISIBILITY_LABEL: Record<string, string> = {
+  public: 'Live',
+  private: 'Private',
+  processing: 'Processing',
+  scheduled: 'Held by the network',
+  unknown: 'Not found',
+};
+
+export const STEP_LABEL: Record<string, string> = {
+  prepare: 'Prepare',
+  publish: 'Publish',
+  verify: 'Check it is live',
+  discard: 'Take down',
+};
+
+export const ERROR_CLASS_LABEL: Record<string, string> = {
+  auth: 'Connection problem',
+  rate_limit: 'Network limit',
+  file_rejected: 'Refused by the network',
+  transient: 'Temporary failure',
+  unsupported: 'Not supported',
+  missed_window: 'Missed its hour',
+  unknown: 'Unknown error',
 };

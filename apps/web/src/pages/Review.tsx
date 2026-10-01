@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, type Account, type Anchor, type CommentThread, type VersionDetail } from '../api';
+import { api, type Account, type Anchor, type CommentThread, type Integrations, type VersionDetail } from '../api';
 import { CommentsPanel } from '../components/comments';
 import { approvedAccountIds, ScheduleDialog } from '../components/publications';
 import { Chip, CopyButton, Dialog, ErrorBox, Field, Spinner, useToast } from '../components/ui';
-import { CompareStage, Stage, type Jump } from '../components/viewer';
+import { CompareStage, Stage, type Jump, type SafeZone } from '../components/viewer';
 import { fmtBytes, fmtDateTime, NETWORK_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
 import { useStableUrls } from '../lib/stableUrls';
@@ -147,7 +147,9 @@ export function ReviewPage() {
   const [tab, setTab] = useState<'comments' | 'details'>('comments');
   const [compareId, setCompareId] = useState('');
   const [dialog, setDialog] = useState<null | 'approve' | 'reject' | 'changes' | 'schedule'>(null);
+  const [zoneId, setZoneId] = useState('');
   const stable = useStableUrls();
+  const { data: integ } = useQuery({ queryKey: ['integrations', brand.id], queryFn: () => api.get<Integrations>(`/api/brands/${brand.id}/integrations`) });
 
   const { data: v, error, isLoading } = useQuery({ queryKey: ['version', versionId], queryFn: () => api.get<VersionDetail>(`/api/versions/${versionId}`) });
   const { data: threads = [] } = useQuery({
@@ -168,6 +170,9 @@ export function ReviewPage() {
   const otherAssets = other?.assets.map((a) => ({ ...a, url: stable(a.id, a.url) }));
   const stableThreads = threads.map((t) => (t.frame_url ? { ...t, frame_url: stable(t.id, t.frame_url) } : t));
   const live = LIVE.includes(v.review_state);
+  // Every placement that knows what its network draws over the picture, for the "what the network covers" overlay.
+  const safeZones: (SafeZone & { id: string })[] = Object.values(integ?.capabilities ?? {}).flatMap((c) =>
+    c.placements.flatMap((pl) => (pl.safeZones ? [{ id: `${c.network}:${pl.id}`, label: `${NETWORK_LABEL[c.network] ?? c.network} · ${pl.label}`, ...pl.safeZones }] : [])));
   const openCount = stableThreads.filter((t) => t.status === 'open').length;
   const mine = v.approvals.find((a) => a.approver === (me.user.name ?? me.user.email) || a.approver === me.user.email);
   const isAuthor = v.author_user_id === me.user.id;
@@ -216,6 +221,15 @@ export function ReviewPage() {
 
       <div className="review">
         <div className="stack">
+          {!compareId && !assets.some((a) => a.kind === 'pdf') && safeZones.length > 0 && (
+            <label className="row">
+              <span className="small muted">Show what the network covers</span>
+              <select value={zoneId} onChange={(e) => setZoneId(e.target.value)} style={{ width: 'auto' }} aria-label="Safe area">
+                <option value="">Nothing</option>
+                {safeZones.map((z) => <option key={z.id} value={z.id}>{z.label}</option>)}
+              </select>
+            </label>
+          )}
           {compareId && other && otherAssets ? (
             <CompareStage left={otherAssets} right={assets} leftLabel={`v${other.number}`} rightLabel={`v${v.number} (this one)`} />
           ) : (
@@ -228,6 +242,7 @@ export function ReviewPage() {
               focus={focus}
               onFocus={(id) => { setFocus(id); setTab('comments'); }}
               jump={jump}
+              safeZone={safeZones.find((z) => z.id === zoneId) ?? null}
             />
           )}
           {v.notes && <div className="card"><h3>What changed</h3><p style={{ whiteSpace: 'pre-wrap', margin: '.25rem 0 0' }}>{v.notes}</p></div>}

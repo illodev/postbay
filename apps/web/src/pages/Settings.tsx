@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { api, type Account, type BrandSettings, type Role } from '../api';
+import { useSearchParams } from 'react-router-dom';
+import { api, type Account, type BrandSettings, type Integrations, type PendingConnection, type Role } from '../api';
 import { CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, Spinner, useToast } from '../components/ui';
-import { fmtDateTime, NETWORK_LABEL, ROLE_LABEL } from '../lib/format';
+import { fmtDateTime, fmtShort, NETWORK_LABEL, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
 
 type Tab = 'general' | 'members' | 'accounts' | 'schedule' | 'tokens' | 'audit';
@@ -26,12 +27,13 @@ function General({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const { data: b } = useBrandSettings(brandId);
-  const [form, setForm] = useState<null | { name: string; timezone: string; locale: string; required: number; reapprove: boolean; checklist: string }>(null);
-  const f = form ?? (b && { name: b.name, timezone: b.timezone, locale: b.locale, required: b.rules.required_approvals, reapprove: b.rules.reapprove_on_move, checklist: b.rules.checklist.join('\n') });
+  const [form, setForm] = useState<null | { name: string; timezone: string; locale: string; required: number; reapprove: boolean; checklist: string; lead: number; tolerance: number }>(null);
+  const f = form ?? (b && { name: b.name, timezone: b.timezone, locale: b.locale, required: b.rules.required_approvals, reapprove: b.rules.reapprove_on_move, checklist: b.rules.checklist.join('\n'), lead: b.publishing.prepare_lead_minutes, tolerance: b.publishing.late_tolerance_minutes });
   const save = useMutation({
     mutationFn: () => api.patch(`/api/brands/${brandId}`, {
       name: f!.name, timezone: f!.timezone, locale: f!.locale,
       rules: { required_approvals: f!.required, reapprove_on_move: f!.reapprove, checklist: f!.checklist.split('\n').map((x) => x.trim()).filter(Boolean) },
+      publishing: { prepare_lead_minutes: f!.lead, late_tolerance_minutes: f!.tolerance },
     }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['brand'] }); qc.invalidateQueries({ queryKey: ['me'] }); setForm(null); toast('Saved'); },
   });
@@ -77,6 +79,19 @@ function General({ brandId }: { brandId: string }) {
           <Field label="Checklist" hint="One item per line. The approver ticks every item before approving.">
             <textarea value={f.checklist} onChange={(e) => setForm({ ...f, checklist: e.target.value })} placeholder={'Facts verified\nNo music we do not have rights to\nSubtitles reviewed'} />
           </Field>
+          <h3>Publishing</h3>
+          <div className="row">
+            <div className="grow">
+              <Field label="Start preparing (minutes before the hour)" hint="Files are converted and sent to the network this long before the scheduled time. Instagram containers last 24 hours, so keep it well under that.">
+                <input type="number" min={12} max={1440} value={f.lead} onChange={(e) => setForm({ ...f, lead: Number(e.target.value) })} />
+              </Field>
+            </div>
+            <div className="grow">
+              <Field label="Still publish up to (minutes late)" hint="If the app was down at the hour, it publishes only within this delay. After that it tells the team instead of posting late.">
+                <input type="number" min={0} max={240} value={f.tolerance} onChange={(e) => setForm({ ...f, tolerance: Number(e.target.value) })} />
+              </Field>
+            </div>
+          </div>
           {save.error && <ErrorBox error={save.error} />}
           <div><button className="btn btn-primary" disabled={save.isPending}>Save</button></div>
         </form>
@@ -144,12 +159,75 @@ function Members({ brandId }: { brandId: string }) {
   );
 }
 
+function ConnectionDialog({ brandId, pendingId, onClose }: { brandId: string; pendingId: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { data, error } = useQuery({ queryKey: ['pending', pendingId], queryFn: () => api.get<PendingConnection>(`/api/brands/${brandId}/connections/${pendingId}`) });
+  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const reconnect = data?.reconnect ?? null;
+  const usable = (data?.candidates ?? []).filter((c) => !reconnect || c.network === reconnect.network);
+  const chosen = picked ?? new Set(reconnect || usable.length === 1 ? usable.slice(0, 1).map((c) => c.key) : []);
+  const select = useMutation({
+    mutationFn: () => api.post(`/api/brands/${brandId}/connections/${pendingId}/select`, { keys: [...chosen] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['accounts', brandId] });
+      toast(reconnect ? 'Reconnected' : 'Connected');
+      onClose();
+    },
+  });
+  const toggle = (key: string) => {
+    if (reconnect) return setPicked(new Set([key]));
+    const n = new Set(chosen);
+    if (n.has(key)) n.delete(key); else n.add(key);
+    setPicked(n);
+  };
+  return (
+    <Dialog title={reconnect ? `Reconnect ${reconnect.display_name}` : 'Choose what to connect'} onClose={onClose}>
+      {error && <ErrorBox error={error} />}
+      {!data && !error && <Spinner />}
+      {data && (
+        <form className="stack" onSubmit={(e) => { e.preventDefault(); select.mutate(); }}>
+          <p className="muted">
+            {reconnect
+              ? 'Pick the same account you are reconnecting. Connecting a different one is refused.'
+              : 'The sign-in found these. Connect only the ones this brand should publish to.'}
+          </p>
+          {usable.length === 0 && <div className="notice notice-warn">The sign-in did not find a matching account.</div>}
+          {usable.map((c) => (
+            <label key={c.key} className="check">
+              <input type={reconnect ? 'radio' : 'checkbox'} name="candidate" checked={chosen.has(c.key)} onChange={() => toggle(c.key)} />
+              <span>
+                <strong>{NETWORK_LABEL[c.network] ?? c.network}</strong> · {c.displayName}
+                {c.existing && <span className="muted small"> · already here, its connection will be renewed</span>}
+                {c.providerData.missingScopes && c.providerData.missingScopes.length > 0 && (
+                  <span className="small" style={{ display: 'block', color: 'var(--warn)' }}>Missing permissions: {c.providerData.missingScopes.join(', ')}. Publishing will fail until they are granted.</span>
+                )}
+              </span>
+            </label>
+          ))}
+          {select.error && <ErrorBox error={select.error} />}
+          <div className="row" style={{ justifyContent: 'flex-end' }}>
+            <button type="button" className="btn" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" disabled={chosen.size === 0 || select.isPending}>{reconnect ? 'Reconnect' : chosen.size > 1 ? `Connect ${chosen.size}` : 'Connect'}</button>
+          </div>
+        </form>
+      )}
+    </Dialog>
+  );
+}
+
 function Accounts({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const [params, setParams] = useSearchParams();
+  const pendingId = params.get('connection');
+  const connectError = params.get('connect_error');
   const { data } = useQuery({ queryKey: ['accounts', brandId], queryFn: () => api.get<Account[]>(`/api/brands/${brandId}/accounts`) });
+  const { data: integ } = useQuery({ queryKey: ['integrations', brandId], queryFn: () => api.get<Integrations>(`/api/brands/${brandId}/integrations`) });
   const [form, setForm] = useState({ network: 'instagram', externalId: '', displayName: '' });
   const refresh = () => qc.invalidateQueries({ queryKey: ['accounts', brandId] });
+  const clearParams = () => { const p = new URLSearchParams(params); p.delete('connection'); p.delete('connect_error'); setParams(p, { replace: true }); };
+
   const add = useMutation({
     mutationFn: () => api.post(`/api/brands/${brandId}/accounts`, form),
     onSuccess: () => { refresh(); setForm({ ...form, externalId: '', displayName: '' }); },
@@ -159,27 +237,110 @@ function Accounts({ brandId }: { brandId: string }) {
     onSuccess: refresh,
     onError: (e) => toast(errorMessage(e), 'error'),
   });
+  const connect = useMutation({
+    mutationFn: ({ provider, accountId }: { provider: string; accountId?: string }) =>
+      api.post<{ url: string }>(`/api/brands/${brandId}/connections/${provider}`, accountId ? { reconnectAccountId: accountId } : {}),
+    // The network's own sign-in page takes over the browser; it sends the person back to this page.
+    onSuccess: (r) => { window.location.href = r.url; },
+    onError: (e) => toast(errorMessage(e), 'error'),
+  });
+  const disconnect = useMutation({
+    mutationFn: (id: string) => api.post(`/api/brands/${brandId}/accounts/${id}/disconnect`),
+    onSuccess: () => { refresh(); toast('Disconnected: it is published by hand again'); },
+    onError: (e) => toast(errorMessage(e), 'error'),
+  });
+  const audited = useMutation({
+    mutationFn: ({ id, value }: { id: string; value: boolean }) => api.patch(`/api/brands/${brandId}/accounts/${id}`, { audited: value }),
+    onSuccess: refresh,
+    onError: (e) => toast(errorMessage(e), 'error'),
+  });
+  const providerOf = (network: string) => integ?.providers.find((p) => p.networks.includes(network));
+
   return (
     <div className="stack">
-      <div className="notice notice-info">For now accounts are registered by hand and someone publishes to them manually. Connecting them through each network's official API comes in a later phase.</div>
+      {connectError && (
+        <div className="notice notice-bad" role="alert">
+          <div className="row-between"><span>Could not connect: {connectError}</span><button className="btn btn-small" onClick={clearParams}>Dismiss</button></div>
+        </div>
+      )}
+      <div className="card stack">
+        <h3>Connect to a network</h3>
+        <p className="muted" style={{ margin: 0 }}>Connected accounts are published to by the app itself, at the scheduled time. Anything else stays manual: a person posts it and records it here.</p>
+        <div className="row">
+          {integ?.providers.map((p) => (
+            <button key={p.id} className="btn btn-primary" disabled={!p.configured || connect.isPending} onClick={() => connect.mutate({ provider: p.id })} title={p.configured ? '' : 'Not set up on this server'}>
+              Connect {p.label}
+            </button>
+          ))}
+        </div>
+        {integ?.providers.some((p) => !p.configured) && (
+          <p className="muted small" style={{ margin: 0 }}>Greyed-out buttons need the network's app credentials on the server: see the setup guide in the repository (docs/phase-2.md).</p>
+        )}
+      </div>
+
       <div className="card">
         {data?.length === 0 && <Empty title="No accounts yet" />}
         <div className="table-wrap">
           <table>
+            <thead><tr><th>Network</th><th>Account</th><th>Publishing</th><th /></tr></thead>
             <tbody>
-              {data?.map((a) => (
-                <tr key={a.id}>
-                  <td><strong>{NETWORK_LABEL[a.network] ?? a.network}</strong></td>
-                  <td>{a.display_name}<br /><span className="muted small">{a.external_id}</span></td>
-                  <td><button className="btn btn-small btn-danger" onClick={() => confirm(`Remove ${a.display_name}?`) && remove.mutate(a.id)}>Remove</button></td>
-                </tr>
-              ))}
+              {data?.map((a) => {
+                const provider = providerOf(a.network);
+                return (
+                  <tr key={a.id}>
+                    <td><strong>{NETWORK_LABEL[a.network] ?? a.network}</strong></td>
+                    <td>
+                      {a.display_name}
+                      <br /><span className="muted small">{a.external_id}</span>
+                      {a.details.missingScopes && a.details.missingScopes.length > 0 && (
+                        <div className="small" style={{ color: 'var(--warn)' }}>Missing permissions: {a.details.missingScopes.join(', ')}</div>
+                      )}
+                      {a.details.dataAccessExpiresAt && (
+                        <div className="muted small">Network access runs until {fmtDateTime(a.details.dataAccessExpiresAt, 'UTC').replace(/,.*/, '')}</div>
+                      )}
+                    </td>
+                    <td>
+                      {a.status === 'active' && a.connected && <span className="chip chip-approved">Connected</span>}
+                      {a.status === 'reconnect_required' && <span className="chip chip-failed">Needs reconnecting</span>}
+                      {a.status === 'manual' && <span className="chip">By hand</span>}
+                      {a.status === 'active' && a.connected && !a.automated && <div className="muted small">This server cannot publish to {a.network} yet.</div>}
+                      {a.last_error && a.status === 'reconnect_required' && <div className="small" style={{ color: 'var(--bad)' }}>{a.last_error}</div>}
+                      {a.last_health_at && a.status === 'active' && <div className="muted small">Checked {fmtShort(a.last_health_at)}</div>}
+                      {a.network === 'youtube' && a.connected && (
+                        <label className="check small" style={{ marginTop: 4 }}>
+                          <input type="checkbox" checked={!!a.details.audited} onChange={(e) => audited.mutate({ id: a.id, value: e.target.checked })} />
+                          <span>Google has audited this project{!a.details.audited && <span className="muted"> · until then videos upload as private</span>}</span>
+                        </label>
+                      )}
+                    </td>
+                    <td>
+                      <div className="row">
+                        {provider?.configured && (a.status !== 'active' || !a.connected) && (
+                          <button className="btn btn-small btn-primary" onClick={() => connect.mutate({ provider: provider.id, accountId: a.id })}>
+                            {a.status === 'manual' ? 'Connect' : 'Reconnect'}
+                          </button>
+                        )}
+                        {a.connected && a.status === 'active' && provider?.configured && (
+                          <button className="btn btn-small" onClick={() => connect.mutate({ provider: provider.id, accountId: a.id })}>Renew</button>
+                        )}
+                        {a.connected && (
+                          <button className="btn btn-small" onClick={() => confirm(`Disconnect ${a.display_name}? It goes back to being published by hand.`) && disconnect.mutate(a.id)}>Disconnect</button>
+                        )}
+                        {!a.connected && (
+                          <button className="btn btn-small btn-danger" onClick={() => confirm(`Remove ${a.display_name}?`) && remove.mutate(a.id)}>Remove</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
+
       <form className="card stack" onSubmit={(e) => { e.preventDefault(); add.mutate(); }}>
-        <h3>Add an account</h3>
+        <h3>Add an account to publish by hand</h3>
         <div className="row">
           <div><Field label="Network"><select value={form.network} onChange={(e) => setForm({ ...form, network: e.target.value })}>{Object.entries(NETWORK_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field></div>
           <div className="grow"><Field label="Display name"><input type="text" required value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} /></Field></div>
@@ -188,6 +349,7 @@ function Accounts({ brandId }: { brandId: string }) {
         {add.error && <ErrorBox error={add.error} />}
         <div><button className="btn btn-primary" disabled={add.isPending}>Add account</button></div>
       </form>
+      {pendingId && <ConnectionDialog brandId={brandId} pendingId={pendingId} onClose={clearParams} />}
     </div>
   );
 }
@@ -337,7 +499,9 @@ export function SettingsPage() {
     ['audit', 'Audit log', can('audit')],
   ];
   const visible = tabs.filter((t) => t[2]);
-  const [tab, setTab] = useState<Tab>(visible[0]?.[0] ?? 'general');
+  const [search] = useSearchParams();
+  const fromUrl = search.get('tab') as Tab | null;
+  const [tab, setTab] = useState<Tab>(fromUrl && visible.some((t) => t[0] === fromUrl) ? fromUrl : (visible[0]?.[0] ?? 'general'));
   const current = visible.find((t) => t[0] === tab)?.[0] ?? visible[0]?.[0];
   return (
     <>

@@ -27,10 +27,11 @@ network, so it can be built and used while those paperwork steps run.
 | Tokens: hashed, shown once, expiring, valid for one brand | Done |
 | Signed upload URLs; files never pass through the app; private bucket; separate media domain | Done. Local driver tested; S3 driver written but see below |
 | Subtitles shown beside the video and commented line by line | Not yet. Subtitle files can be uploaded and are part of the fingerprint |
-| Safe-zone overlays, per-network previews, per-network text counters and limits | Not yet: they depend on what each connector declares (phase 2) |
+| Safe-zone overlays, per-network previews, per-network text counters and limits | Done in phase 2 ([docs/phase-2.md](phase-2.md)), because they depend on what each connector declares |
 | SSO (OIDC) and mandatory two-factor for admins and approvers | Not yet. Sign-in is a one-time emailed link |
 | Slack and push notifications | Not yet |
-| Connectors, queue, retries, token refresh, metrics, prize delivery, agent runner | Phases 2 to 4 |
+| Connectors, queue, retries, token refresh | Done in phase 2 for Instagram, Facebook and YouTube ([docs/phase-2.md](phase-2.md)) |
+| Metrics, prize delivery, agent runner, the other networks | Phases 3 and 4 |
 
 ## Decisions where the specification left room
 
@@ -56,8 +57,9 @@ network, so it can be built and used while those paperwork steps run.
   thread on a superseded version, because that is exactly when the agent answers.
 - **Only reviewers and above start threads.** Producers reply and resolve, as specified.
 - **Background work runs in the API process** (a 30 second loop that announces due publications and sends email),
-  guarded so two instances do not double-send. The specification's queue (pg-boss) arrives with the publisher in
-  phase 2, where retries and idempotency keys matter.
+  guarded so two instances do not double-send. The specification's queue (pg-boss) arrived with the publisher in
+  phase 2, where retries and idempotency keys matter: see [docs/phase-2.md](phase-2.md). The announcing and email loop
+  described here still runs in the API process.
 - **The frame behind a video comment is grabbed by ffmpeg when the comment is posted.** If ffmpeg is missing or fails,
   the comment is still saved, without the frame.
 - **Responses carry security headers and a Content-Security-Policy** (own-origin scripts only; WebAssembly allowed for

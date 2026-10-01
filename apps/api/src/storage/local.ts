@@ -1,6 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Transform, type Readable } from 'node:stream';
@@ -94,7 +94,7 @@ export class LocalStorage implements Storage {
   }
 
   /** Called by the GET /media/* route. */
-  async open(key: string, q: Record<string, string | undefined>) {
+  async serve(key: string, q: Record<string, string | undefined>) {
     const { exp, sig, name = '' } = q;
     if (!exp || !sig) return { status: 403 as const, error: 'missing signature' };
     if (Number(exp) < Date.now() / 1000) return { status: 403 as const, error: 'URL expired' };
@@ -125,7 +125,19 @@ export class LocalStorage implements Storage {
     await writeFile(dest, data);
   }
 
+  async putFile(key: string, source: string): Promise<void> {
+    const dest = this.abs(key);
+    await mkdir(path.dirname(dest), { recursive: true });
+    await copyFile(source, dest);
+  }
+
   async get(key: string): Promise<Buffer | null> {
     return readFile(this.abs(key)).catch(() => null);
+  }
+
+  async open(key: string, start = 0): Promise<{ stream: Readable; size: number }> {
+    const file = this.abs(key);
+    const s = await stat(file);
+    return { stream: createReadStream(file, { start }), size: s.size };
   }
 }

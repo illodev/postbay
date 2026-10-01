@@ -6,3 +6,4 @@ node_modules
 .git
 e2e/shots
 e2e/assets
+e2e/shots-phase2

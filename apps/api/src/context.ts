@@ -1,4 +1,6 @@
 import type { Config } from './config.js';
+import type { ConnectorSet } from './connectors/types.js';
+import type { TokenVault } from './crypto.js';
 import type { Db } from './db.js';
 import type { Mailer } from './mailer.js';
 import type { Media } from './media/ffmpeg.js';
@@ -17,6 +19,12 @@ export interface Ctx {
   mailer: Mailer;
   media: Media;
   log: Logger;
+  /** The networks this deployment can publish to directly. */
+  connectors: ConnectorSet;
+  /** Seals and opens network tokens. Null when no TOKEN_KEY is configured, in which case nothing can be connected. */
+  vault: TokenVault | null;
+  /** The clock. Tests move it to walk a publication through its whole timeline. */
+  now: () => Date;
 }
 
 /** Source ffmpeg reads from: the disk path with local storage, or a short-lived signed URL with S3. */
