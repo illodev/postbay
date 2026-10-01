@@ -1,0 +1,87 @@
+# Everything on one machine: PostgreSQL, MinIO (S3-compatible storage), the app and Caddy for TLS.
+#
+#   cp deploy/.env.example deploy/.env      # then edit it
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env run --rm app \
+#     node apps/api/dist/cli.js bootstrap --workspace "Acme" --brand "Acme Spain" --timezone Europe/Madrid --admin you@example.com
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: estudio
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+      POSTGRES_DB: estudio
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U estudio']
+      interval: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
+      # Browsers upload and download straight to the media domain, so it must allow the app's origin.
+      MINIO_API_CORS_ALLOW_ORIGIN: https://${APP_DOMAIN:?set APP_DOMAIN}
+    volumes:
+      - media:/data
+
+  # Creates the private, versioned bucket once.
+  minio-init:
+    image: minio/mc
+    depends_on: [minio]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY}
+      S3_BUCKET: ${S3_BUCKET:-estudio}
+    entrypoint: >
+      sh -c "until mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD; do sleep 1; done;
+             mc mb --ignore-existing local/$$S3_BUCKET && mc version enable local/$$S3_BUCKET"
+
+  app:
+    build:
+      context: ..
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://estudio:${DB_PASSWORD}@db:5432/estudio
+      SECRET: ${SECRET:?set SECRET (32+ random characters)}
+      APP_URL: https://${APP_DOMAIN}
+      MEDIA_URL: https://${MEDIA_DOMAIN:?set MEDIA_DOMAIN}
+      STORAGE_DRIVER: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: https://${MEDIA_DOMAIN}
+      S3_BUCKET: ${S3_BUCKET:-estudio}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_FORCE_PATH_STYLE: 'true'
+      SMTP_URL: ${SMTP_URL:-}
+      MAIL_FROM: ${MAIL_FROM:-Studio <no-reply@localhost>}
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [app, minio]
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      MEDIA_DOMAIN: ${MEDIA_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+
+volumes:
+  db:
+  media:
+  caddy_data:

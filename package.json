@@ -1,0 +1,25 @@
+{
+  "name": "estudio-de-contenidos",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Self-hosted content studio: review, approval and publishing of content pieces for one or several brands.",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:api": "npm run dev -w @estudio/api",
+    "dev:web": "npm run dev -w @estudio/web",
+    "build": "npm run build -w @estudio/api && npm run build -w @estudio/web",
+    "typecheck": "npm run typecheck -w @estudio/api && npm run typecheck -w @estudio/web",
+    "test": "npm run test -w @estudio/api",
+    "bootstrap": "npm run bootstrap -w @estudio/api --",
+    "e2e:assets": "sh e2e/make-assets.sh",
+    "e2e": "node e2e/smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.63.0"
+  }
+}

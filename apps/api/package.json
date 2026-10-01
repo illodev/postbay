@@ -1,0 +1,36 @@
+{
+  "name": "@estudio/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/server.ts",
+    "start": "node dist/server.js",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-migrations.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "migrate": "tsx --env-file-if-exists=../../.env src/cli.ts migrate",
+    "bootstrap": "tsx --env-file-if-exists=../../.env src/cli.ts bootstrap"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1145.0",
+    "@aws-sdk/s3-request-presigner": "^3.1145.0",
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/rate-limit": "^11.2.0",
+    "@fastify/static": "^10.1.5",
+    "fastify": "^5.12.5",
+    "luxon": "^3.7.2",
+    "nodemailer": "^10.0.13",
+    "pg": "^8.23.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.7.6",
+    "@types/node": "^22.20.4",
+    "@types/nodemailer": "^8.0.2",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}
