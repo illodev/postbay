@@ -78,15 +78,18 @@ export async function pieceRef(db: Queryable, pieceId: string) {
 export async function versionRef(db: Queryable, versionId: string) {
   const v = await db.one(
     `select ver.id, ver.number, ver.fingerprint, ver.review_state, ver.created_at, ver.notes, v.id as variant_id, v.format, v.style,
-       coalesce(u.name, u.email, t.name) as author, (ver.author_token_id is not null) as by_token
+       coalesce(u.name, u.email, t.name) as author, (ver.author_token_id is not null) as by_token, coalesce(cu.name, cu.email) as token_created_by
      from version ver join variant v on v.id = ver.variant_id
      left join app_user u on u.id = ver.author_user_id left join api_token t on t.id = ver.author_token_id
+     left join app_user cu on cu.id = t.created_by
      where ver.id = $1`,
     [versionId],
   );
   return v && {
     id: v.id, number: v.number, fingerprint: v.fingerprint, review_state: v.review_state, created_at: v.created_at, notes: v.notes,
-    variant: { id: v.variant_id, format: v.format, style: v.style }, author: { kind: v.by_token ? 'token' : 'user', name: v.author },
+    variant: { id: v.variant_id, format: v.format, style: v.style },
+    // A token's upload names the person who made the token too: they are not its author, but someone deciding may want to know.
+    author: v.by_token ? { kind: 'token', name: v.author, created_by: v.token_created_by } : { kind: 'user', name: v.author },
   };
 }
 

@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { expireRuns } from '../src/services/agent.js';
 import { createEnv, type Actor, type Env } from './helpers.js';
 
 let env: Env;
@@ -146,7 +147,12 @@ describe('one agent per piece', () => {
     expect(next.body.round).toBe(2); // the abandoned run used a round
     const stale = (await env.db.one('select status, outcome, notes from agent_run where id = $1', [first.body.id]))!;
     expect(stale).toMatchObject({ status: 'finished', outcome: 'timeout' });
-    expect((await finish(first.body.id, { outcome: 'uploaded' })).status).toBe(409); // the late runner cannot report a closed run
+    // The late runner cannot reopen a closed run, but what it spent is recorded, once, so the budgets count it.
+    const late = await finish(first.body.id, { outcome: 'uploaded', cost: 1.5 });
+    expect(late.status).toBe(200);
+    expect(late.body).toMatchObject({ status: 'finished', outcome: 'timeout', cost: 1.5, detail: { closed_by_studio: true, late_report: { outcome: 'uploaded', cost: 1.5 } } });
+    expect((await finish(first.body.id, { outcome: 'failed', cost: 9 })).status).toBe(409);
+    expect(Number((await env.db.one('select cost from agent_run where id = $1', [first.body.id]))!.cost)).toBe(1.5);
   });
 
   it('keeps the lease ahead while the runner reports in', async () => {
@@ -419,5 +425,116 @@ describe('what a check needs to know', () => {
     expect(ig.text.maxChars).toBe(2200);
     expect(Array.isArray(r.body.approval_checklist)).toBe(true);
     expect((await env.call(null, 'GET', `/api/brands/${env.brandId}/requirements`)).status).toBe(401);
+  });
+});
+
+describe('the longest run', () => {
+  const beat = (runId: string) => env.call(agent, 'POST', `/api/agent-runs/${runId}/heartbeat`);
+  const at = (minutes: number) => new Date(T0.getTime() + minutes * 60_000);
+
+  it('cannot be stretched by heartbeats, and a run past it is closed and told to stop', async () => {
+    const id = await piece();
+    const r = await start(id); // 30 minutes, and 5 to upload and reply
+    let last;
+    for (let m = 4; m <= 32; m += 4) {
+      env.clock.set(at(m));
+      last = await beat(r.body.id);
+      expect(last.status).toBe(200);
+    }
+    expect(new Date(last!.body.leaseUntil).getTime()).toBe(at(35).getTime()); // not 32 + 5 = 37
+    env.clock.set(at(35.5));
+    const over = await beat(r.body.id);
+    expect(over.status).toBe(409);
+    expect((await env.db.one('select status, outcome, detail from agent_run where id = $1', [r.body.id]))).toMatchObject({ status: 'finished', outcome: 'timeout', detail: { closed_by_studio: true } });
+    expect((await start(id)).status).toBe(201); // and the piece is free again
+  });
+
+  it('is closed by the studio itself, even if nobody asks for the piece again, and the people who can step in are told', async () => {
+    const id = await piece();
+    const r = await start(id);
+    env.clock.set(at(36));
+    expect(await expireRuns(env.ctx)).toBe(1);
+    expect((await env.db.one('select status, outcome from agent_run where id = $1', [r.body.id]))).toMatchObject({ status: 'finished', outcome: 'timeout' });
+    expect((await told('agent.failed')).filter((n) => n.payload.runId === r.body.id)).toHaveLength(3);
+    expect(await expireRuns(env.ctx)).toBe(0);
+  });
+});
+
+describe('budgets shared by runs at the same time', () => {
+  it('tells each run only what the runs already going have not been given', async () => {
+    await limits({ max_cost_per_piece: 3, max_cost_per_month: 5 });
+    const p1 = await piece(), p2 = await piece(), p3 = await piece();
+    const a = await start(p1);
+    expect(a.body.limits.maxCost).toBe(3);
+    const b = await start(p2);
+    expect(b.body.limits.maxCost).toBe(2); // not 3: three of the five are set aside for the first
+    const c = await start(p3);
+    expect(c.body.error.code).toBe('monthly_budget_reached');
+    await finish(a.body.id, { outcome: 'needs_people', cost: 1 });
+    const c2 = await start(p3);
+    expect(c2.body.limits.maxCost).toBe(2);
+    const month = (await env.call(admin(), 'GET', `/api/brands/${env.brandId}/agent`)).body;
+    expect(month).toMatchObject({ spent_month: 1, reserved_month: 4 });
+  });
+
+  it('counts what a run closed as a timeout turns out to have cost', async () => {
+    await limits({ max_cost_per_piece: 5, max_cost_per_month: 5 });
+    const p1 = await piece(), p2 = await piece();
+    const a = await start(p1);
+    env.clock.set(new Date(T0.getTime() + 36 * 60_000));
+    const again = await start(p1); // the next request for the piece finds the first run abandoned and closes it
+    expect(again.status).toBe(201);
+    expect((await env.db.one('select outcome from agent_run where id = $1', [a.body.id]))!.outcome).toBe('timeout');
+    expect((await finish(a.body.id, { outcome: 'failed', cost: 4 })).status).toBe(200); // the runner's late word
+    await finish(again.body.id, { outcome: 'aborted' });
+    const b = await start(p2);
+    expect(b.body.limits.maxCost).toBe(1);
+  });
+});
+
+describe('a producer token uploads only inside a run', () => {
+  const take = (n: number) => [{ data: Buffer.from(`take ${n} ${randomUUID()}`) }];
+
+  it('needs a run on that very piece, still running', async () => {
+    const id = await piece();
+    const variant = (await env.db.one('select id from variant where piece_id = $1', [id]))!.id as string;
+    const none = await env.newVersion(agent, variant, take(1));
+    expect(none.status).toBe(409);
+    expect(none.body.error.code).toBe('no_run');
+
+    const elsewhere = await start(await piece());
+    expect(elsewhere.status).toBe(201);
+    expect((await env.newVersion(agent, variant, take(2))).body.error.code).toBe('no_run'); // a run on another piece does not cover this one
+
+    const r = await start(id);
+    expect((await env.newVersion(agent, variant, take(3))).status).toBe(201);
+    await finish(r.body.id, { outcome: 'needs_people' });
+    expect((await env.newVersion(agent, variant, take(4))).body.error.code).toBe('no_run'); // finished: no more uploads under it
+
+    await start(id);
+    env.clock.set(new Date(T0.getTime() + 36 * 60_000)); // past the longest run, before anyone closed it
+    expect((await env.newVersion(agent, variant, take(5))).body.error.code).toBe('no_run');
+    // People are not affected.
+    expect((await env.newVersion(env.users.producer, variant, take(6))).status).toBe(201);
+  });
+
+  it('lets a run for the brand fill the piece it made, and keeps another run off that piece until it finishes', async () => {
+    const run = await env.call(agent, 'POST', `/api/brands/${env.brandId}/agent-runs`, { trigger: 'slot.needs_content' });
+    expect(run.status).toBe(201);
+    const made = await env.makePiece(agent, 'video', '9:16');
+    const v = await env.newVersion(agent, made.variantId, take(1));
+    expect(v.status, JSON.stringify(v.body)).toBe(201);
+    const busy = await start(made.pieceId);
+    expect(busy.status).toBe(409);
+    expect(busy.body.error.code).toBe('piece_busy');
+
+    // A piece it did not make is not its to fill.
+    const someoneElses = await env.makePiece(env.users.producer, 'video', '9:16');
+    expect((await env.newVersion(agent, someoneElses.variantId, take(2))).body.error.code).toBe('no_run');
+
+    await finish(run.body.id, { outcome: 'uploaded', versionId: v.body.id });
+    const next = await start(made.pieceId);
+    expect(next.status).toBe(201);
+    expect(next.body.round).toBe(2); // the run that made it was its first round
   });
 });

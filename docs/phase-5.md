@@ -193,7 +193,10 @@ lines, is not read as subtitles.
 
 Files of **64 MB and more** are no longer sent in one request to the bucket. The browser sends them through the app in pieces of 8 MB,
 each beginning where the last ended. If the connection drops, or the tab is closed, **choosing the same file again carries on from
-where it stopped** (for 24 hours). The pieces wait on the server's disk (`STAGING_DIR`; a volume in the compose file); when all the bytes
+where it stopped** (for 24 hours after the last piece, and never more than three days after the upload began). The pieces wait on the
+server's disk (`STAGING_DIR`; a volume in the compose file), so what one brand may have waiting there is capped
+(`STAGING_MAX_GB_PER_BRAND`, 20 GB by default, counting what unfinished uploads declared): past it a new big upload is refused until
+others finish or expire. When all the bytes
 are there the server checks the size and hash the producer declared and only then puts the file in storage, so storage never holds
 anything unchecked. The version is then closed exactly as before, and closing checks storage once more.
 

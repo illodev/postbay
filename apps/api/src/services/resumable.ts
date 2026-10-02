@@ -28,6 +28,25 @@ export const MAX_CHUNK_BYTES = 16 * 1024 ** 2;
 /** An unfinished upload is kept this long after the last piece (or the last time the same file was chosen again). */
 export const RESUME_TTL_SEC = 24 * 3600;
 
+const positive = (v: string | undefined, fallback: number) => {
+  const n = Number(v);
+  return v !== undefined && Number.isFinite(n) && n > 0 ? n : fallback;
+};
+
+/**
+ * What the staging disk can be asked to hold. Pieces wait on this server's disk (STAGING_DIR) until the whole file is there, so a
+ * brand may have at most this many bytes declared in unfinished uploads (STAGING_MAX_GB_PER_BRAND, 20 by default), and an upload
+ * that keeps being resumed is still dropped this long after it began, however recently its last piece came.
+ */
+export const STAGING_LIMITS = {
+  maxPendingBytesPerBrand: Math.round(positive(process.env.STAGING_MAX_GB_PER_BRAND, 20) * 1024 ** 3),
+  maxAgeSec: 72 * 3600,
+};
+
+/** SQL for the new expiry of an unfinished upload: a day from now, but never past its absolute limit. Takes the two parameters' places. */
+export const resumeExpiry = (ttlParam: string, maxAgeParam: string) =>
+  `least(now() + make_interval(secs => ${ttlParam}), created_at + make_interval(secs => ${maxAgeParam}))`;
+
 export const stagingFile = (ctx: Ctx, uploadId: string) => path.join(path.resolve(ctx.config.STAGING_DIR), `${uploadId}.part`);
 
 interface UploadRow {
@@ -107,9 +126,9 @@ export async function appendPiece(ctx: Ctx, p: Principal, uploadId: string, offs
       await handle.close();
     }
     const after = await db.one<UploadRow>(
-      `update upload set received_bytes = received_bytes + $2, expires_at = now() + make_interval(secs => $3) where id = $1
+      `update upload set received_bytes = received_bytes + $2, expires_at = ${resumeExpiry('$3', '$4')} where id = $1
        returning id, brand_id, storage_key, mime, bytes, sha256, received_bytes, completed_at, consumed_at, resumable, false as expired`,
-      [uploadId, piece.length, RESUME_TTL_SEC],
+      [uploadId, piece.length, RESUME_TTL_SEC, STAGING_LIMITS.maxAgeSec],
     );
     return { kind: 'ok', progress: progressOf(after!) };
   });

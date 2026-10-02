@@ -9,9 +9,10 @@ import { badRequest, conflict, forbidden } from '../errors.js';
 import { audit } from './audit.js';
 import { loadVariant, loadVersion } from './loaders.js';
 import { notifyRoles } from './notify.js';
+import { runCovering } from './agent.js';
 import { refreshPieceState } from './pieces.js';
 import { probeMeta } from './renditions.js';
-import { CHUNK_BYTES, RESUME_TTL_SEC } from './resumable.js';
+import { CHUNK_BYTES, resumeExpiry, RESUME_TTL_SEC, STAGING_LIMITS } from './resumable.js';
 
 const MAX_BYTES = 4 * 1024 ** 3;
 const UPLOAD_TTL_SEC = 3600;
@@ -71,38 +72,56 @@ export async function requestUploads(ctx: Ctx, p: Principal, variantId: string, 
   await authorize(ctx.db, p, variant.brand_id, 'version.upload');
   if (variant.piece_discarded) throw conflict('piece_discarded', 'The piece is discarded');
   const a = actorCols(p);
-  const out = [];
-  for (const f of input.files) {
-    if (f.resumable) {
-      const again = await ctx.db.one<{ id: string; received_bytes: string; completed_at: Date | null }>(
-        `update upload set expires_at = now() + make_interval(secs => $8)
-         where id = (select id from upload where variant_id = $1 and resumable and consumed_at is null and expires_at > now()
-                       and sha256 = $2 and bytes = $3 and name = $4 and mime = $5
-                       and created_by_user is not distinct from $6 and created_by_token is not distinct from $7
-                     order by created_at desc limit 1)
-         returning id, received_bytes, completed_at`,
-        [variantId, f.sha256, f.bytes, f.name, f.mime, a.user, a.token, RESUME_TTL_SEC],
+  return ctx.db.tx(async (db) => {
+    // Big files wait on this server's disk until they are whole, so what a brand may have waiting there is capped. One request at a
+    // time per brand counts it, so two at once cannot both squeeze under the cap.
+    if (input.files.some((f) => f.resumable)) await db.query(`select pg_advisory_xact_lock(hashtext('staging:' || $1::text))`, [variant.brand_id]);
+    let staged: number | null = null;
+    const out = [];
+    for (const f of input.files) {
+      if (f.resumable) {
+        const again = await db.one<{ id: string; received_bytes: string; completed_at: Date | null }>(
+          `update upload set expires_at = ${resumeExpiry('$8', '$9')}
+           where id = (select id from upload where variant_id = $1 and resumable and consumed_at is null and expires_at > now()
+                         and sha256 = $2 and bytes = $3 and name = $4 and mime = $5
+                         and created_by_user is not distinct from $6 and created_by_token is not distinct from $7
+                       order by created_at desc limit 1)
+           returning id, received_bytes, completed_at`,
+          [variantId, f.sha256, f.bytes, f.name, f.mime, a.user, a.token, RESUME_TTL_SEC, STAGING_LIMITS.maxAgeSec],
+        );
+        if (again) {
+          out.push({ uploadId: again.id, name: f.name, resumable: { offset: Number(again.received_bytes), bytes: f.bytes, complete: !!again.completed_at, chunkSize: CHUNK_BYTES } });
+          continue;
+        }
+        staged ??= Number((await db.one<{ n: string }>(
+          `select coalesce(sum(bytes), 0) as n from upload
+           where brand_id = $1 and resumable and completed_at is null and consumed_at is null and expires_at > now()`,
+          [variant.brand_id],
+        ))!.n);
+        if (staged + f.bytes > STAGING_LIMITS.maxPendingBytesPerBrand) {
+          const gb = (n: number) => `${(n / 1024 ** 3).toFixed(1)} GB`;
+          throw conflict('staging_full',
+            `This brand already has ${gb(staged)} of unfinished uploads waiting on the server (at most ${gb(STAGING_LIMITS.maxPendingBytesPerBrand)}). Finish or abandon those first: an unfinished upload is dropped a day after its last piece.`,
+            { pendingBytes: staged, maxBytes: STAGING_LIMITS.maxPendingBytesPerBrand });
+        }
+        staged += f.bytes;
+      }
+      const id = randomUUID();
+      const key = `brands/${variant.brand_id}/pieces/${variant.piece_id}/${id}/${safeName(f.name)}`;
+      await db.query(
+        `insert into upload (id, brand_id, variant_id, created_by_user, created_by_token, storage_key, name, mime, bytes, sha256, resumable, expires_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now() + make_interval(secs => $12))`,
+        [id, variant.brand_id, variantId, a.user, a.token, key, f.name, f.mime, f.bytes, f.sha256, f.resumable, f.resumable ? RESUME_TTL_SEC : UPLOAD_TTL_SEC],
       );
-      if (again) {
-        out.push({ uploadId: again.id, name: f.name, resumable: { offset: Number(again.received_bytes), bytes: f.bytes, complete: !!again.completed_at, chunkSize: CHUNK_BYTES } });
+      if (f.resumable) {
+        out.push({ uploadId: id, name: f.name, resumable: { offset: 0, bytes: f.bytes, complete: false, chunkSize: CHUNK_BYTES } });
         continue;
       }
+      const put = await ctx.storage.presignPut(key, { mime: f.mime, bytes: f.bytes, sha256: f.sha256, expiresSec: UPLOAD_TTL_SEC });
+      out.push({ uploadId: id, name: f.name, ...put });
     }
-    const id = randomUUID();
-    const key = `brands/${variant.brand_id}/pieces/${variant.piece_id}/${id}/${safeName(f.name)}`;
-    await ctx.db.query(
-      `insert into upload (id, brand_id, variant_id, created_by_user, created_by_token, storage_key, name, mime, bytes, sha256, resumable, expires_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now() + make_interval(secs => $12))`,
-      [id, variant.brand_id, variantId, a.user, a.token, key, f.name, f.mime, f.bytes, f.sha256, f.resumable, f.resumable ? RESUME_TTL_SEC : UPLOAD_TTL_SEC],
-    );
-    if (f.resumable) {
-      out.push({ uploadId: id, name: f.name, resumable: { offset: 0, bytes: f.bytes, complete: false, chunkSize: CHUNK_BYTES } });
-      continue;
-    }
-    const put = await ctx.storage.presignPut(key, { mime: f.mime, bytes: f.bytes, sha256: f.sha256, expiresSec: UPLOAD_TTL_SEC });
-    out.push({ uploadId: id, name: f.name, ...put });
-  }
-  return out;
+    return out;
+  });
 }
 
 interface Resolved {
@@ -179,6 +198,11 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
     await db.query('select 1 from variant where id = $1 for update', [variantId]);
     const fresh = await loadVariant(db, variantId);
     if (fresh.piece_discarded) throw conflict('piece_discarded', 'The piece is discarded');
+    // A token is the agent's hand: it uploads only inside a run it started on this piece (or, for a run that makes something new, on
+    // the piece it made during that run), so the round cap, the budgets, the longest run and one run per piece hold for every upload.
+    if (a.token && !(await runCovering(db, a.token, fresh.piece_id, ctx.now()))) {
+      throw conflict('no_run', 'A producer token uploads a version only inside a run it started on this piece and that is still running: start one first (POST /pieces/:id/agent-runs)');
+    }
     const still = await db.query('select id from upload where id = any($1) and consumed_at is null for update', [ids]);
     if (still.length !== ids.length) throw conflict('upload_consumed', 'An upload was already used in another version');
 
@@ -200,7 +224,7 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
     // being published this very moment cannot be stopped and goes out as approved.
     const held = await db.query(
       `update publication set status = 'on_hold', updated_at = now(), hold_reason = 'A new version is awaiting approval',
-         next_run_at = case when native_scheduled then $2::timestamptz else null end
+         next_run_at = case when native_scheduled or held_on_network then $2::timestamptz else null end
        where variant_id = $1 and status in ('scheduled','awaiting_reapproval','preparing','ready') returning id`,
       [variantId, ctx.now()],
     );
@@ -256,10 +280,45 @@ export async function listAssets(db: Queryable, versionId: string) {
   return db.query('select * from asset where version_id = $1 order by position, kind', [versionId]);
 }
 
-/** Fingerprint recomputed from the stored files. It must always match the version's own. */
+/** Fingerprint recomputed from the version's file records. It must always match the version's own. */
 export async function recomputeFingerprint(db: Queryable, versionId: string): Promise<string> {
   const assets = await listAssets(db, versionId);
   return fingerprintOf(assets.map((x) => ({ kind: x.kind, position: x.position, sha256: x.sha256 })));
+}
+
+/**
+ * Whether the objects in storage are still the files the version was made of: each one's size and sha256 as storage reports them
+ * (S3 keeps the checksum the upload was verified with; local storage hashes the file again). A file replaced or removed in storage,
+ * which the database cannot see, makes this false.
+ */
+export async function storedFilesMatch(ctx: Ctx, versionId: string, db: Queryable = ctx.db): Promise<boolean> {
+  for (const a of await listAssets(db, versionId)) {
+    const stored = await ctx.storage.stat(a.storage_key).catch(() => null);
+    if (!stored || stored.bytes !== Number(a.bytes) || stored.sha256 !== a.sha256) return false;
+  }
+  return true;
+}
+
+export type Uploader =
+  | { kind: 'user'; id: string; name: string | null }
+  | { kind: 'token'; id: string; name: string; created_by: { id: string; name: string | null } };
+
+/**
+ * Who uploaded a version: a person, or a producer token and the person who made it. Approval does not depend on this (only on
+ * permissions: whoever made a token is not the author of what it uploads), but people deciding should see it.
+ */
+export async function uploaderOf(db: Queryable, versionId: string): Promise<Uploader | null> {
+  const r = await db.one(
+    `select ver.author_user_id, ver.author_token_id, coalesce(u.name, u.email) as user_name, t.name as token_name,
+       t.created_by as token_created_by, coalesce(cu.name, cu.email) as token_created_by_name
+     from version ver left join app_user u on u.id = ver.author_user_id
+     left join api_token t on t.id = ver.author_token_id left join app_user cu on cu.id = t.created_by
+     where ver.id = $1`,
+    [versionId],
+  );
+  if (!r) return null;
+  if (r.author_token_id) return { kind: 'token', id: r.author_token_id, name: r.token_name, created_by: { id: r.token_created_by, name: r.token_created_by_name } };
+  return { kind: 'user', id: r.author_user_id, name: r.user_name };
 }
 
 export async function getVersion(ctx: Ctx, p: Principal, versionId: string) {
@@ -275,7 +334,7 @@ export async function getVersion(ctx: Ctx, p: Principal, versionId: string) {
     });
   }
   const approvals = await ctx.db.query(
-    `select a.id, a.decision, a.account_ids, a.checklist, a.note, a.created_at, a.approved_fingerprint,
+    `select a.id, a.decision, a.account_ids, a.checklist, a.note, a.created_at, a.approved_fingerprint, a.piece_title, a.ai_generated,
        coalesce(u.name, u.email) as approver, a.approved_fingerprint = $2 as matches_fingerprint
      from approval a join app_user u on u.id = a.approver_user_id where a.version_id = $1 order by a.created_at`,
     [versionId, version.fingerprint],
@@ -294,7 +353,7 @@ export async function getVersion(ctx: Ctx, p: Principal, versionId: string) {
   return {
     id: version.id, number: version.number, notes: version.notes, fingerprint: version.fingerprint,
     review_state: version.review_state, created_at: version.created_at, author: author?.name ?? null,
-    author_user_id: version.author_user_id, by_agent: version.author_token_id !== null,
+    author_user_id: version.author_user_id, by_agent: version.author_token_id !== null, uploaded_by: await uploaderOf(ctx.db, versionId),
     variant: { id: variant.id, format: variant.format, style: variant.style, piece_id: variant.piece_id },
     piece: await ctx.db.one('select id, title, kind, brief, ai_generated, review_state from piece where id = $1', [version.piece_id]),
     brand, assets: withUrls, approvals, versions: siblings,

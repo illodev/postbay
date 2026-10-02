@@ -3,7 +3,8 @@ import { actorCols, authorize, type Principal } from '../auth/principal.js';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { derivePieceState, type VersionState } from '../domain/review.js';
-import { badRequest, conflict, notFound } from '../errors.js';
+import { can } from '../domain/roles.js';
+import { badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { audit } from './audit.js';
 import { loadPiece, loadVariant } from './loaders.js';
 
@@ -17,6 +18,18 @@ export const pieceInput = z.object({
   campaignId: z.string().uuid().nullish(),
   targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   aiGenerated: z.boolean().default(false),
+});
+
+/**
+ * An edit: only what is sent changes. (The creation schema's defaults must not apply here: a title-only edit would otherwise reset
+ * the brief and turn the AI label off.)
+ */
+export const piecePatch = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+  brief: z.string().max(10_000).optional(),
+  campaignId: z.string().uuid().nullish(),
+  targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  aiGenerated: z.boolean().optional(),
 });
 
 export const variantInput = z.object({
@@ -115,12 +128,25 @@ export async function getPiece(ctx: Ctx, p: Principal, pieceId: string) {
   return { ...piece, variants, publications };
 }
 
+/**
+ * Edits a piece. What goes to a network with the files (the title, the AI label) is taken from the approval, so an edit after it
+ * changes nothing that is already approved; and taking the AI label away once a version has been approved is for approvers only:
+ * a producer, person or token, can add the label but never remove it.
+ */
 export async function updatePiece(ctx: Ctx, p: Principal, pieceId: string, raw: unknown) {
-  const input = pieceInput.partial().omit({ kind: true }).parse(raw);
+  const input = piecePatch.parse(raw);
   return ctx.db.tx(async (db) => {
     const before = await loadPiece(db, pieceId, true);
-    await authorize(db, p, before.brand_id, 'piece.create');
+    const role = await authorize(db, p, before.brand_id, 'piece.create');
     if (input.campaignId !== undefined) await assertCampaign(db, before.brand_id, input.campaignId);
+    if (input.aiGenerated === false && before.ai_generated && !(p.kind === 'user' && can(role, 'version.approve'))) {
+      const approved = await db.one(
+        `select 1 from approval a join version ver on ver.id = a.version_id join variant v on v.id = ver.variant_id
+         where v.piece_id = $1 and a.decision = 'approve' limit 1`,
+        [pieceId],
+      );
+      if (approved) throw forbidden('This piece was approved as made with AI: only an approver can take that label away');
+    }
     const after = (await db.one(
       `update piece set title = coalesce($2, title), brief = coalesce($3, brief),
          campaign_id = case when $4::boolean then $5 else campaign_id end,
@@ -159,19 +185,34 @@ export async function addVariant(ctx: Ctx, p: Principal, pieceId: string, raw: u
   });
 }
 
-/** Discarding is allowed from any state: the piece stops being live and anything scheduled is cancelled. */
+/**
+ * Discarding is allowed from any state: the piece stops being live and anything scheduled is cancelled. Cancelling what is scheduled
+ * is an approver's decision, so once a version is approved or something is scheduled, a producer (a person or a token) can no longer
+ * discard the piece: an approver has to.
+ */
 export async function discardPiece(ctx: Ctx, p: Principal, pieceId: string) {
   return ctx.db.tx(async (db) => {
     const piece = await loadPiece(db, pieceId, true);
-    await authorize(db, p, piece.brand_id, 'piece.discard');
+    const role = await authorize(db, p, piece.brand_id, 'piece.discard');
     if (piece.discarded_at) return piece;
+    if (!(p.kind === 'user' && can(role, 'publication.schedule'))) {
+      const committed = await db.one(
+        `select 1 from variant v where v.piece_id = $1 and (
+           exists (select 1 from version ver where ver.variant_id = v.id and ver.review_state = 'approved')
+           or exists (select 1 from publication pub where pub.variant_id = v.id
+                        and pub.status in ('scheduled','awaiting_reapproval','on_hold','preparing','ready','publishing')))
+         limit 1`,
+        [pieceId],
+      );
+      if (committed) throw forbidden('This piece has an approved version or something scheduled: an approver has to discard it');
+    }
     await db.query(
       `update version set review_state = 'discarded'
        where variant_id in (select id from variant where piece_id = $1) and review_state in ('in_review','changes_requested','approved')`,
       [pieceId],
     );
     await db.query(
-      `update publication set status = 'cancelled', updated_at = now(), next_run_at = case when native_scheduled then $2::timestamptz else null end
+      `update publication set status = 'cancelled', updated_at = now(), next_run_at = case when native_scheduled or held_on_network then $2::timestamptz else null end
        where variant_id in (select id from variant where piece_id = $1) and status in ('scheduled','awaiting_reapproval','on_hold','preparing','ready')`,
       [pieceId, ctx.now()],
     );

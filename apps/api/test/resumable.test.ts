@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { appendFile, readFile, readdir, stat, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { appendPiece, CHUNK_BYTES, MAX_CHUNK_BYTES, purgeStaging, stagingFile } from '../src/services/resumable.js';
+import { appendPiece, CHUNK_BYTES, MAX_CHUNK_BYTES, purgeStaging, STAGING_LIMITS, stagingFile } from '../src/services/resumable.js';
 import { createEnv, type Actor, type Env } from './helpers.js';
 
 let env: Env;
@@ -431,5 +431,54 @@ describe('clearing what nobody will finish', () => {
     } finally {
       await quiet.close();
     }
+  });
+});
+
+describe('what the staging disk can be asked to hold', () => {
+  const pending = async () => Number((await env.db.one(
+    `select coalesce(sum(bytes), 0) as n from upload where brand_id = $1 and resumable and completed_at is null and consumed_at is null and expires_at > now()`,
+    [env.brandId],
+  ))!.n);
+
+  it('refuses a big file over what the brand may have waiting, and takes it once room is made', async () => {
+    const saved = STAGING_LIMITS.maxPendingBytesPerBrand;
+    STAGING_LIMITS.maxPendingBytesPerBrand = (await pending()) + 1000;
+    try {
+      const a = await start(P(), 600);
+      const data = randomBytes(600);
+      const refused = await env.call(P(), 'POST', `/api/variants/${a.variantId}/uploads`, { files: [{ name: 'other.mp4', mime: 'video/mp4', bytes: 600, sha256: sha(data), resumable: true }] });
+      expect(refused.status).toBe(409);
+      expect(refused.body.error.code).toBe('staging_full');
+      // Two files in one request count together: each would fit alone, both do not.
+      const both = await env.call(P(), 'POST', `/api/variants/${a.variantId}/uploads`, {
+        files: [250, 250].map((n, i) => { const d = randomBytes(n); return { name: `q${i}.mp4`, mime: 'video/mp4', bytes: n, sha256: sha(d), resumable: true }; }),
+      });
+      expect(both.body.error.code).toBe('staging_full');
+      const two = await env.call(P(), 'POST', `/api/variants/${a.variantId}/uploads`, {
+        files: [150, 200].map((n, i) => { const d = randomBytes(n); return { name: `p${i}.mp4`, mime: 'video/mp4', bytes: n, sha256: sha(d), resumable: true }; }),
+      });
+      expect(two.status).toBe(200);
+      // Choosing the same file again resumes it: it is not counted a second time.
+      expect((await env.call(P(), 'POST', `/api/variants/${a.variantId}/uploads`, { files: [{ name: 'big.mp4', mime: 'video/mp4', bytes: 600, sha256: sha(a.data), resumable: true }] })).status).toBe(200);
+      // Once the first file is whole, it has left the disk for storage, and there is room again.
+      expect((await send(P(), a.uploadId, 0, a.data)).statusCode).toBe(200);
+      expect((await finish(P(), a.uploadId)).status).toBe(200);
+      expect((await env.call(P(), 'POST', `/api/variants/${a.variantId}/uploads`, { files: [{ name: 'other.mp4', mime: 'video/mp4', bytes: 600, sha256: sha(data), resumable: true }] })).status).toBe(200);
+      // A file sent straight to storage does not wait on this disk, so it is not counted.
+      const direct = randomBytes(5000);
+      expect((await env.call(P(), 'POST', `/api/variants/${a.variantId}/uploads`, { files: [{ name: 'd.mp4', mime: 'video/mp4', bytes: direct.length, sha256: sha(direct) }] })).status).toBe(200);
+    } finally {
+      STAGING_LIMITS.maxPendingBytesPerBrand = saved;
+    }
+  });
+
+  it('drops an unfinished upload a few days after it began, however often it is resumed', async () => {
+    const s = await start(P(), 1000);
+    // It began just over three days ago and has been resumed ever since.
+    await env.db.query(`update upload set created_at = now() - interval '73 hours' where id = $1`, [s.uploadId]);
+    expect((await send(P(), s.uploadId, 0, s.data.subarray(0, 400))).statusCode).toBe(200);
+    const again = await progress(P(), s.uploadId);
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe('upload_expired');
   });
 });

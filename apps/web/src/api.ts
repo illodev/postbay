@@ -171,6 +171,8 @@ export interface VersionDetail {
   author: string | null;
   author_user_id: string | null;
   by_agent: boolean;
+  /** A person, or a producer token and the person who made it (who is not, for approval, its author). */
+  uploaded_by?: { kind: 'user'; id: string; name: string | null } | { kind: 'token'; id: string; name: string; created_by: { id: string; name: string | null } } | null;
   variant: { id: string; format: string; style: string; piece_id: string };
   piece: { id: string; title: string; kind: string; brief: string; ai_generated: boolean; review_state: PieceState };
   brand: { name: string; timezone: string; approval_rules: BrandSettings['rules']; paused: boolean };

@@ -12,7 +12,7 @@ network, so it can be built and used while those paperwork steps run.
 | Pieces with variants (format and style) and immutable numbered versions | Done |
 | Roles per brand: admin, approver, reviewer, producer, reader; one person, different roles in different brands | Done |
 | Approvals needed per brand (1 by default); moving an approved date needing another approval (off by default) | Done. Per-brand settings |
-| Producer can be a person or an API token; the app treats both the same way | Done |
+| Producer can be a person or an API token; the app treats both the same way | Done. Since phase 3 a token uploads a version only inside an agent run ([docs/phase-3.md](phase-3.md#the-safeguards)) |
 | Video viewer: frame by frame, comments on a moment or span, marks on the timeline, frame saved with each comment | Done |
 | Images, carousels and PDF: a page behind another, comment anchored to a point or a rectangle | Done |
 | Compare versions side by side or flipping, synchronised playback; earlier comments shown as "resolved in v4" or "still open" | Done |
@@ -40,7 +40,14 @@ network, so it can be built and used while those paperwork steps run.
   whatever their role, and is checked in the approval itself.
 - **A token-authored version has no person behind it**, so any approver can approve it. Tokens are created by admins,
   and the admin who created one is not blocked from approving what that agent makes (otherwise the usual setup, an admin
-  who owns the agent and approves its work, would be impossible).
+  who owns the agent and approves its work, would be impossible). The version says which token uploaded it and who made the
+  token, and the record of the approval keeps both, so anyone reading it later can see it.
+- **What goes out with the files is approved with them.** The approval records the piece's title and AI label as the approver
+  saw them, and a publication takes both from it: renaming the piece afterwards changes nothing already approved (an approver
+  can still set the title of one publication). A producer can mark a piece as made with AI at any time, and that label goes
+  out even on what is already scheduled; once a version is approved, only an approver can take it away.
+- **Discarding a piece cancels what it has scheduled, so it is an approver's decision once anything is approved or
+  scheduled.** Before that, a producer can discard their own drafts.
 - **The fingerprint** is the sha256 of one line per file, `position<TAB>kind<TAB>sha256`, sorted by position and kind.
   A different cover, a reordered carousel or one changed byte gives a different fingerprint.
 - **A new version puts scheduled publications on hold instead of moving them.** The approver brings them back with an
