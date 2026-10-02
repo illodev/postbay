@@ -1,0 +1,5 @@
+# What each machine adds next to the compose file: never committed.
+config/
+secrets/
+projects/
+.env

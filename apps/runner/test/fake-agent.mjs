@@ -1,7 +1,7 @@
 // A stand-in for the agent, driven by FAKE_AGENT_MODE. It reads the instructions on stdin and works in the run directory,
 // the way a real agent would: previous files in input/previous, comments in input/comments.json, new files in output/.
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const mode = process.env.FAKE_AGENT_MODE ?? 'ok';
@@ -132,6 +132,32 @@ switch (mode) {
     });
     revise();
     write(result({ notes: `readable: ${readable.join(',') || 'none'}; uid ${process.getuid()}; pid ${process.pid}` }));
+    break;
+  }
+  case 'project':
+  case 'project-leak': {
+    // A code-driven agent: it edits the project's sources, "renders" the video from them, and says what it saw. Without a project
+    // (a piece with no source) it does what the others do.
+    const dir = process.env.ESTUDIO_PROJECT_DIR;
+    if (!dir) {
+      revise();
+      write(result({ notes: `no project; instructions: ${instructions.split('\n')[0]}` }));
+      break;
+    }
+    const seen = readdirSync(dir).sort();
+    let branch = 'not a git worktree';
+    try {
+      branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, LC_ALL: 'C' } }).toString().trim();
+    } catch (err) {
+      const why = String(err.stderr ?? err).trim().split('\n')[0];
+      if (!/not a git repository/.test(why)) branch = `git failed: ${why}`;
+    }
+    const round = seen.filter((f) => /^round-\d+\.txt$/.test(f)).length + 1;
+    for (const c of comments) appendFileSync(path.join(dir, 'scene.js'), `// ${c.id}: ${c.body}\n`);
+    writeFileSync(path.join(dir, `round-${round}.txt`), `round ${round}\n`);
+    if (mode === 'project-leak') writeFileSync(path.join(dir, 'secret.txt'), `${process.env.FAKE_LEAK}\n`);
+    revise('render.mp4');
+    write(result({ notes: `project ${dir}; branch ${branch}; saw ${seen.join(',')}; first line: ${instructions.split('\n')[0]}` }));
     break;
   }
   case 'instructions':

@@ -70,6 +70,10 @@ specific to any client: names, time zones, languages and review rules are config
   *only people* that the agent cannot answer or resolve, and a token that can never approve or schedule.
 - **A ledger.** Every run, its cost and what it did, in *Settings → Agent* and on the piece page, with the month's spending
   against its budget. Approvers and admins are told when a piece goes to a person.
+- **Pieces made with code.** A piece can say where its project lives (a folder of code and material a tool renders into the video). The
+  agent then changes the project and renders it again, in a git worktree and branch of the piece's own, and the new version names the
+  commit it came from. The runner has [its own Docker image](apps/runner/README.md#running-the-runner-on-any-machine), with Claude Code,
+  Chromium and a rendering engine next to it.
 - **Empty slots ask for content.** A slot still empty a few days before its date is announced, with the campaign's brief, so an
   agent can fill it.
 
@@ -138,7 +142,7 @@ apps/api    Node 22, TypeScript, Fastify, PostgreSQL (plain SQL), zod
 apps/web    React, Vite, TanStack Query; plain CSS, light and dark, works on a phone
 apps/runner Node, TypeScript: the agent runner. Listens to webhooks, runs the agent's command, checks and uploads
 e2e         real-browser tests: phase 1's flow, phase 2's publishing against fake networks, phase 3's agent loop, phase 4's networks, results and prizes
-deploy      Docker Compose with PostgreSQL, MinIO, Caddy (TLS), the app and a worker
+deploy      Docker Compose with PostgreSQL, MinIO, Caddy (TLS), the app and a worker; deploy/runner: the agent runner's own image
 ```
 
 Files never pass through the app: the producer asks for signed URLs and uploads straight to storage, then closes the
@@ -193,7 +197,7 @@ scripts use `Authorization: Bearer <producer token>`.
 
 | Method and path | What it does |
 | --- | --- |
-| `POST /brands/:id/pieces`, `POST /pieces/:id/variants` | Create a piece and add a variant |
+| `POST /brands/:id/pieces`, `POST /pieces/:id/variants` | Create a piece (optionally with `source`, where its project lives) and add a variant |
 | `POST /variants/:id/uploads` | Declare files with their sha256 and get signed upload URLs; with `resumable: true` for a big file, an upload to send in pieces instead |
 | `GET`, `PATCH /uploads/:id/resumable`, `POST /uploads/:id/resumable/finish` | Ask how much of a big file has arrived, send the next piece (`Upload-Offset`, raw bytes), and have the whole checked and stored |
 | `POST /variants/:id/versions` | Close a version: the uploaded files, notes and the comments it resolves. With a producer token, only inside a run it started on the piece |
@@ -243,7 +247,7 @@ See [`.env.example`](.env.example). The ones that matter:
 ## Tests
 
 ```sh
-npm test                 # 750 API tests and 53 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
+npm test                 # 756 API tests and 101 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
 npm run typecheck
 ```
 

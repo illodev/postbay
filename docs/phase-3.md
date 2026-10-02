@@ -73,7 +73,7 @@ Every delivery is a `POST` of JSON:
 | `publication.failed` | A post could not be published | the same, plus `error` (`class`, `message`) |
 | `ping` | The *Send a test* button; always delivered to that webhook only | `message` |
 
-`piece` is `id`, `title`, `kind`, `brief`, `target_date`, `ai_generated`, `campaign_id`. `version` is `id`, `number`, `fingerprint`,
+`piece` is `id`, `title`, `kind`, `brief`, `target_date`, `ai_generated`, `campaign_id` and `source` (where the piece's project lives, or `null`: see [pieces made from a project](../apps/runner/README.md#pieces-made-from-a-project)). `version` is `id`, `number`, `fingerprint`,
 `review_state`, `created_at`, `notes`, `variant` (`id`, `format`, `style`) and `author`. An **anchor** is
 `{ "type": "time", "t": 2.5, "t_end": 4 }` for a moment or span of a video, or `{ "type": "region", "page": 1, "x": 0.1, "y": 0.2, "w": 0.3, "h": 0.1 }`
 (fractions of the page) for a point or area. `frame_url` is a signed link to the frame, valid for an hour **from each delivery
@@ -191,7 +191,8 @@ a version with `resolves`, comments, replies, slots) are unchanged. Added in thi
   low-resolution file, loudness, or text under a network's interface becomes a warning in the version's notes, where reviewers see it.
 - **Safe zones stay approximate** (phase 2), so *covered zones* is a heuristic that looks for fine detail where a network's interface
   sits. It can only warn.
-- **The runner is not in the studio's image.** It runs where the agent's command is installed, with its own queue on disk. One studio
+- **The runner is not in the studio's image.** It runs where the agent's command is installed, with its own queue on disk (or in
+  [an image of its own](../apps/runner/README.md#running-the-runner-on-any-machine), with Claude Code, Chromium and a rendering engine). One studio
   can serve several runners and one runner several brands.
 
 ## What was verified, and how

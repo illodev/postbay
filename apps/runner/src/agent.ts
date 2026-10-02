@@ -65,31 +65,65 @@ export interface AgentPlan {
   gid?: number;
 }
 
+const underPiece = (dirs: Dirs, p: string) => {
+  const rel = path.relative(dirs.piece, p);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+};
+
+/** A path of the piece directory as the agent sees it: under `sandbox.pieceDir` when the sandbox mounts the piece somewhere else. */
+const seenIn = (agent: AgentSpec, dirs: Dirs) => (p: string) => {
+  const mount = agent.sandbox?.pieceDir;
+  return mount ? path.posix.join(mount, path.relative(dirs.piece, p).split(path.sep).join('/')) : p;
+};
+
+/**
+ * Where the agent sees a piece's project directory. A git worktree sits inside the piece directory, so it is wherever the piece is; a
+ * project worked on in place (dir mode) is elsewhere, and shown at `sandbox.projectDir`, or at its own path.
+ */
+export function agentProjectDir(agent: AgentSpec, dirs: Dirs, dir: string): string {
+  return underPiece(dirs, dir) ? seenIn(agent, dirs)(dir) : (agent.sandbox?.projectDir ?? dir);
+}
+
+/** A piece's project, for one run: the directory the agent works in and, in git mode, the clone its worktree belongs to. */
+export interface ProjectPaths {
+  dir: string;
+  repoDir?: string;
+}
+
 /**
  * Puts the agent's command together for one run. With a sandbox, its command comes first, filled with the runner's paths, and
  * the agent's command and ESTUDIO_* variables get the paths as the agent sees them (`sandbox.pieceDir` when the sandbox mounts
- * the piece directory somewhere else).
+ * the piece directory somewhere else, `sandbox.projectDir` for a project outside it).
  */
 export function planAgent(
   agent: AgentSpec, dirs: Dirs,
-  run: { brand: string; runId: string; pieceId: string; maxBudget?: string; maxMinutes: string },
+  run: { brand: string; runId: string; pieceId: string; maxBudget?: string; maxMinutes: string; project?: ProjectPaths },
   source: Record<string, string | undefined> = process.env,
 ): AgentPlan {
   const host = { runDir: dirs.run, inputDir: dirs.input, outputDir: dirs.output, pieceDir: dirs.piece, sourcesDir: dirs.sources };
-  const mount = agent.sandbox?.pieceDir;
-  const seen = (p: string) => (mount ? path.posix.join(mount, path.relative(dirs.piece, p).split(path.sep).join('/')) : p);
+  const seen = seenIn(agent, dirs);
   const inside = Object.fromEntries(Object.entries(host).map(([k, v]) => [k, seen(v)])) as typeof host;
+  const project = run.project;
+  const agentProject = project ? agentProjectDir(agent, dirs, project.dir) : undefined;
   const command = buildCommand(agent.command, {
     ...inside, instructionsFile: 'instructions.md', maxBudget: run.maxBudget, maxMinutes: run.maxMinutes, runId: run.runId, pieceId: run.pieceId,
+    projectDir: agentProject,
   });
   const prefix = agent.sandbox
     ? buildCommand(agent.sandbox.command, {
         ...host, agentRunDir: inside.runDir, agentPieceDir: inside.pieceDir, runId: run.runId, pieceId: run.pieceId, brand: run.brand,
         home: agent.env.HOME ?? source.HOME, uid: String(agent.runAs?.uid ?? process.getuid?.() ?? ''), gid: String(agent.runAs?.gid ?? process.getgid?.() ?? ''),
+        // The project: where it is, where the agent sees it, what to mount when it is not inside the piece directory (dir mode), and
+        // the clone a git worktree belongs to (mounted read-only, it lets `git status` work inside the sandbox).
+        projectDir: project?.dir, agentProjectDir: agentProject,
+        projectMount: project && !underPiece(dirs, project.dir) ? project.dir : undefined, projectRepo: project?.repoDir,
       })
     : [];
   const env = agentEnv(
-    { ...agent.env, ESTUDIO_RUN_DIR: inside.runDir, ESTUDIO_INPUT_DIR: inside.inputDir, ESTUDIO_OUTPUT_DIR: inside.outputDir, ESTUDIO_SOURCES_DIR: inside.sourcesDir },
+    {
+      ...agent.env, ESTUDIO_RUN_DIR: inside.runDir, ESTUDIO_INPUT_DIR: inside.inputDir, ESTUDIO_OUTPUT_DIR: inside.outputDir, ESTUDIO_SOURCES_DIR: inside.sourcesDir,
+      ...(agentProject ? { ESTUDIO_PROJECT_DIR: agentProject } : {}),
+    },
     source,
     { identity: !agent.runAs },
   );
