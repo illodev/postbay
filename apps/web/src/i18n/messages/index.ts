@@ -9,13 +9,14 @@ import { layout } from './layout';
 import { piece } from './piece';
 import { pieces } from './pieces';
 import { prizes } from './prizes';
+import { publications } from './publications';
 import { publish } from './publish';
 import { results } from './results';
 import { review } from './review';
 import { settings } from './settings';
 
 // One entry per area. A new area file is added here and to the Key type below.
-const AREAS = [common, labels, errors, home, layout, pieces, piece, review, calendar, publish, results, settings, account, prizes];
+const AREAS = [common, labels, errors, home, layout, pieces, piece, review, calendar, publish, results, settings, account, prizes, publications];
 
 type All = typeof common.es &
   typeof labels.es &
@@ -30,7 +31,8 @@ type All = typeof common.es &
   typeof results.es &
   typeof settings.es &
   typeof account.es &
-  typeof prizes.es;
+  typeof prizes.es &
+  typeof publications.es;
 
 export type Key = Extract<keyof All, string>;
 

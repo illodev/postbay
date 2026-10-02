@@ -1,8 +1,18 @@
 import type { OptionField } from '../api';
+import { t, type Key } from '../i18n';
 import { NETWORK_LABEL } from '../lib/format';
-import { Field } from './ui';
+import '../styles/publications.css';
 
 export type OptionValues = Record<string, string | boolean>;
+
+/** Two letters for a network, beside an account's name; the full name is always said next to it. */
+const NET_MARK: Record<string, string> = {
+  instagram: 'IG', facebook: 'FB', youtube: 'YT', tiktok: 'TT', linkedin: 'LI', x: 'X', threads: 'TH', pinterest: 'PI', bluesky: 'BS',
+};
+
+export function NetMark({ network }: { network: string }) {
+  return <span className="net" aria-hidden="true">{NET_MARK[network] ?? network.slice(0, 2).toUpperCase()}</span>;
+}
 
 /**
  * The fields that apply right now: for the kind of post chosen, and (for a dependent field) while the checkbox it hangs from is
@@ -51,6 +61,42 @@ export function sendableOptions(fields: OptionField[] | undefined, placement: st
   return out;
 }
 
+// ───────────────────────────── grouping ─────────────────────────────
+
+/**
+ * The settings are shown in a few groups, so a long list (TikTok's) reads as questions: who sees it, what is allowed, whether it
+ * is commercial, the agreement. A field the web does not know lands in "details"; lines to read go last, except the one that says
+ * who the post goes out as, which heads the box.
+ */
+type Group = 'identity' | 'audience' | 'details' | 'interactions' | 'commercial' | 'consent' | 'notes';
+const ORDER: Group[] = ['identity', 'audience', 'details', 'interactions', 'commercial', 'consent', 'notes'];
+const GROUP_OF: Record<string, Group> = {
+  privacy: 'audience', madeForKids: 'audience',
+  allowComment: 'interactions', allowDuet: 'interactions', allowStitch: 'interactions',
+  commercial: 'commercial', yourBrand: 'commercial', brandedContent: 'commercial',
+  consent: 'consent', consentBranded: 'consent',
+};
+
+function groupOf(f: OptionField, byKey: Map<string, OptionField>, seen = new Set<string>()): Group {
+  if (f.type === 'info') return f.key === 'creator' ? 'identity' : 'notes';
+  if (GROUP_OF[f.key]) return GROUP_OF[f.key]!;
+  if (f.notice) return 'consent';
+  // A field that hangs from another goes where that one is.
+  const parent = f.showWhen ? byKey.get(f.showWhen) : undefined;
+  if (parent && !seen.has(f.key)) return groupOf(parent, byKey, new Set(seen).add(f.key));
+  return 'details';
+}
+
+/** A required choice with a handful of answers is shown as buttons: every answer in sight, and none of them picked in advance. */
+const asChoices = (f: OptionField) => f.type === 'select' && !!f.required && (f.choices?.length ?? 0) > 0 && (f.choices?.length ?? 0) <= 5;
+
+/** How deep a field hangs from other checkboxes, to indent it under the one that reveals it. */
+function depthOf(f: OptionField, byKey: Map<string, OptionField>, seen = new Set<string>()): number {
+  if (!f.showWhen || seen.has(f.key)) return 0;
+  const parent = byKey.get(f.showWhen);
+  return parent ? 1 + depthOf(parent, byKey, new Set(seen).add(f.key)) : 0;
+}
+
 /** The settings a network asks for (who can see a TikTok post, a Pinterest board link…), drawn from what its connector declares. */
 export function NetworkOptions({ network, fields, placement, values, onChange }: {
   network: string;
@@ -61,42 +107,118 @@ export function NetworkOptions({ network, fields, placement, values, onChange }:
 }) {
   const shown = visibleFields(fields, placement, values);
   if (shown.length === 0) return null;
+  const byKey = new Map((fields ?? []).map((f) => [f.key, f]));
+  const groups = new Map<Group, OptionField[]>();
+  for (const f of shown) {
+    const g = groupOf(f, byKey);
+    groups.set(g, [...(groups.get(g) ?? []), f]);
+  }
+  const titled = ORDER.filter((g) => g !== 'identity' && g !== 'notes' && groups.has(g));
+  const name = NETWORK_LABEL[network] ?? network;
+
+  const field = (f: OptionField) => {
+    const id = `opt-${f.key}`;
+    // Indented under the checkbox that reveals it, when both sit in the same group (an agreement that replaces another does not).
+    const parent = f.showWhen ? byKey.get(f.showWhen) : undefined;
+    const depth = parent && groupOf(parent, byKey) === groupOf(f, byKey) ? depthOf(f, byKey) : 0;
+    const indent = depth > 0 ? { marginLeft: `${depth * 1.6}rem` } : undefined;
+    if (f.type === 'checkbox' && f.notice) {
+      // The network's own words, as they are: nothing here is rephrased or translated by the web.
+      return (
+        <div key={f.key} className="pb-consent" style={indent}>
+          <p className="pb-consent-text">{f.notice}</p>
+          <label className="check">
+            <input id={id} type="checkbox" required={f.required} disabled={f.disabled} checked={values[f.key] === true && !f.disabled} onChange={(e) => onChange(f.key, e.target.checked)} />
+            <span>
+              {f.label}
+              {f.required && <span className="pb-req"> · {t('publications.opt.required')}</span>}
+            </span>
+          </label>
+        </div>
+      );
+    }
+    if (f.type === 'checkbox') {
+      return (
+        <label key={f.key} className="check pb-check" data-off={f.disabled || undefined} data-nested={depth > 0 || undefined} style={indent}>
+          <input id={id} type="checkbox" disabled={f.disabled} checked={values[f.key] === true && !f.disabled} onChange={(e) => onChange(f.key, e.target.checked)} />
+          <span>
+            <span className="pb-check-label">{f.label}</span>
+            {f.disabled && <span className="pb-off">{t('publications.opt.off')}</span>}
+            {f.help && <span className="muted small pb-help">{f.help}</span>}
+          </span>
+        </label>
+      );
+    }
+    if (asChoices(f)) {
+      const value = String(values[f.key] ?? '');
+      return (
+        <fieldset key={f.key} className="pb-choice-set" style={indent}>
+          <legend className="field-label">
+            {f.label}
+            <span className="pb-req"> · {t('publications.opt.required')}</span>
+          </legend>
+          <div className="pb-choices">
+            {f.choices!.map((c) => {
+              const off = !!c.disabledWhen && values[c.disabledWhen] === true;
+              return (
+                <label key={c.value} className="pb-choice" data-on={value === c.value || undefined} data-off={off || undefined}>
+                  <input type="radio" className="sr-only" name={id} value={c.value} required disabled={off} checked={value === c.value} onChange={() => onChange(f.key, c.value)} />
+                  <span>{c.label}</span>
+                </label>
+              );
+            })}
+          </div>
+          {!value && <span className="pb-pick">{t('publications.opt.pick')}</span>}
+          {f.help && <span className="muted small">{f.help}</span>}
+        </fieldset>
+      );
+    }
+    return (
+      <label key={f.key} className="field" style={indent}>
+        <span className="field-label">
+          {f.label}
+          {f.required ? <span className="pb-req"> · {t('publications.opt.required')}</span> : <span className="pb-opt"> {t('publications.optional')}</span>}
+        </span>
+        {f.type === 'select' ? (
+          <select id={id} required={f.required} value={String(values[f.key] ?? '')} onChange={(e) => onChange(f.key, e.target.value)}>
+            {/* A required choice starts empty on purpose: the network asks that nobody picks it for the person. */}
+            <option value="">{f.required ? t('publications.opt.choose') : t('publications.opt.notSet')}</option>
+            {f.choices?.map((c) => <option key={c.value} value={c.value} disabled={!!c.disabledWhen && values[c.disabledWhen] === true}>{c.label}</option>)}
+          </select>
+        ) : (
+          <input
+            id={id}
+            type={f.type === 'url' ? 'url' : 'text'}
+            maxLength={f.maxLength}
+            required={f.required}
+            value={String(values[f.key] ?? '')}
+            onChange={(e) => onChange(f.key, e.target.value)}
+            placeholder={f.type === 'url' ? t('publications.mark.placeholder') : ''}
+          />
+        )}
+        {f.help && <span className="muted small">{f.help}</span>}
+      </label>
+    );
+  };
+
   return (
-    <fieldset className="options" data-testid={`options-${network}`}>
-      <legend className="field-label">Settings for {NETWORK_LABEL[network] ?? network}</legend>
-      <div className="stack">
-        {shown.map((f) => {
-          const id = `opt-${f.key}`;
-          if (f.type === 'info') {
-            return <p key={f.key} className="muted small" data-testid={id} style={{ margin: 0 }}>{f.label}</p>;
-          }
-          if (f.type === 'checkbox') {
-            return (
-              <label key={f.key} className="check" style={f.showWhen ? { marginLeft: '1.4rem' } : undefined}>
-                <input id={id} type="checkbox" disabled={f.disabled} checked={values[f.key] === true && !f.disabled} onChange={(e) => onChange(f.key, e.target.checked)} />
-                <span>
-                  {f.notice ? <strong>{f.notice}</strong> : f.label}
-                  {f.notice && <span className="muted small" style={{ display: 'block' }}>{f.label}{f.required ? ' (required)' : ''}</span>}
-                  {f.help && <span className="muted small" style={{ display: 'block' }}>{f.help}</span>}
-                </span>
-              </label>
-            );
-          }
-          return (
-            <Field key={f.key} label={`${f.label}${f.required ? '' : ' (optional)'}`} hint={f.help}>
-              {f.type === 'select' ? (
-                <select id={id} required={f.required} value={String(values[f.key] ?? '')} onChange={(e) => onChange(f.key, e.target.value)}>
-                  {/* A required choice starts empty on purpose: the network asks that nobody picks it for the person. */}
-                  <option value="">{f.required ? 'Choose…' : 'Not set'}</option>
-                  {f.choices?.map((c) => <option key={c.value} value={c.value} disabled={!!c.disabledWhen && values[c.disabledWhen] === true}>{c.label}</option>)}
-                </select>
-              ) : (
-                <input id={id} type={f.type === 'url' ? 'url' : 'text'} maxLength={f.maxLength} required={f.required} value={String(values[f.key] ?? '')} onChange={(e) => onChange(f.key, e.target.value)} placeholder={f.type === 'url' ? 'https://' : ''} />
-              )}
-            </Field>
-          );
-        })}
-      </div>
+    <fieldset className="pb-opts" data-testid={`options-${network}`}>
+      <legend className="pb-opts-legend">
+        <NetMark network={network} />
+        {t('publications.opt.title', { network: name })}
+      </legend>
+      {groups.get('identity')?.map((f) => <p key={f.key} className="pb-identity" data-testid={`opt-${f.key}`}>{f.label}</p>)}
+      {titled.map((g) => (
+        <div key={g} className="pb-opt-group" data-group={g}>
+          {titled.length > 1 && <h4 className="pb-opt-title">{t(`publications.opt.group.${g}` as Key)}</h4>}
+          <div className="pb-opt-fields">{groups.get(g)!.map(field)}</div>
+        </div>
+      ))}
+      {groups.has('notes') && (
+        <ul className="pb-notes">
+          {groups.get('notes')!.map((f) => <li key={f.key} data-testid={`opt-${f.key}`}>{f.label}</li>)}
+        </ul>
+      )}
     </fieldset>
   );
 }
