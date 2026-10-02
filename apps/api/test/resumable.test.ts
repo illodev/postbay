@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { appendFile, readFile, readdir, stat, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { appendPiece, CHUNK_BYTES, MAX_CHUNK_BYTES, purgeStaging, STAGING_LIMITS, stagingFile } from '../src/services/resumable.js';
+import { appendPiece, CHUNK_BYTES, MAX_CHUNK_BYTES, maxPendingBytes, purgeStaging, stagingFile } from '../src/services/resumable.js';
 import { createEnv, type Actor, type Env } from './helpers.js';
 
 let env: Env;
@@ -441,8 +441,11 @@ describe('what the staging disk can be asked to hold', () => {
   ))!.n);
 
   it('refuses a big file over what the brand may have waiting, and takes it once room is made', async () => {
-    const saved = STAGING_LIMITS.maxPendingBytesPerBrand;
-    STAGING_LIMITS.maxPendingBytesPerBrand = (await pending()) + 1000;
+    // The cap is configuration (STAGING_MAX_GB_PER_BRAND, in GB): set to what is waiting now plus 1000 bytes.
+    const saved = env.ctx.config.STAGING_MAX_GB_PER_BRAND;
+    const cap = (await pending()) + 1000;
+    env.ctx.config.STAGING_MAX_GB_PER_BRAND = cap / 1024 ** 3;
+    expect(maxPendingBytes(env.ctx)).toBe(cap);
     try {
       const a = await start(P(), 600);
       const data = randomBytes(600);
@@ -468,7 +471,7 @@ describe('what the staging disk can be asked to hold', () => {
       const direct = randomBytes(5000);
       expect((await env.call(P(), 'POST', `/api/variants/${a.variantId}/uploads`, { files: [{ name: 'd.mp4', mime: 'video/mp4', bytes: direct.length, sha256: sha(direct) }] })).status).toBe(200);
     } finally {
-      STAGING_LIMITS.maxPendingBytesPerBrand = saved;
+      env.ctx.config.STAGING_MAX_GB_PER_BRAND = saved;
     }
   });
 

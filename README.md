@@ -103,6 +103,16 @@ specific to any client: names, time zones, languages and review rules are config
   Files of 64 MB and more are sent in pieces that resume after a dropped connection or a closed tab. With one setting on, YouTube watch
   time appears in the results.
 
+## Languages
+
+The studio speaks **Spanish** (the default) **and English**. What the API says while answering (a check's result, a scheduling issue,
+an error) follows the request's `Accept-Language` (`en` and its variants for English, anything else for Spanish). What it keeps to be read
+later (why a post is on hold or failed, the attempt history, why a prize was not sent, the studio's note on an agent run) is kept as a code
+next to the English, and read in each reader's language; rows from before keep their English. Emails, Slack and push go in the person's
+own language if they chose one (`PUT /api/notifications/locale`), otherwise in the brand's (its *Language* setting; Slack always in the
+brand's). The words are in [`apps/api/src/i18n/messages`](apps/api/src/i18n/messages), both languages side by side. What a network says
+in its own words, and the agent's own notes, are passed on as they came.
+
 ## Quick start
 
 You need Node 22, PostgreSQL 16 and ffmpeg.
@@ -135,13 +145,14 @@ apps/api    Node 22, TypeScript, Fastify, PostgreSQL (plain SQL), zod
   src/services    one module per concern; every write is a transaction that also writes the audit log
   src/routes      thin HTTP layer
   src/storage     signed-URL storage: local disk for development, S3-compatible (MinIO, S3, R2) for real use
-  src/connectors  one connector per network behind a common interface (Instagram, Facebook, YouTube), file profiles, validators
+  src/connectors  one connector per network behind a common interface (Instagram, Facebook, YouTube, TikTok, LinkedIn, X, Threads, Pinterest, Bluesky), file profiles, validators
+  src/i18n        what the API says to people, in Spanish and English (the request's language, texts kept as codes)
   src/worker.ts   the queue (pg-boss): wakes the publisher and delivers webhooks; all state lives in ordinary rows
   src/net.ts      the address policy for webhooks (checked after DNS resolution)
   src/migrations  SQL; the database itself refuses edits to versions, files, approvals and the audit log
 apps/web    React, Vite, TanStack Query; plain CSS, light and dark, works on a phone
 apps/runner Node, TypeScript: the agent runner. Listens to webhooks, runs the agent's command, checks and uploads
-e2e         real-browser tests: phase 1's flow, phase 2's publishing against fake networks, phase 3's agent loop, phase 4's networks, results and prizes
+e2e         real-browser tests: phase 1's flow, phase 2's publishing against fake networks, phase 3's agent loop, phase 4's networks, results and prizes, phase 5's sign-in and notifications
 deploy      Docker Compose with PostgreSQL, MinIO, Caddy (TLS), the app and a worker; deploy/runner: the agent runner's own image
 ```
 
@@ -166,8 +177,8 @@ declared.
 | A producer token stops working when the admin who made it leaves the brand or stops being its admin | `services/auth.ts`, `services/brand.ts` |
 | Times are stored in UTC with the brand's IANA zone, so 19:00 stays 19:00 after a clock change | `domain/time.ts`, tested across both clock changes |
 | The approval is re-checked from the stored files right before anything is sent to a network | `services/publisher.ts` |
-| A post that would go out after its hour plus the tolerance is not sent late; a send that had begun is finished through the connector's own recovery, never started again | `services/publisher.ts` |
-| While a brand is paused or a date is blocked nothing is prepared or published; what a network holds is taken down, and prepared again afterwards (or handed to a person if its hour passed) | `services/publisher.ts`, the worker's sweep |
+| A post that would go out after its hour plus the tolerance is not sent late. Before any repeated send the network is asked, without sending anything, whether it already has the post: if it does the send is finished from it, never made again; if it does not, past the tolerance nothing is sent | `services/publisher.ts`, each connector's `find` |
+| While a brand is paused or a date is blocked nothing is prepared or published; what a network holds is taken down, and prepared again afterwards (or handed to a person if its hour passed). Pausing, blocking and unblocking wake the posts concerned at once | `services/publisher.ts`, `services/brand.ts`, the worker's sweep |
 | A post that depends on another is not prepared before that one is out, and is held if it will not go out | `services/publisher.ts`, `services/publications.ts` |
 | Whatever a network holds for a post that is cancelled, held or failed is taken down, also while it is still being prepared | `services/publisher.ts`, `services/publications.ts`, `services/versions.ts` |
 | One worker at a time per post: its lease is renewed while it works and every write it makes is fenced by it | `services/publisher.ts` |
@@ -177,7 +188,8 @@ declared.
 | A webhook never reaches cloud metadata or link-local addresses, and in production only public ones over https (unless allowed) | `net.ts` |
 | The agent cannot start without both budgets, past its rounds, over a budget (counting what runs in progress were given), or on a piece that already has a run | `services/agent.ts`, a unique index |
 | A producer token uploads a version only inside a run it started on that piece, and no run outlives its longest time | `services/versions.ts`, `services/agent.ts` |
-| A brand's unfinished big uploads are capped, and dropped three days after they began | `services/resumable.ts`, `services/versions.ts` |
+| A brand's unfinished big uploads are capped (`STAGING_MAX_GB_PER_BRAND`), and dropped three days after they began | `services/resumable.ts`, `services/versions.ts` |
+| A text kept to be read later is kept as a code beside its English; a change to the English without a code drops the stale translation | `src/i18n`, a database trigger (migration 012) |
 | An agent token cannot answer, resolve or claim to fix a comment marked for people only | `services/comments.ts`, `services/versions.ts` |
 
 ### Roles
@@ -193,7 +205,7 @@ declared.
 ## API in brief
 
 Everything is under `/api`, JSON in and out. Browsers use a session cookie (and must send `X-Requested-By`); agents and
-scripts use `Authorization: Bearer <producer token>`.
+scripts use `Authorization: Bearer <producer token>`. Texts for people come in the language of `Accept-Language` (Spanish by default).
 
 | Method and path | What it does |
 | --- | --- |
@@ -214,6 +226,7 @@ scripts use `Authorization: Bearer <producer token>`.
 | `POST /pieces/:id/agent-runs`, `/agent-runs/:id/heartbeat`, `/agent-runs/:id/finish` | An agent asks to start, keeps its lease, and closes a run with its cost and outcome. The studio refuses past the limits |
 | `GET /brands/:id/webhooks`, `POST` and the routes under `/webhooks/:id` | Manage webhooks, send a test, rotate the secret, read deliveries and send one again |
 | `POST /comments/:id/people-only` | Mark a comment as for people only |
+| `GET`, `PUT /notifications/preferences`; `PUT /notifications/locale` | What a person is told by email and push, and the language it is written in (`es`, `en`, or `null` for the brand's) |
 
 [docs/phase-3.md](docs/phase-3.md) has the event payloads and how to verify a signature.
 
@@ -247,19 +260,21 @@ See [`.env.example`](.env.example). The ones that matter:
 ## Tests
 
 ```sh
-npm test                 # 756 API tests and 101 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
+npm test                 # 869 API tests and 101 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
 npm run typecheck
 ```
 
-The API tests create a throwaway database per file, so they need a PostgreSQL they can create databases in. Point
-`TEST_DATABASE_ADMIN_URL` at it (default `postgres://postgres@localhost:5433/postgres`). They cover the rules above, the
+The API tests (and the runner's loop test, which starts a real API) create a throwaway database per file, so they need a PostgreSQL they
+can create databases in. Point `TEST_DATABASE_ADMIN_URL` at it (default `postgres://postgres@localhost:5433/postgres`). They cover the rules above, the
 database guarantees (by trying to break them), permissions, isolation between brands, sign-in, and the calendar across
 clock changes, for phase 2 the connectors against fake Meta and Google servers and the whole publishing state machine on a
 controlled clock, for phase 3 signed delivery with every retry wait, the agent's limits, and the runner against a scripted
 agent (the runner's tests also need ffmpeg), for phase 4 every connector against its stand-in (including a post whose answer was lost),
 the readings, and prizes with Meta's own rules, and for phase 5 the checker, single sign-on against a stand-in provider that misbehaves on request,
 the second factor (against the standards' test vectors), Slack and push (the encryption against the standard's own worked example),
-subtitles, resumable uploads (interrupted, repeated, concurrent) and YouTube watch time.
+subtitles, resumable uploads (interrupted, repeated, concurrent) and YouTube watch time; and, since, the lookup that keeps a post from being
+sent twice or late after a crash, and every text for people in both languages (the dictionary, the request's language, texts kept as codes,
+emails, Slack and push).
 
 The end-to-end tests drive the real app in a real browser, with real ffmpeg: phase 1's whole flow, phase 2's connecting and
 publishing against fake networks, phase 3's comment-to-new-version loop (with a scripted agent, or real Claude Code, which

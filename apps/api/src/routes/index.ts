@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requirePrincipal, setSessionCookie, SESSION_COOKIE } from '../http.js';
 import type { Ctx } from '../context.js';
 import { badRequest, conflict, forbidden, unauthorized } from '../errors.js';
+import { msg } from '../i18n/index.js';
 import * as agent from '../services/agent.js';
 import * as metrics from '../services/metrics.js';
 import * as prizes from '../services/prizes.js';
@@ -33,7 +34,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
     Object.fromEntries(names.map((n) => [n, z.string().uuid().parse((req.params as Record<string, string>)[n])])) as Record<T, string>;
   const userOnly = (req: FastifyRequest) => {
     const p = P(req);
-    if (p.kind !== 'user') throw forbidden('This is only available to signed-in people');
+    if (p.kind !== 'user') throw forbidden(msg('error.signedInOnly'));
     return p;
   };
 
@@ -50,7 +51,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/auth/verify', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { token } = z.object({ token: z.string().min(10).max(200) }).parse(req.body);
     const s = await authSvc.verifyMagicLink(ctx, token);
-    if (!s) throw unauthorized('That link is invalid or has expired');
+    if (!s) throw unauthorized(msg('error.link.invalid'));
     setSessionCookie(ctx, reply, s.token, s.expiresAt);
     return { ok: true };
   });
@@ -59,7 +60,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!ctx.config.devLogin) return reply.code(404).send({ error: { code: 'not_found', message: 'Not found' } });
     const { email } = z.object({ email: z.string().email() }).parse(req.body);
     const s = await authSvc.devLogin(ctx, email);
-    if (!s) throw unauthorized('Unknown user');
+    if (!s) throw unauthorized(msg('error.unknownUser'));
     setSessionCookie(ctx, reply, s.token, s.expiresAt);
     return { ok: true };
   });
@@ -114,14 +115,14 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/auth/2fa', async (req) => secondFactor.status(ctx, userOnly(req).userId));
   app.post('/api/auth/2fa/verify', codeLimit, async (req) => {
     const a = actor(req);
-    if (a.pending !== 'verify') throw conflict('not_pending', 'There is no code to give right now.');
+    if (a.pending !== 'verify') throw conflict('not_pending', msg('error.twofa.noCodeNow'));
     await secondFactor.verifySecondFactor(ctx, a.userId, code.parse(req.body).code);
     await authSvc.markSecondFactor(ctx, req.cookies[SESSION_COOKIE]!);
     return { ok: true };
   });
   app.post('/api/auth/2fa/enroll', codeLimit, async (req) => {
     const a = actor(req);
-    if (a.pending === 'verify') throw conflict('already_enrolled', 'An authenticator is already set up: give its code.');
+    if (a.pending === 'verify') throw conflict('already_enrolled', msg('error.twofa.giveItsCode'));
     await authSvc.assertMayEnroll(ctx, req.cookies[SESSION_COOKIE]!);
     return secondFactor.startEnrollment(ctx, a.userId, a.email);
   });
@@ -152,6 +153,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/notifications/preferences', async (req) => push.getPreferences(ctx, userOnly(req).userId));
   app.put('/api/notifications/preferences', async (req) => push.setPreferences(ctx, userOnly(req).userId, req.body));
+  app.put('/api/notifications/locale', async (req) => push.setLocale(ctx, userOnly(req).userId, req.body));
   // The key a browser needs to subscribe with: the deployment's public signing key.
   app.get('/api/push/key', async (req) => { userOnly(req); return { publicKey: (await push.vapidKeys(ctx)).publicKey }; });
   app.post('/api/push/subscriptions', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => push.subscribe(ctx, userOnly(req).userId, req.body));
@@ -381,7 +383,12 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.post('/api/brands/:brandId/pieces', async (req, reply) =>
     reply.code(201).send(await pieces.createPiece(ctx, P(req), params(req, 'brandId').brandId, req.body)));
-  app.get('/api/pieces/:id', async (req) => pieces.getPiece(ctx, P(req), params(req, 'id').id));
+  app.get('/api/pieces/:id', async (req) => {
+    const piece = await pieces.getPiece(ctx, P(req), params(req, 'id').id);
+    // Why a publication is on hold or failed, kept as codes, for the answer to carry them in the reader's language.
+    await pubs.attachKeptTexts(ctx.db, piece.publications as { id: string }[]);
+    return piece;
+  });
   app.patch('/api/pieces/:id', async (req) => pieces.updatePiece(ctx, P(req), params(req, 'id').id, req.body));
   app.post('/api/pieces/:id/discard', async (req) => pieces.discardPiece(ctx, P(req), params(req, 'id').id));
   app.post('/api/pieces/:id/variants', async (req, reply) =>

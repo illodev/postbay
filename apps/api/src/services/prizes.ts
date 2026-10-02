@@ -6,6 +6,7 @@ import type { Ctx } from '../context.js';
 import { sha256Hex } from '../crypto.js';
 import type { Row } from '../db.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
+import { english, msg, tr, type Localized } from '../i18n/index.js';
 import { audit } from './audit.js';
 import { connectorEnv, loadConnectorAccount, subscribeEvents } from './connectors.js';
 
@@ -118,11 +119,11 @@ export async function completePrize(ctx: Ctx, p: Principal, prizeId: string) {
   const row = await ctx.db.one('select * from prize where id = $1', [prizeId]);
   if (!row) throw notFound('Prize');
   await authorize(ctx.db, p, row.brand_id, 'publication.schedule');
-  if (row.kind !== 'file') throw badRequest('not_a_file', 'Only a file prize is uploaded');
+  if (row.kind !== 'file') throw badRequest('not_a_file', msg('prize.notAFile'));
   const stored = await ctx.storage.stat(row.file_key);
-  if (!stored) throw conflict('not_uploaded', 'The file has not arrived yet');
+  if (!stored) throw conflict('not_uploaded', msg('prize.notUploaded'));
   if (stored.bytes !== Number(row.file_bytes) || stored.sha256 !== row.file_sha256) {
-    throw conflict('file_mismatch', 'What was stored is not the file that was declared. Upload it again.');
+    throw conflict('file_mismatch', msg('prize.fileMismatch'));
   }
   const done = (await ctx.db.one('update prize set uploaded_at = coalesce(uploaded_at, $2) where id = $1 returning *', [prizeId, ctx.now()]))!;
   return prizeView(done);
@@ -221,27 +222,27 @@ async function saveRule(ctx: Ctx, p: Principal, publicationId: string, input: z.
     await db.query('select 1 from publication where id = $1 for update', [publicationId]);
     const pub = await loadPublication(db, publicationId);
     await authorize(db, p, pub.brand_id, 'publication.schedule');
-    if (!LIVE.includes(pub.status)) throw conflict('publication_closed', 'A cancelled or failed publication cannot carry a prize');
+    if (!LIVE.includes(pub.status)) throw conflict('publication_closed', msg('prize.publicationClosed'));
     const prize = await db.one('select * from prize where id = $1 and brand_id = $2', [input.prizeId, pub.brand_id]);
-    if (!prize) throw badRequest('unknown_prize', 'That prize does not belong to this brand');
+    if (!prize) throw badRequest('unknown_prize', msg('prize.unknown'));
     const before = await db.one('select * from prize_rule where publication_id = $1', [publicationId]);
-    if (prize.archived_at && before?.prize_id !== prize.id) throw badRequest('prize_archived', 'That prize has been archived');
-    if (!(prize.kind === 'link' || prize.uploaded_at)) throw badRequest('prize_not_ready', 'That prize has no file yet');
+    if (prize.archived_at && before?.prize_id !== prize.id) throw badRequest('prize_archived', msg('prize.archived'));
+    if (!(prize.kind === 'link' || prize.uploaded_at)) throw badRequest('prize_not_ready', msg('prize.notReady'));
     const keywordNorm = normalize(input.keyword);
-    if (!keywordNorm) throw badRequest('invalid_keyword', 'The keyword needs at least one letter or digit');
-    if (!/\{\{\s*link\s*\}\}/.test(input.message)) throw badRequest('link_missing', 'The message has to contain {{link}}, where the link to the prize goes');
+    if (!keywordNorm) throw badRequest('invalid_keyword', msg('prize.invalidKeyword'));
+    if (!/\{\{\s*link\s*\}\}/.test(input.message)) throw badRequest('link_missing', msg('prize.linkMissing'));
 
     const mode = modeFor(pub.network, pub.manual);
     if (input.active) {
       const settings = prizesOf((await db.one('select prizes from brand where id = $1', [pub.brand_id]))!);
-      if (!settings.enabled) throw conflict('prizes_off', 'Prizes are switched off for this brand. An admin can switch them on in Settings.');
+      if (!settings.enabled) throw conflict('prizes_off', msg('prize.off'));
       if (!input.noticeConfirmed) {
-        throw conflict('notice_required', "Confirm that the post's own text tells people the reply is automatic and what is done with their data. A prize does not run without it.");
+        throw conflict('notice_required', msg('prize.noticeRequired'));
       }
       if (mode === 'private_reply') {
-        if (pub.account_status !== 'active') throw conflict('needs_reconnect', 'This account has to be connected again before it can send messages');
+        if (pub.account_status !== 'active') throw conflict('needs_reconnect', msg('prize.needsReconnect'));
         if (!hasMessaging(pub)) {
-          throw conflict('needs_reconnect', 'This account was connected without the permission to send messages. Connect it again, with prizes switched on, to grant it.');
+          throw conflict('needs_reconnect', msg('prize.noMessagingPermission'));
         }
       }
     }
@@ -268,7 +269,7 @@ export async function listDeliveries(ctx: Ctx, p: Principal, publicationId: stri
   const rows = await ctx.db.query('select * from prize_delivery where publication_id = $1 order by comment_at desc limit 200', [publicationId]);
   // The network's id for each person is never shown: only the name they show, and what happened.
   return rows.map((r) => ({
-    id: r.id, person: r.person_name || 'Someone', status: r.status, reason: r.reason, comment_at: r.comment_at, sent_at: r.sent_at,
+    id: r.id, person: r.person_name || tr('common.someone'), status: r.status, reason: r.reason, reason_i18n: r.reason_i18n ?? null, comment_at: r.comment_at, sent_at: r.sent_at,
     downloads: r.downloads, expires_at: r.expires_at, purge_after: r.purge_after,
   }));
 }
@@ -388,11 +389,17 @@ export async function pollComments(ctx: Ctx, limit = 20): Promise<number> {
 
 // ───────────────────────────── sending the prize ─────────────────────────────
 
-async function finish(ctx: Ctx, id: string, patch: { status: 'sent' | 'skipped' | 'failed' | 'pending'; reason?: string | null; next?: Date | null; tokenHash?: string; expires?: Date }) {
+/**
+ * Writes where a delivery got to. A reason given as a code (Localized) is kept as such too (`reason_i18n`), so the list says it in the
+ * reader's language; a plain reason (a short code like 'too_old', which the screen names itself) is kept as it is.
+ */
+async function finish(ctx: Ctx, id: string, patch: { status: 'sent' | 'skipped' | 'failed' | 'pending'; reason?: string | Localized | null; next?: Date | null; tokenHash?: string; expires?: Date }) {
+  const kept = patch.reason && typeof patch.reason !== 'string' ? patch.reason : null;
+  const reason = kept ? english(kept).slice(0, 1000) : ((patch.reason as string | null | undefined) ?? null);
   await ctx.db.query(
     `update prize_delivery set status = $2, reason = $3, next_attempt_at = $4, lease_until = null, token_hash = coalesce($5, token_hash), expires_at = coalesce($6, expires_at),
-       sent_at = case when $2 = 'sent' then $7::timestamptz else sent_at end where id = $1`,
-    [id, patch.status, patch.reason ?? null, patch.next ?? null, patch.tokenHash ?? null, patch.expires ?? null, ctx.now()],
+       sent_at = case when $2 = 'sent' then $7::timestamptz else sent_at end, reason_i18n = $8 where id = $1`,
+    [id, patch.status, reason, patch.next ?? null, patch.tokenHash ?? null, patch.expires ?? null, ctx.now(), kept ? JSON.stringify(kept) : null],
   );
 }
 
@@ -412,33 +419,33 @@ async function sendOne(ctx: Ctx, d: Row): Promise<string> {
     return 'skipped';
   }
   const later = (s: number) => new Date(now.getTime() + s * 1000);
-  const retry = async (reason: string, seconds: number, count = true): Promise<string> => {
+  const retry = async (reason: Localized, seconds: number, count = true): Promise<string> => {
     if (count && d.attempts >= BACKOFF.length) {
       await finish(ctx, d.id, { status: 'failed', reason });
       return 'failed';
     }
     // Waiting past the end of Meta's window is a failure, said plainly, not a message that cannot be sent.
     if (new Date(d.comment_at).getTime() + WINDOW_MS < later(seconds).getTime()) {
-      await finish(ctx, d.id, { status: 'failed', reason: `${reason} (and the 7 days Meta allows for a reply ran out)` });
+      await finish(ctx, d.id, { status: 'failed', reason: msg('prize.reason.windowEnded', { reason }) });
       return 'failed';
     }
     if (!count) await ctx.db.query('update prize_delivery set attempts = attempts - 1 where id = $1', [d.id]);
     await finish(ctx, d.id, { status: 'pending', reason, next: later(seconds) });
     return 'retry';
   };
-  if (row.account_status !== 'active') return retry('The account has to be connected again before it can send messages', 3600);
+  if (row.account_status !== 'active') return retry(msg('prize.reason.reconnect'), 3600);
 
   // Meta allows 750 private replies an hour for an account: stay under it, and when it is reached wait for the oldest to leave the hour.
   const sentLastHour = await ctx.db.query(`select sent_at from prize_delivery where account_id = $1 and status = 'sent' and sent_at > $2 order by sent_at`, [d.account_id, new Date(now.getTime() - 3_600_000)]);
   if (sentLastHour.length >= MAX_PER_HOUR) {
     const oldest = new Date(sentLastHour[0]!.sent_at).getTime();
-    return retry('The hourly limit of private messages for this account was reached', Math.max(60, Math.ceil((oldest + 3_600_000 - now.getTime()) / 1000)), false);
+    return retry(msg('prize.reason.hourlyLimit'), Math.max(60, Math.ceil((oldest + 3_600_000 - now.getTime()) / 1000)), false);
   }
 
   const connector = ctx.connectors.connector(row.network);
   const account = await loadConnectorAccount(ctx, d.account_id);
   if (!connector?.privateReply || !account) {
-    await finish(ctx, d.id, { status: 'failed', reason: `The app cannot send private messages on ${row.network} here` });
+    await finish(ctx, d.id, { status: 'failed', reason: msg('prize.reason.cannotMessage', { network: row.network }) });
     return 'failed';
   }
   const settings = prizesOf({ prizes: row.prizes });
@@ -453,14 +460,14 @@ async function sendOne(ctx: Ctx, d: Row): Promise<string> {
     if (!(err instanceof ConnectorError)) throw err;
     const wait = BACKOFF[Math.min(d.attempts - 1, BACKOFF.length - 1)]!;
     switch (err.errorClass) {
-      case 'rate_limit': return retry(`${err.message} (the network's limit)`, Math.min(Math.max(60, err.retryAfterSec ?? 900), 6 * 3600), false);
-      case 'auth': return retry(`The connection is not allowed to send messages: ${err.message}`, wait);
+      case 'rate_limit': return retry(msg('prize.reason.networkLimit', { error: err.message }), Math.min(Math.max(60, err.retryAfterSec ?? 900), 6 * 3600), false);
+      case 'auth': return retry(msg('prize.reason.notAllowed', { error: err.message }), wait);
       case 'file_rejected':
       case 'unsupported':
         // Already answered, outside the window, the person cannot be messaged: nothing to try again.
         await finish(ctx, d.id, { status: 'failed', reason: err.message.slice(0, 400) });
         return 'failed';
-      default: return retry(err.message.slice(0, 400), wait);
+      default: return retry(msg('prize.reason.said', { text: err.message.slice(0, 400) }), wait);
     }
   }
 }
@@ -512,8 +519,8 @@ async function resolveToken(ctx: Ctx, secret: string): Promise<Resolved> {
     [sha256Hex(secret)],
   );
   if (delivery) {
-    if (delivery.status !== 'sent' || !delivery.expires_at || new Date(delivery.expires_at) <= now) throw new AppError(410, 'expired', 'This link has expired.');
-    if (delivery.downloads >= MAX_DOWNLOADS) throw new AppError(410, 'used_up', 'This link has been used the most times it allows.');
+    if (delivery.status !== 'sent' || !delivery.expires_at || new Date(delivery.expires_at) <= now) throw new AppError(410, 'expired', msg('prize.link.expired'));
+    if (delivery.downloads >= MAX_DOWNLOADS) throw new AppError(410, 'used_up', msg('prize.link.usedUp'));
     return { ...(delivery as unknown as Resolved), source: 'delivery' };
   }
   const rule = await ctx.db.one(
@@ -522,7 +529,7 @@ async function resolveToken(ctx: Ctx, secret: string): Promise<Resolved> {
     [secret],
   );
   if (!rule) throw notFound('Prize');
-  if (!rule.active || !rule.expires_at || new Date(rule.expires_at) <= now) throw new AppError(410, 'expired', 'This page has expired.');
+  if (!rule.active || !rule.expires_at || new Date(rule.expires_at) <= now) throw new AppError(410, 'expired', msg('prize.page.expired'));
   return { ...(rule as unknown as Resolved), source: 'public' };
 }
 
@@ -537,7 +544,7 @@ export async function downloadPrize(ctx: Ctx, secret: string) {
   if (r.source === 'delivery') {
     // Counted and checked in one statement, so two clicks at once cannot both be the last one allowed.
     const counted = await ctx.db.one('update prize_delivery set downloads = downloads + 1 where id = $1 and downloads < $2 and expires_at > $3 returning id', [r.id, MAX_DOWNLOADS, ctx.now()]);
-    if (!counted) throw new AppError(410, 'used_up', 'This link has been used the most times it allows.');
+    if (!counted) throw new AppError(410, 'used_up', msg('prize.link.usedUp'));
   }
   // A file is handed over by a link that works for five minutes; a link prize is simply the link.
   if (r.kind === 'file') return { url: await ctx.storage.presignGet(r.file_key!, { expiresSec: 300, filename: r.file_name ?? undefined }) };

@@ -1,3 +1,4 @@
+import { english, msg } from '../../i18n/index.js';
 import { ConnectorError, type Candidate, type OAuthProvider, type TokenSet } from '../types.js';
 import type { PinterestClient } from './client.js';
 
@@ -52,12 +53,12 @@ export function createPinterestOAuth(client: PinterestClient, now: () => Date = 
         bookmark = r.bookmark ?? undefined;
         if (!bookmark) break;
       }
-      if (out.length === 0) throw new ConnectorError('auth', 'This Pinterest account has no board to pin to. Make a board on Pinterest first, then connect again.');
+      if (out.length === 0) throw new ConnectorError('auth', english(msg('connect.pinterest.noBoard')), { text: msg('connect.pinterest.noBoard') });
       return out;
     },
 
     async refresh(previous) {
-      if (!previous.refreshToken) throw new ConnectorError('auth', 'There is no renewal token for this connection: connect it again');
+      if (!previous.refreshToken) throw new ConnectorError('auth', english(msg('connect.noRenewalToken')), { text: msg('connect.noRenewalToken') });
       const b = await client.token({ grant_type: 'refresh_token', refresh_token: previous.refreshToken }).catch((err) => {
         if (err instanceof ConnectorError && err.errorClass === 'auth' && previous.expiresAt && new Date(previous.expiresAt).getTime() - now().getTime() > DAY) return null;
         throw err;

@@ -4,6 +4,7 @@ import { XClient } from '../src/connectors/x/client.js';
 import { createX } from '../src/connectors/x/x.js';
 import { weightedLength } from '../src/connectors/x/text.js';
 import type { Candidate } from '../src/connectors/types.js';
+import { withLocale } from '../src/i18n/index.js';
 import { FakeX } from './fakes/x.js';
 import { account, configFor, env, expectError, image, input, media, prepareUntilDone, redirect } from './connector-helpers.js';
 
@@ -92,7 +93,8 @@ describe('X: what it accepts', () => {
   });
 
   it('warns that a link costs 13 times more and says what to do instead', () => {
-    const issues = x().validate(input({ placement: 'images', media: [image()], text: 'Menu at https://lumen.example' }), acc);
+    // Read in English (outside a request the studio speaks Spanish).
+    const issues = withLocale('en', () => x().validate(input({ placement: 'images', media: [image()], text: 'Menu at https://lumen.example' }), acc));
     const w = issues.find((i) => i.code === 'x.link.cost')!;
     expect(w.severity).toBe('warning');
     expect(w.message).toContain('0.20 USD');

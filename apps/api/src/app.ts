@@ -9,6 +9,7 @@ import type { Config } from './config.js';
 import type { Ctx } from './context.js';
 import type { Db } from './db.js';
 import { AppError, forbidden } from './errors.js';
+import { acceptLanguage, localeHooks, render, renderStored, t, type Key } from './i18n/index.js';
 import { CSRF_HEADER, SESSION_COOKIE } from './http.js';
 import type { ConnectorSet } from './connectors/types.js';
 import type { Mailer } from './mailer.js';
@@ -82,6 +83,15 @@ export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; c
   await app.register(cookie);
   await app.register(rateLimit, { global: false });
 
+  // The language of the answer: what the request asks for (the web sends Accept-Language: es or en), Spanish otherwise. Texts made
+  // while answering follow it (requestLocale), and texts kept as codes are put into words in it on their way out.
+  app.addHook('onRequest', localeHooks.onRequest as never);
+  app.addHook('preValidation', localeHooks.preValidation as never);
+  app.addHook('preSerialization', async (req, _reply, payload) => {
+    if (payload && typeof payload === 'object') renderStored(acceptLanguage(req.headers['accept-language']), payload);
+    return payload;
+  });
+
   app.decorateRequest('principal', null);
   app.decorateRequest('viaCookie', false);
   app.decorateRequest('secondFactor', null);
@@ -112,7 +122,8 @@ export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; c
 
   app.setErrorHandler((err: unknown, req, reply) => {
     if (err instanceof AppError) {
-      return reply.code(err.status).send({ error: { code: err.code, message: err.message, details: err.details } });
+      const message = err.text ? render(acceptLanguage(req.headers['accept-language']), err.text, err.message) : err.message;
+      return reply.code(err.status).send({ error: { code: err.code, message, details: err.details } });
     }
     if (err instanceof ZodError) {
       return reply.code(400).send({
@@ -124,14 +135,15 @@ export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; c
       });
     }
     const e = err as { code?: string; statusCode?: number; message?: string };
-    if (e.code === '22P02') return reply.code(404).send({ error: { code: 'not_found', message: 'Not found' } });
+    const say = (code: Key) => t(acceptLanguage(req.headers['accept-language']), code);
+    if (e.code === '22P02') return reply.code(404).send({ error: { code: 'not_found', message: say('error.notFoundGeneric') } });
     if (e.code === 'P0001') return reply.code(409).send({ error: { code: 'invariant', message: e.message } });
-    if (e.code === '23505') return reply.code(409).send({ error: { code: 'conflict', message: 'That already exists' } });
+    if (e.code === '23505') return reply.code(409).send({ error: { code: 'conflict', message: say('error.alreadyExists') } });
     if (e.statusCode && e.statusCode < 500) {
       return reply.code(e.statusCode).send({ error: { code: 'bad_request', message: e.message } });
     }
     req.log.error({ err }, 'unhandled error');
-    return reply.code(500).send({ error: { code: 'internal', message: 'Something went wrong' } });
+    return reply.code(500).send({ error: { code: 'internal', message: say('error.internal') } });
   });
 
   // Headers every response carries, plus a Content-Security-Policy on the HTML shell: scripts only from our own origin.
@@ -173,7 +185,7 @@ export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; c
   // Always our own: Fastify's default handler writes "Route GET:<the whole URL> not found" to the log, query and all.
   app.setNotFoundHandler((req, reply) => {
     if (serveShell && req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/media/')) return reply.sendFile('index.html');
-    return reply.code(404).send({ error: { code: 'not_found', message: 'Not found' } });
+    return reply.code(404).send({ error: { code: 'not_found', message: t(acceptLanguage(req.headers['accept-language']), 'error.notFoundGeneric') } });
   });
   return { app, ctx };
 }

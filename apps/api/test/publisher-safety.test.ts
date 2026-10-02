@@ -23,7 +23,7 @@ beforeEach(async () => {
   await env.db.query('update brand set paused = false where id = $1', [env.brandId]);
   await env.db.query('delete from blocked_date where brand_id = $1', [env.brandId]);
 });
-afterEach(() => { env.meta.failures.length = 0; });
+afterEach(() => { env.meta.failures.length = 0; env.meta.loseNextPublishAnswer = false; });
 
 const MIN = 60_000;
 const at = (ms: number) => new Date(env.clock.now().getTime() + ms);
@@ -114,8 +114,11 @@ describe('a paused brand publishes nothing', () => {
     const r = await row(pub.id);
     expect(r).toMatchObject({ status: 'scheduled', manual: true, last_error_class: 'missed_window' });
     expect(r.last_error).toMatch(/paused/);
-    const told = await env.db.query(`select payload from notification where kind = 'publication.failed' and payload->>'publicationId' = $1`, [pub.id]);
-    expect(told[0]!.payload).toMatchObject({ handedOver: true });
+    // Told with a kind of its own, in the person's language when they read it (the English is kept beside the code).
+    const told = await env.db.query(`select payload from notification where kind = 'publication.handed_over' and payload->>'publicationId' = $1`, [pub.id]);
+    expect(told[0]!.payload).toMatchObject({ handedOver: true, message_i18n: { code: 'pub.needsPerson' } });
+    expect(told[0]!.payload.message).toMatch(/while the brand was paused, so the app did not publish it\. It now needs a person/);
+    expect(await env.db.query(`select 1 from notification where kind = 'publication.failed' and payload->>'publicationId' = $1`, [pub.id])).toHaveLength(0);
 
     await pause(false);
     const due = await env.call(env.users.approver, 'GET', `/api/brands/${env.brandId}/publications/due`);
@@ -129,16 +132,39 @@ describe('a paused brand publishes nothing', () => {
     const objectId = (await row(pub.id)).handle.objectId as string;
     const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date(pub.scheduled_at));
     expect((await env.call(env.users.approver, 'POST', `/api/brands/${env.brandId}/blocked-dates`, { day, reason: 'Mourning' })).status).toBe(201);
-    expect(await wakeFrozen(env.ctx)).toBeGreaterThanOrEqual(1); // what the worker's sweep does
+    // Blocking the day wakes it at once: no sweep is needed for the network's copy to come down.
+    expect(new Date((await row(pub.id)).next_run_at).getTime()).toBeLessThanOrEqual(env.clock.now().getTime());
     await env.settle();
     expect(env.meta.posts.has(objectId)).toBe(false);
     expect((await row(pub.id)).status).toBe('scheduled');
+    expect(await wakeFrozen(env.ctx)).toBe(0); // and the sweep has nothing left to catch
 
-    // Unblocked: it is looked at again within minutes and held by the network again.
+    // Unblocked: it is prepared and held by the network again at once, not at its next look minutes later.
     await env.call(env.users.approver, 'DELETE', `/api/brands/${env.brandId}/blocked-dates/${day}`);
-    env.clock.advance(TIMING.frozenRecheckSeconds * 1000);
     await env.settle();
     expect(await row(pub.id)).toMatchObject({ status: 'ready', native_scheduled: true, frozen_at: null });
+    const audited = await env.db.query(`select action, after from audit_event where brand_id = $1 and action in ('date.blocked','date.unblocked') order by id`, [env.brandId]);
+    expect(audited.map((a) => [a.action, a.after.publications])).toEqual([['date.blocked', 1], ['date.unblocked', 1]]);
+  });
+
+  it('wakes only the publications of the day that was blocked, and does nothing for a day that was not blocked', async () => {
+    const a = await scheduled({ account: fb, leadMs: 3 * 60 * MIN });
+    const b = await scheduled({ account: fb, leadMs: 3 * 60 * MIN + 26 * 60 * MIN }); // the next day
+    env.clock.set(new Date(a.pub.prepare_at));
+    await env.settle();
+    expect((await row(a.pub.id)).status).toBe('ready');
+    const fmt = (d: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date(d));
+    expect(fmt(a.pub.scheduled_at)).not.toBe(fmt(b.pub.scheduled_at));
+    const later = (await row(b.pub.id)).next_run_at;
+    expect((await env.call(env.users.approver, 'POST', `/api/brands/${env.brandId}/blocked-dates`, { day: fmt(a.pub.scheduled_at), reason: '' })).status).toBe(201);
+    expect((await row(b.pub.id)).next_run_at).toEqual(later);
+    await env.settle();
+    expect((await row(a.pub.id)).status).toBe('scheduled');
+    expect((await row(b.pub.id)).status).toBe('scheduled');
+    // Removing a block that is not there wakes nothing.
+    const other = new Date(new Date(b.pub.scheduled_at).getTime() + 3 * 86_400_000).toISOString().slice(0, 10);
+    expect((await env.call(env.users.approver, 'DELETE', `/api/brands/${env.brandId}/blocked-dates/${other}`)).status).toBe(200);
+    expect((await row(b.pub.id)).next_run_at).toEqual(later);
   });
 });
 
@@ -237,7 +263,7 @@ describe('a worker that dies or stalls in the middle of publishing', () => {
     });
     const failed = await row(pub.id);
     expect(failed).toMatchObject({ status: 'failed', last_error_class: 'transient' });
-    expect(failed.last_error).toMatch(/may already be on instagram/);
+    expect(failed.last_error).toMatch(/may already be on Instagram/);
     expect(env.meta.callsTo(/media_publish/)).toHaveLength(1);
 
     const retried = await env.call(env.users.approver, 'POST', `/api/publications/${pub.id}/retry`, {});
@@ -248,6 +274,97 @@ describe('a worker that dies or stalls in the middle of publishing', () => {
     await env.settle();
     expect((await row(pub.id)).status).toBe('published');
     expect(env.meta.callsTo(/media_publish/)).toHaveLength(1);
+  });
+
+  it('finds a post Instagram made although its answer was lost, and never publishes it again, even past the tolerance', async () => {
+    const { pub } = await scheduled({ account: ig, body: { firstComment: 'Menu in the bio' } });
+    env.clock.set(new Date(pub.prepare_at));
+    await env.settle();
+    env.clock.set(new Date(pub.scheduled_at));
+    env.meta.loseNextPublishAnswer = true; // Instagram publishes it, and the answer never reaches us
+    await env.settle();
+    const lost = await row(pub.id);
+    expect(lost.status).toBe('publishing');
+    expect(lost.handle.mediaId).toBeUndefined(); // the id was never saved
+    expect(lost.handle.publishAttemptedAt).toBeTruthy(); // but the attempt was, before the call
+    // The posts made from this publication's container.
+    const fromContainer = () => [...env.meta.media.keys()].filter((id) => env.meta.media.get(id)!.params === env.meta.containers.get(lost.handle.containerId)!.params);
+    const made = fromContainer();
+    expect(made).toHaveLength(1);
+
+    // Picked up again well past the hour and its tolerance: the post is found and the send finished, not repeated nor failed.
+    env.clock.set(new Date(new Date(pub.scheduled_at).getTime() + 40 * MIN));
+    await env.settle();
+    const r = await row(pub.id);
+    expect(r).toMatchObject({ status: 'published', external_id: made[0], visibility: 'public' });
+    expect(env.meta.callsTo(/media_publish/)).toHaveLength(1);
+    expect(fromContainer()).toEqual(made);
+    expect(env.meta.media.get(made[0]!)!.comments).toEqual(['Menu in the bio']); // the steps after it were finished
+    const attempts = await env.db.query(`select detail from publication_attempt where publication_id = $1 and step = 'publish' and outcome = 'ok'`, [pub.id]);
+    expect(attempts[0]!.detail).toMatchObject({ found: true, recovered: true });
+  });
+
+  it('does not send late a post whose earlier try never reached Instagram, and says the network does not have it', async () => {
+    const { pub } = await scheduled({ account: ig });
+    env.clock.set(new Date(pub.prepare_at));
+    await env.settle();
+    env.clock.set(new Date(pub.scheduled_at));
+    // Refused before anything was made: the container stays unpublished.
+    env.meta.fail((c) => /media_publish$/.test(c.path), env.meta.err(2, 'An unexpected error has occurred. Please retry your request later.', { is_transient: true }), 500);
+    await env.settle();
+    expect((await row(pub.id)).status).toBe('publishing');
+    expect(env.meta.callsTo(/media_publish/)).toHaveLength(1);
+
+    // Next looked at past the tolerance: Instagram is asked, does not have it, and nothing is sent after its hour.
+    env.clock.set(new Date(new Date(pub.scheduled_at).getTime() + 20 * MIN));
+    await env.settle();
+    const r = await row(pub.id);
+    expect(r).toMatchObject({ status: 'failed', last_error_class: 'missed_window' });
+    expect(r.last_error).toMatch(/Instagram does not have the post, so it was not sent late/);
+    expect(r.last_error).not.toMatch(/may already be/);
+    expect(r.last_error_i18n).toMatchObject({ code: 'pub.notFoundNotLate' });
+    expect(env.meta.callsTo(/media_publish/)).toHaveLength(1);
+  });
+
+  it('sends it again within the tolerance when the earlier try never reached Instagram, once', async () => {
+    const { pub } = await scheduled({ account: ig });
+    env.clock.set(new Date(pub.prepare_at));
+    await env.settle();
+    env.clock.set(new Date(pub.scheduled_at));
+    env.meta.fail((c) => /media_publish$/.test(c.path), env.meta.err(2, 'An unexpected error has occurred. Please retry your request later.', { is_transient: true }), 500);
+    await env.settle();
+    env.clock.set(new Date((await row(pub.id)).next_run_at));
+    await env.settle();
+    expect(await row(pub.id)).toMatchObject({ status: 'published', visibility: 'public' });
+    expect(env.meta.callsTo(/media_publish/)).toHaveLength(2); // the refused one and the one that went out
+    const container = env.meta.containers.get((await row(pub.id)).handle.containerId)!;
+    expect([...env.meta.media.values()].filter((m) => m.params === container.params)).toHaveLength(1);
+  });
+
+  it('asks a connector that can look, before any repeated send, and does not send late when it finds nothing', async () => {
+    const { pub } = await scheduled({ account: ig });
+    env.clock.set(new Date(pub.prepare_at));
+    await env.settle();
+    env.clock.set(new Date(pub.scheduled_at));
+    let looked = 0;
+    let sent = 0;
+    await withConnector('instagram', (real) => ({
+      ...real,
+      async find() { looked++; return null; },
+      async publish(input, account, handle, cenv) {
+        sent++;
+        await cenv.persist({ ...handle, attemptedAt: cenv.now().toISOString() }); // a connector that records its attempt first (X, LinkedIn, Pinterest)
+        throw new ConnectorError('transient', 'connection reset');
+      },
+    }), async () => {
+      await env.settle();
+      expect(looked).toBe(0); // the first send is not a repeat
+      env.clock.set(new Date(new Date(pub.scheduled_at).getTime() + 30 * MIN));
+      await env.settle();
+    });
+    expect(looked).toBe(1);
+    expect(sent).toBe(1); // found nothing, past the tolerance: not sent late
+    expect(await row(pub.id)).toMatchObject({ status: 'failed', last_error_class: 'missed_window' });
   });
 
   it('keeps the lease while a long step lasts, so no second worker starts the same post', async () => {

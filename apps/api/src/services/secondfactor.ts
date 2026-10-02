@@ -6,6 +6,8 @@ import type { Queryable } from '../db.js';
 import { TokenVault } from '../crypto.js';
 import { AppError, conflict, forbidden, notFound, unauthorized } from '../errors.js';
 import { audit } from './audit.js';
+import { msg, t } from '../i18n/index.js';
+import { personLocale } from './notify.js';
 
 /**
  * The second step of signing in: a code from an authenticator app, with one-time recovery codes for a lost phone.
@@ -48,7 +50,7 @@ export async function status(ctx: Ctx, userId: string) {
 /** Makes a secret for the person to put in their authenticator app. It counts only once a code from it has been confirmed. */
 export async function startEnrollment(ctx: Ctx, userId: string, email: string) {
   const existing = await ctx.db.one<TotpRow>('select * from user_totp where user_id = $1', [userId]);
-  if (existing?.confirmed_at) throw conflict('already_enrolled', 'An authenticator is already set up. Remove it first to set up another.');
+  if (existing?.confirmed_at) throw conflict('already_enrolled', msg('error.twofa.alreadyEnrolled'));
   const secret = newSecret();
   await ctx.db.query(
     `insert into user_totp (user_id, secret_sealed) values ($1,$2)
@@ -62,7 +64,7 @@ export async function startEnrollment(ctx: Ctx, userId: string, email: string) {
 function assertNotLocked(ctx: Ctx, row: TotpRow) {
   if (row.locked_until && new Date(row.locked_until) > ctx.now()) {
     const mins = Math.ceil((new Date(row.locked_until).getTime() - ctx.now().getTime()) / 60_000);
-    throw new AppError(429, 'second_factor_locked', `Too many wrong codes. Try again in ${mins} minute${mins === 1 ? '' : 's'}.`, { retryAfterMinutes: mins });
+    throw new AppError(429, 'second_factor_locked', msg('error.twofa.locked', { count: mins }), { retryAfterMinutes: mins });
   }
 }
 
@@ -104,12 +106,12 @@ async function replaceRecoveryCodes(ctx: Ctx, userId: string): Promise<string[]>
 /** The first code from a new authenticator: proof that the person's app has the secret. Returns the recovery codes, once. */
 export async function confirmEnrollment(ctx: Ctx, userId: string, code: string) {
   const row = await ctx.db.one<TotpRow>('select * from user_totp where user_id = $1', [userId]);
-  if (!row) throw conflict('not_started', 'Start setting up the authenticator first.');
-  if (row.confirmed_at) throw conflict('already_enrolled', 'The authenticator is already set up.');
+  if (!row) throw conflict('not_started', msg('error.twofa.notStarted'));
+  if (row.confirmed_at) throw conflict('already_enrolled', msg('error.twofa.alreadySetUp'));
   assertNotLocked(ctx, row);
   if (!(await acceptTotp(ctx, row, code.trim()))) {
     await recordFailure(ctx, userId);
-    throw unauthorized('That code is not right. Check that the app shows the code for this account, and that your phone\'s clock is correct.');
+    throw unauthorized(msg('error.twofa.wrongCodeHelp'));
   }
   await ctx.db.query('update user_totp set confirmed_at = $2 where user_id = $1', [userId, ctx.now()]);
   const recoveryCodes = await replaceRecoveryCodes(ctx, userId);
@@ -120,7 +122,7 @@ export async function confirmEnrollment(ctx: Ctx, userId: string, code: string) 
 /** Checks a code from the authenticator or a recovery code. A recovery code is spent by it. */
 export async function verifySecondFactor(ctx: Ctx, userId: string, rawCode: string): Promise<{ method: 'totp' | 'recovery'; recoveryCodesLeft: number }> {
   const row = await ctx.db.one<TotpRow>('select * from user_totp where user_id = $1 and confirmed_at is not null', [userId]);
-  if (!row) throw conflict('not_enrolled', 'No authenticator is set up for this account.');
+  if (!row) throw conflict('not_enrolled', msg('error.twofa.notEnrolledAccount'));
   assertNotLocked(ctx, row);
   const code = rawCode.trim();
   let method: 'totp' | 'recovery' | null = null;
@@ -132,7 +134,7 @@ export async function verifySecondFactor(ctx: Ctx, userId: string, rawCode: stri
   }
   if (!method) {
     await recordFailure(ctx, userId);
-    throw unauthorized('That code is not right.');
+    throw unauthorized(msg('error.twofa.wrongCode'));
   }
   await ctx.db.query('update user_totp set failures = 0, locked_until = null where user_id = $1', [userId]);
   const left = await ctx.db.one<{ n: number }>('select count(*)::int as n from recovery_code where user_id = $1 and used_at is null', [userId]);
@@ -143,8 +145,8 @@ export async function verifySecondFactor(ctx: Ctx, userId: string, rawCode: stri
 /** Removes the authenticator. Not for a person whose role requires one. */
 export async function disable(ctx: Ctx, userId: string, code: string) {
   const req = await requirement(ctx, userId);
-  if (!req.enrolled) throw conflict('not_enrolled', 'No authenticator is set up.');
-  if (req.byRole) throw forbidden('Your role requires a second factor, so it cannot be removed. An admin can reset it if you lost your phone.');
+  if (!req.enrolled) throw conflict('not_enrolled', msg('error.twofa.notEnrolled'));
+  if (req.byRole) throw forbidden(msg('error.twofa.requiredByRole'));
   await verifySecondFactor(ctx, userId, code);
   await ctx.db.tx(async (db) => {
     await db.query('delete from user_totp where user_id = $1', [userId]);
@@ -156,11 +158,11 @@ export async function disable(ctx: Ctx, userId: string, code: string) {
 /** Ten new recovery codes, replacing the old ones. Needs a current code from the app (a recovery code does not do). */
 export async function regenerateRecoveryCodes(ctx: Ctx, userId: string, code: string) {
   const row = await ctx.db.one<TotpRow>('select * from user_totp where user_id = $1 and confirmed_at is not null', [userId]);
-  if (!row) throw conflict('not_enrolled', 'No authenticator is set up.');
+  if (!row) throw conflict('not_enrolled', msg('error.twofa.notEnrolled'));
   assertNotLocked(ctx, row);
   if (!(await acceptTotp(ctx, row, code.trim()))) { // a recovery code is not six digits, so it never passes here
     await recordFailure(ctx, userId);
-    throw unauthorized('That code is not right.');
+    throw unauthorized(msg('error.twofa.wrongCode'));
   }
   const recoveryCodes = await replaceRecoveryCodes(ctx, userId);
   await audit(ctx.db, null, null, 'auth.recovery_codes_renewed', 'app_user', userId, null, { count: recoveryCodes.length });
@@ -182,15 +184,16 @@ async function wipe(db: Queryable, userId: string) {
   );
 }
 
-/** Tells the person their authenticator was reset, so one they did not ask for does not go unnoticed. */
-function tellThem(ctx: Ctx, email: string, by: string) {
-  void ctx.mailer
-    .send(
-      email,
-      'Your authenticator was reset',
-      `${by} reset the authenticator app of your account, and signed you out everywhere. You will set up a new one the next time you sign in.\n\nIf you did not ask for this, tell the admins of your brands now.\n`,
-    )
-    .catch((err) => ctx.log.error({ err: String(err) }, 'could not email about an authenticator reset'));
+/**
+ * Tells the person their authenticator was reset, so one they did not ask for does not go unnoticed. In their language (see
+ * personLocale). `by` is who did it: an admin's email, or null for whoever runs the server. The promise is for the command line,
+ * which waits for it before it closes the database; the web does not wait.
+ */
+function tellThem(ctx: Ctx, userId: string, email: string, by: string | null): Promise<void> {
+  return (async () => {
+    const locale = await personLocale(ctx.db, userId);
+    await ctx.mailer.send(email, t(locale, 'mail.authenticatorReset.subject'), t(locale, 'mail.authenticatorReset.body', { by: by ?? { code: 'common.serverOperator' } }));
+  })().catch((err) => ctx.log.error({ err: String(err) }, 'could not email about an authenticator reset'));
 }
 
 /**
@@ -208,7 +211,7 @@ export async function resetForMember(ctx: Ctx, p: Principal, brandId: string, me
     );
     if (!m) throw notFound('Member');
     if (m.user_id === p.userId) {
-      throw new AppError(403, 'own_second_factor', 'You cannot reset your own authenticator here. Sign in with a recovery code, or ask whoever runs the server to reset it from the command line.');
+      throw new AppError(403, 'own_second_factor', msg('error.twofa.ownReset'));
     }
     // Locks the person's memberships, so none is added or changed while this is decided.
     const brands = await db.query<{ brand_id: string; manages: boolean }>(
@@ -220,7 +223,7 @@ export async function resetForMember(ctx: Ctx, p: Principal, brandId: string, me
       throw new AppError(
         403,
         'not_admin_of_all_brands',
-        `${m.email} also belongs to brands you are not an admin of, and their authenticator protects their access to all of them. An admin of every brand they belong to can reset it, or whoever runs the server, from the command line (npm run reset-2fa).`,
+        msg('error.twofa.notAdminOfAll', { email: m.email }),
       );
     }
     await wipe(db, m.user_id);
@@ -229,7 +232,7 @@ export async function resetForMember(ctx: Ctx, p: Principal, brandId: string, me
     }
     return m;
   });
-  tellThem(ctx, out.email, p.email);
+  void tellThem(ctx, out.user_id, out.email, p.email);
   return { ok: true };
 }
 
@@ -245,6 +248,6 @@ export async function resetByEmail(ctx: Ctx, email: string): Promise<boolean> {
       await audit(db, null, b.brand_id, 'user.second_factor_reset', 'app_user', u.id, { enrolled: true }, { enrolled: false, sessions_ended: true, by: 'command line' });
     }
   });
-  tellThem(ctx, u.email, 'Whoever runs the server');
+  await tellThem(ctx, u.id, u.email, null);
   return true;
 }

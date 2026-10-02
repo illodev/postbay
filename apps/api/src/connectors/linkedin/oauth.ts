@@ -1,3 +1,4 @@
+import { english, msg } from '../../i18n/index.js';
 import { ConnectorError, type Candidate, type OAuthProvider, type TokenSet } from '../types.js';
 import type { LinkedInClient } from './client.js';
 
@@ -58,7 +59,7 @@ export function createLinkedInOAuth(client: LinkedInClient, now: () => Date = ()
         });
       }
       if (out.length === 0) {
-        throw new ConnectorError('auth', 'LinkedIn did not share any company page this person administers. Check that they are an administrator of the page and tick it in the permission dialog.');
+        throw new ConnectorError('auth', english(msg('connect.linkedin.noPages')), { text: msg('connect.linkedin.noPages') });
       }
       return out;
     },

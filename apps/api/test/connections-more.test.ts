@@ -42,7 +42,7 @@ async function signIn(provider: string, code = 'good', as = env.users.admin) {
   expect(start.status, JSON.stringify(start.body)).toBe(200);
   const authorize = new URL(start.body.url);
   const state = authorize.searchParams.get('state')!;
-  const back = await env.app.inject({ method: 'GET', url: `/api/oauth/callback?code=${code}&state=${state}`, headers: { cookie: as.cookie! } });
+  const back = await env.app.inject({ method: 'GET', url: `/api/oauth/callback?code=${code}&state=${state}`, headers: { cookie: as.cookie!, 'accept-language': 'en-GB,en;q=0.9' } });
   const location = new URL(back.headers.location as string, 'http://app.test');
   return { authorize, location, pendingId: location.searchParams.get('connection')!, error: location.searchParams.get('connect_error') };
 }

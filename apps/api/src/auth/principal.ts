@@ -1,5 +1,6 @@
 import type { Queryable } from '../db.js';
 import { forbidden, notFound } from '../errors.js';
+import { msg, type Key } from '../i18n/index.js';
 import { can, type Permission, type Role } from '../domain/roles.js';
 
 /** Who makes the request: a signed-in person or a producer token (an agent, a script). */
@@ -29,6 +30,6 @@ export async function roleIn(db: Queryable, p: Principal, brandId: string): Prom
 export async function authorize(db: Queryable, p: Principal, brandId: string, permission: Permission): Promise<Role> {
   const role = await roleIn(db, p, brandId);
   if (!role) throw notFound('Brand');
-  if (!can(role, permission)) throw forbidden(`Your role (${role}) cannot do this`);
+  if (!can(role, permission)) throw forbidden(msg('error.role.cannot', { role: msg(`role.${role}` as Key) }));
   return role;
 }

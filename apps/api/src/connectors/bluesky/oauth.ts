@@ -1,3 +1,4 @@
+import { english, msg } from '../../i18n/index.js';
 import { checkUrl } from '../../net.js';
 import { ConnectorError, type OAuthProvider, type TokenSet } from '../types.js';
 import { jwtExpiry, pdsEndpointOf, type BlueskyClient } from './client.js';
@@ -39,10 +40,10 @@ export function createBlueskyOAuth(client: BlueskyClient): OAuthProvider {
     if (!typed || client.configured(typed)) return serverOf(typed, client.cfg.pdsUrl);
     const policy = client.cfg.policy ?? { allowPrivate: false, httpsForPublic: true };
     const checked = checkUrl(/^[a-z][a-z0-9+.-]*:\/\//i.test(typed) ? typed : `https://${typed}`, policy);
-    if ('error' in checked) throw new ConnectorError('auth', `The server address cannot be used: ${checked.error}`);
+    if ('error' in checked) throw new ConnectorError('auth', english(msg('connect.bluesky.badServer', { error: checked.error })), { text: msg('connect.bluesky.badServer', { error: checked.error }) });
     const u = checked.url;
-    if (u.protocol !== 'https:' && !policy.allowPrivate) throw new ConnectorError('auth', 'The server address has to start with https://');
-    if ((u.pathname !== '/' && u.pathname !== '') || u.search || u.hash) throw new ConnectorError('auth', 'Give only the address of the server, such as https://pds.example.com');
+    if (u.protocol !== 'https:' && !policy.allowPrivate) throw new ConnectorError('auth', english(msg('connect.bluesky.httpsOnly')), { text: msg('connect.bluesky.httpsOnly') });
+    if ((u.pathname !== '/' && u.pathname !== '') || u.search || u.hash) throw new ConnectorError('auth', english(msg('connect.bluesky.serverOnly')), { text: msg('connect.bluesky.serverOnly') });
     return u.origin;
   };
 
@@ -62,13 +63,13 @@ export function createBlueskyOAuth(client: BlueskyClient): OAuthProvider {
       async connect(values) {
         const server = checkedServer(values.server);
         const identifier = cleanHandle(values.handle ?? '');
-        if (!identifier || !values.appPassword) throw new ConnectorError('auth', 'A handle and an app password are needed');
+        if (!identifier || !values.appPassword) throw new ConnectorError('auth', english(msg('connect.bluesky.needed')), { text: msg('connect.bluesky.needed') });
         let s: Session;
         try {
           s = await startSession(server, identifier, values.appPassword);
         } catch (err) {
           if (err instanceof ConnectorError && err.errorClass === 'auth') {
-            throw new ConnectorError('auth', 'Bluesky did not accept that handle and app password. Check them, and that the password is an app password.');
+            throw new ConnectorError('auth', english(msg('connect.bluesky.refused')), { text: msg('connect.bluesky.refused') });
           }
           throw err;
         }
@@ -88,7 +89,7 @@ export function createBlueskyOAuth(client: BlueskyClient): OAuthProvider {
       const extra = previous.extra ?? {};
       const server = serverOf(extra.server, client.cfg.pdsUrl);
       try {
-        if (!previous.refreshToken) throw new ConnectorError('auth', 'There is no session to renew');
+        if (!previous.refreshToken) throw new ConnectorError('auth', english(msg('connect.bluesky.noSession')), { text: msg('connect.bluesky.noSession') });
         const s = await client.xrpc<Session>(server, 'com.atproto.server.refreshSession', { token: previous.refreshToken, method: 'POST', body: '' });
         return toToken(s, extra);
       } catch (err) {
