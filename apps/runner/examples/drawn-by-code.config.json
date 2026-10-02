@@ -1,0 +1,66 @@
+{
+  "listen": { "host": "0.0.0.0", "port": 8787 },
+  "workspaceRoot": "/var/lib/studio-runner",
+  "maxConcurrentRuns": 1,
+  "brands": {
+    "lumen": {
+      "api": "https://studio.example.com",
+      "tokenFile": "/run/secrets/lumen.token",
+      "webhookSecretFile": "/run/secrets/lumen.webhook-secret",
+      "templates": {
+        "version.changes_requested": "/opt/studio/apps/runner/templates/changes-requested.md"
+      },
+      "project": {
+        "repos": {
+          "videos": {
+            "mode": "git",
+            "repo": "/srv/projects/videos",
+            "baseBranch": "main",
+            "branch": "studio/{{pieceId}}",
+            "author": { "name": "Studio agent", "email": "studio-agent@example.com" },
+            "push": false
+          }
+        },
+        "default": "videos",
+        "template": "/opt/studio/apps/runner/templates/project-changes-requested.md"
+      },
+      "agent": {
+        "runAs": { "uid": 2001, "gid": 2001 },
+        "command": [
+          "claude", "-p", "--output-format", "json",
+          { "if": "maxBudget", "args": ["--max-budget-usd", "{{maxBudget}}"] },
+          "--add-dir", "{{pieceDir}}",
+          "--add-dir", "/opt/drawn-by-code",
+          { "if": "projectDir", "args": ["--add-dir", "{{projectDir}}"] },
+          "--permission-mode", "acceptEdits",
+          "--allowedTools",
+          "Read(/{{pieceDir}}/**)", "Read(//opt/drawn-by-code/**)", "Glob", "Grep",
+          "Edit(/{{outputDir}}/**)", "Write(/{{outputDir}}/**)", "Edit(/{{sourcesDir}}/**)", "Write(/{{sourcesDir}}/**)",
+          { "if": "projectDir", "args": ["Read(/{{projectDir}}/**)", "Edit(/{{projectDir}}/**)", "Write(/{{projectDir}}/**)"] },
+          "Bash(node /opt/drawn-by-code/engine/render.mjs:*)",
+          "Bash(node /opt/drawn-by-code/engine/review.mjs:*)",
+          "Bash(node /opt/drawn-by-code/engine/mix.mjs:*)",
+          "Bash(ffmpeg:*)", "Bash(ffprobe:*)",
+          "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"
+        ],
+        "input": "stdin",
+        "env": {
+          "HOME": "/home/agent",
+          "CLAUDE_CODE_OAUTH_TOKEN": { "file": "/run/secrets/claude-oauth-token" },
+          "DRAWN_BY_CODE_DIR": "/opt/drawn-by-code",
+          "CHROME_PATH": "/usr/bin/chromium"
+        },
+        "cost": { "from": "stdout-json", "path": "total_cost_usd" },
+        "killGraceSeconds": 20
+      },
+      "checks": {
+        "requireNetworks": [],
+        "loudness": { "min": -23, "max": -9 },
+        "truePeakMax": -1,
+        "minShortSide": 720,
+        "coveredZones": "warn"
+      },
+      "checkRetries": 1
+    }
+  }
+}

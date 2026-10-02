@@ -112,6 +112,8 @@ export class Studio {
 
   tokenInfo() { return this.call<{ token: { id: string; name: string }; brand: { id: string; name: string; timezone: string } }>('GET', '/api/token'); }
   version(id: string) { return this.call<VersionDetail>('GET', `/api/versions/${id}`); }
+  /** The piece as it is now: its `source` says where its project lives (null or absent: it has none). */
+  piece(id: string) { return this.call<{ id: string; title: string; source?: string | null }>('GET', `/api/pieces/${id}`); }
   comments(versionId: string) { return this.call<Comment[]>('GET', `/api/versions/${versionId}/comments?status=open&carried=true`); }
   requirements(brandId: string) { return this.call<Requirements>('GET', `/api/brands/${brandId}/requirements`); }
   brandSettings(brandId: string) { return this.call<{ name: string; timezone: string; agent: { currency: string } }>('GET', `/api/brands/${brandId}`); }

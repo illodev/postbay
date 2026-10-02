@@ -1,11 +1,12 @@
 import { rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { logPrefix, parseCost, planAgent, runAgent } from './agent.js';
+import { agentProjectDir, logPrefix, parseCost, planAgent, runAgent } from './agent.js';
 import { Studio, StudioError, type Comment, type RunStart } from './api.js';
 import { checkOutput, type CheckResult } from './checks.js';
 import type { Brand, Config } from './config.js';
 import type { Logger } from './log.js';
+import { acquire, commitProject, prepareProject, ProjectError, type Project } from './project.js';
 import type { Item, Queue } from './queue.js';
 import { RESULT_FORMAT, render, type TemplateVariable } from './template.js';
 import type { Secrets } from './secrets.js';
@@ -74,6 +75,13 @@ interface Work {
   variantId?: string;
   brandId: string;
   brandName: string;
+  /** The piece's project, when it has one this runner can work in (see project.ts). */
+  project?: Project;
+  /** The agent has run in this item: whatever it changed in a project is committed, however the run ends. */
+  agentRan?: boolean;
+  /** What the commit message says the round was about. */
+  pieceTitle?: string;
+  revising?: number;
 }
 
 const MIN = 60_000;
@@ -245,7 +253,7 @@ async function doWork(c: Ctx): Promise<boolean> {
   const access = { runAs: brand.agent.runAs };
   item.runDir = dirs.run;
 
-  const template = deps.templates.get(`${item.brand}:${item.type}`);
+  let template = deps.templates.get(`${item.brand}:${item.type}`);
   if (!template) return conclude(c, 'failed', { notes: `No instruction template for ${item.type}` }, 'No instructions are configured for this kind of request.');
 
   let prepared: Prepared | null = null;
@@ -283,6 +291,24 @@ async function doWork(c: Ctx): Promise<boolean> {
       if (prepared.eligible.length === 0 && !d.note) {
         return conclude(c, 'needs_people', { notes: 'Every open comment is marked for people only, so there was nothing for the agent to do.' }, null);
       }
+      work.pieceTitle = prepared.version.piece.title;
+      work.revising = prepared.version.number;
+      // A piece made from a project: the agent works in the project, not on the last version's files. Without a source (or a brand
+      // with no project configuration), it is the same as ever.
+      if (brand.project) {
+        const source = (await studio.piece(scope.pieceId!)).source?.trim();
+        if (source) {
+          try {
+            work.project = await prepareProject({ spec: brand.project, source, dirs, brandKey: item.brand, pieceId: scope.pieceId!, access });
+          } catch (err) {
+            const why = clip(err instanceof ProjectError ? err.message : (err as Error).message, 400);
+            c.log.warn({ run: item.runId, source, err: why }, 'the piece\'s project cannot be used');
+            return conclude(c, 'failed', { notes: `The piece's project (${source}) could not be used: ${why}` }, `The piece's project could not be used (${why}).`);
+          }
+          if (brand.project.template) template = deps.templates.get(`${item.brand}:project`) ?? template;
+          c.log.info({ run: item.runId, source, dir: work.project.dir, branch: work.project.branch, head: work.project.head }, 'working in the piece\'s project');
+        }
+      }
     }
   } catch (err) {
     if (gone(err)) return conclude(c, 'aborted', { notes: `The piece disappeared: ${err}` }, null);
@@ -294,12 +320,15 @@ async function doWork(c: Ctx): Promise<boolean> {
     round: String(item.round ?? 1), max_rounds: String(item.maxRounds ?? ''), max_minutes: String(item.maxMinutes ?? ''), max_cost: item.maxCost == null ? '' : String(item.maxCost), currency: info.agent.currency,
     requirements: describeRequirements(requirements), checklist: requirements.approval_checklist.length ? requirements.approval_checklist.map((x) => `- ${x}`).join('\n') : '_No checklist._',
     result_format: RESULT_FORMAT, input_dir: 'input', output_dir: 'output', sources_dir: path.relative(dirs.run, dirs.sources), run_dir: '.', failures: '',
+    source: work.project?.source ?? '', project_dir: work.project ? agentProjectDir(brand.agent, dirs, work.project.dir) : '', project_branch: work.project?.branch ?? '',
   });
 
   const abort = new AbortController();
   const stopBeat = keepAlive(c, abort);
   const onShutdown = () => abort.abort();
   deps.signal?.addEventListener('abort', onShutdown, { once: true });
+  // Two pieces may name the same folder (dir mode): the runner never lets two agents work in one project at once.
+  const releaseProject = work.project ? await acquire(`project:${work.project.dir}`) : () => {};
   try {
     for (let attempt = work.attempts; attempt <= brand.checkRetries; attempt++) {
       work.attempts = attempt;
@@ -319,6 +348,7 @@ async function doWork(c: Ctx): Promise<boolean> {
         const plan = planAgent(brand.agent, dirs, {
           brand: item.brand, runId: item.runId!, pieceId: scopeOf(c).pieceId ?? '', maxMinutes: String(item.maxMinutes ?? ''),
           maxBudget: item.maxCost == null ? undefined : String(Math.max(0, item.maxCost - work.cost)),
+          project: work.project && { dir: work.project.dir, repoDir: work.project.repoDir },
         });
         res = await runAgent({
           ...plan,
@@ -331,6 +361,7 @@ async function doWork(c: Ctx): Promise<boolean> {
       } catch (err) {
         return conclude(c, 'failed', { notes: String(err) }, 'The agent could not be started.');
       }
+      work.agentRan = true;
       if (res.aborted) {
         if (deps.signal?.aborted) throw new Retry(deps.now() + 5_000, 'the runner is shutting down'); // resumes from this stage after a restart
         c.log.warn({ run: item.runId }, 'the run was closed by the studio');
@@ -390,22 +421,95 @@ async function doWork(c: Ctx): Promise<boolean> {
       work.notes = result?.notes ?? '';
       work.said = result?.comments ?? [];
       work.piece = result?.piece;
+      // What the agent changed in the project is committed before the version goes up, so the version's notes can name the commit.
+      if ((await commitWork(c, null)) === 'leaked') return conclude(c, 'failed', { notes: LEAK_NOTE }, "The agent's result could not be used.");
       item.stage = 'agent_done';
       deps.queue.save(item);
       return false;
     }
     return conclude(c, 'checks_failed', { notes: 'The output kept failing the automatic checks.' }, 'The result did not pass the automatic checks.');
   } finally {
+    releaseProject();
     stopBeat();
     deps.signal?.removeEventListener('abort', onShutdown);
   }
 }
+
+// ───────────────────────────── the project ─────────────────────────────
+
+/** The commit message: the round, the piece, and each comment the agent was given with what it said, as trailers git can search. */
+function commitMessage(c: Ctx, work: Work, outcome: string | null): string {
+  const round = c.item.round ?? 1;
+  const title = (work.pieceTitle ?? 'the piece').replace(/\s+/g, ' ').trim();
+  const subject = `Studio round ${round}: ${clip(title, 60)}${outcome ? ` (not uploaded: ${outcome})` : ''}`;
+  const said = new Map((work.said ?? []).map((s) => [s.id, s.status]));
+  const lines = [
+    subject, '',
+    outcome
+      ? `What the agent changed in round ${round} of "${title}". No new version was uploaded (${outcome}); the changes are kept here for a person to look at.`
+      : `What the agent changed in round ${round} of "${title}", asked for on version ${work.revising ?? '?'}.`,
+  ];
+  if (!outcome && work.notes) lines.push('', clip(work.notes, 1500));
+  if (work.eligible?.length) {
+    lines.push('', 'Comments:');
+    for (const id of work.eligible) lines.push(`- ${id}: ${said.get(id) ?? 'no answer'}`);
+  }
+  lines.push('', `Studio-Piece: ${scopeOf(c).pieceId}`, `Studio-Run: ${c.item.runId}`, `Studio-Round: ${round}`, ...(work.eligible ?? []).map((id) => `Studio-Comment: ${id}`));
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * Commits what the agent changed in the piece's git worktree, once per run, whatever the outcome: a run that uploads names the commit in
+ * the version's notes; one that does not keeps the agent's work on the branch for a person, instead of leaving it to the next round.
+ * Returns 'leaked' when a secret of the runner turned up in the changes (then they were thrown away, and nothing was committed).
+ */
+async function commitWork(c: Ctx, outcome: string | null): Promise<'leaked' | undefined> {
+  const work = c.item.work as Work;
+  const p = work?.project;
+  if (!p || p.mode !== 'git' || !work.agentRan || p.commit !== undefined || p.commitError) return;
+  const repo = c.brand.project?.repos[p.key];
+  if (!repo || repo.mode !== 'git') return;
+  const dirs = dirsFor(c.deps.config.workspaceRoot, c.item.brand, scopeOf(c).key, c.item.runId!);
+  try {
+    const r = await commitProject(p, repo, { message: commitMessage(c, work, outcome), secrets: c.deps.config.secrets, dirs });
+    p.changedFiles = r.changedFiles;
+    if (r.leaked) {
+      c.log.error({ run: c.item.runId, brand: c.item.brand, secrets: r.leaked }, "the agent's changes to the project hold a secret of this runner: thrown away, nothing committed");
+      p.commit = null;
+      c.deps.queue.save(c.item);
+      return 'leaked';
+    }
+    Object.assign(p, { commit: r.commit, pushed: r.pushed, pushError: r.pushError && clip(r.pushError, 300) });
+    c.log.info({ run: c.item.runId, commit: r.commit, branch: p.branch, files: r.changedFiles, pushed: r.pushed, pushError: r.pushError }, 'project committed');
+  } catch (err) {
+    p.commitError = clip((err as Error).message, 300);
+    c.log.warn({ run: c.item.runId, err: p.commitError }, 'could not commit the project');
+  }
+  c.deps.queue.save(c.item);
+  return undefined;
+}
+
+/** One line on the project for a version's notes or a run's. */
+function projectLine(p: Project | undefined): string | null {
+  if (!p) return null;
+  if (p.mode === 'dir') return `Project ${p.source}: worked on in place, in ${p.dir} (nothing is committed in this mode).`;
+  if (p.commitError) return `Project ${p.source}: the agent's changes could not be committed (${p.commitError}). They are in the worktree, on branch ${p.branch}.`;
+  if (p.commit === undefined) return null;
+  if (!p.commit) return `Project ${p.source}: nothing changed (branch ${p.branch}, commit ${p.head}).`;
+  const push = p.pushed ? ', pushed' : p.pushError ? `, not pushed: ${p.pushError}` : '';
+  return `Project ${p.source}: commit ${p.commit} on branch ${p.branch}${push}.`;
+}
+
+const projectDetail = (p: Project | undefined) =>
+  p && { source: p.source, mode: p.mode, branch: p.branch, commit: p.commit ?? null, base: p.head, files: p.changedFiles, pushed: p.pushed, error: p.commitError ?? p.pushError };
 
 // ───────────────────────────── uploading ─────────────────────────────
 
 function versionNotes(c: Ctx, work: Work): string {
   const lines = [`Agent round ${c.item.round}${work.cost ? `, cost ${work.cost.toFixed(2)}` : ''}.`];
   if (work.notes) lines.push('', work.notes);
+  const project = projectLine(work.project);
+  if (project) lines.push('', project);
   if (work.checks.summary.length) lines.push('', `Automatic checks: ${work.checks.summary.join('; ')}.`);
   if (work.checks.issues.length) lines.push(...work.checks.issues.slice(0, 10).map((i) => `- ${i}`));
   return clip(lines.join('\n'), 4900);
@@ -483,7 +587,7 @@ async function replyAndFinish(c: Ctx): Promise<void> {
       cost: work.cost,
       notes: clip(work.notes || `Uploaded v${item.versionNumber}.`, 900),
       versionId: item.versionId,
-      detail: { checks: work.checks, files: work.files.map((f) => path.basename(f.path)), attempts: work.attempts + 1 },
+      detail: { checks: work.checks, files: work.files.map((f) => path.basename(f.path)), attempts: work.attempts + 1, ...(work.project ? { project: projectDetail(work.project) } : {}) },
     });
   } catch (err) {
     if (transient(err)) throw new Retry(deps.now() + 30_000, String(err));
@@ -503,6 +607,9 @@ async function conclude(
 ): Promise<boolean> {
   const { item, studio, deps } = c;
   const work = item.work as Work;
+  // Whatever the agent changed in the project is kept on the piece's branch, for a person to look at.
+  if ((await commitWork(c, outcome)) === 'leaked' && o.notes !== LEAK_NOTE) o = { ...o, notes: `${LEAK_NOTE} ${o.notes}` };
+  const project = projectLine(work?.project);
   if (replyWith) {
     for (const id of work.eligible ?? []) {
       try {
@@ -514,8 +621,11 @@ async function conclude(
   }
   try {
     await studio.finishRun(item.runId!, {
-      outcome, cost: work.cost ?? 0, notes: clip(o.notes, 900),
-      detail: o.checks ? { checks: { errors: o.checks.errors.length, warnings: o.checks.warnings.length, summary: o.checks.summary, issues: [...o.checks.errors, ...o.checks.warnings].map((i) => i.message) } } : {},
+      outcome, cost: work.cost ?? 0, notes: clip(project && work.agentRan ? `${o.notes} ${project}` : o.notes, 900),
+      detail: {
+        ...(o.checks ? { checks: { errors: o.checks.errors.length, warnings: o.checks.warnings.length, summary: o.checks.summary, issues: [...o.checks.errors, ...o.checks.warnings].map((i) => i.message) } } : {}),
+        ...(work.project ? { project: projectDetail(work.project) } : {}),
+      },
     });
   } catch (err) {
     c.log.warn({ run: item.runId, err: String(err) }, 'could not close the run');

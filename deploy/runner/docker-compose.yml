@@ -1,0 +1,56 @@
+# The agent runner on any machine: the runner, Claude Code, Chromium, ffmpeg, git and a rendering engine in one image
+# (apps/runner/Dockerfile). It needs nothing installed but Docker. See "Running the runner on any machine" in apps/runner/README.md.
+#
+#   cd deploy/runner
+#   mkdir -p config secrets projects && chmod 700 secrets
+#   cp ../../apps/runner/examples/drawn-by-code.config.json config/runner.config.json      # then edit it
+#   # the secrets, one per file, mode 600: lumen.token, lumen.webhook-secret, claude-oauth-token
+#   docker compose up -d --build
+#   docker compose logs -f runner
+#
+# Everything the runner writes (each piece's workspace, its git worktrees, the queue) is in the `workspace` volume, so a restart or a
+# new image carries on where it was. The project repositories and folders are a directory of this machine, mounted at /srv/projects.
+services:
+  runner:
+    build:
+      context: ../..
+      dockerfile: apps/runner/Dockerfile
+      args:
+        ENGINE_REPO: ${ENGINE_REPO:-https://github.com/illodev/drawn-by-code.git}
+        ENGINE_REF: ${ENGINE_REF:-main}
+        # The agent's user. Match it to the owner of the folders in PROJECTS_DIR when the agent works in them in place (dir mode),
+        # and keep agent.runAs in the configuration the same.
+        AGENT_UID: ${AGENT_UID:-2001}
+        AGENT_GID: ${AGENT_GID:-2001}
+    image: studio-runner:${RUNNER_TAG:-latest}
+    restart: unless-stopped
+    # Reaps whatever an agent leaves behind, and passes the stop signal on to the runner, which stops its agent and keeps its queue.
+    init: true
+    stop_grace_period: 40s
+    ports:
+      # Only the studio should reach this: bind it to a private address, or put it behind a proxy with TLS.
+      - '${RUNNER_BIND:-127.0.0.1}:${RUNNER_PORT:-8787}:8787'
+    environment:
+      RUNNER_CONFIG: /etc/studio-runner/runner.config.json
+      # Nothing secret here: the runner reads its secrets from the files in /run/secrets (mode 600), and warns about any it finds in
+      # its environment, where an agent could read them.
+    volumes:
+      - workspace:/var/lib/studio-runner
+      - ./config:/etc/studio-runner:ro
+      - ./secrets:/run/secrets:ro
+      - ${PROJECTS_DIR:-./projects}:/srv/projects
+    # The runner is root inside the container only to run each agent as the `agent` user and read back what it made. These are the
+    # capabilities that takes: change owners and modes in the workspace (CHOWN, FOWNER), read the agent's output (DAC_OVERRIDE),
+    # become the agent (SETUID, SETGID) and stop it (KILL). Nothing else.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, KILL, SETGID, SETUID]
+    security_opt:
+      - no-new-privileges:true
+    # Chromium renders in shared memory; Docker's default 64 MB is too little for a full-size frame.
+    shm_size: 1gb
+    # A render is CPU-bound and can take the whole machine: give it what you can spare.
+    cpus: ${RUNNER_CPUS:-2}
+    mem_limit: ${RUNNER_MEMORY:-4g}
+
+volumes:
+  workspace:

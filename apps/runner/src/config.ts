@@ -48,6 +48,59 @@ const sandboxSchema = z.object({
    * agent's command and its ESTUDIO_* variables then get the paths as the agent sees them.
    */
   pieceDir: z.string().startsWith('/').optional(),
+  /**
+   * Where the sandbox shows a project directory that lives outside the piece directory (a project in `dir` mode), when not at the
+   * same path. Mount it with `{ "if": "projectMount", "args": [...] }` in the command: see the README.
+   */
+  projectDir: z.string().startsWith('/').optional(),
+});
+
+/** How the runner signs in to a project's git server, for fetching and pushing. Secrets come from files only their owner can read. */
+const gitAuthSchema = z.object({
+  /** HTTPS: a file holding a token, sent as HTTP basic authentication with `username`. */
+  tokenFile: z.string().min(1).optional(),
+  /** HTTPS: the user name that goes with the token (GitHub: x-access-token, GitLab: oauth2). */
+  username: z.string().min(1).default('x-access-token'),
+  /** SSH: a private key file. */
+  sshKeyFile: z.string().min(1).optional(),
+  /** SSH: the known_hosts file to check the server against. Without it, the key the server shows first is remembered and then required. */
+  knownHostsFile: z.string().min(1).optional(),
+});
+
+const projectRepoSchema = z.discriminatedUnion('mode', [
+  z.object({
+    /** A git repository: each piece gets its own worktree, on its own branch, kept between its rounds; the runner commits what the agent changed. */
+    mode: z.literal('git'),
+    /** The repository: a URL, or a path on this machine (relative to the configuration file). */
+    repo: z.string().min(1),
+    /** The branch a piece's own branch starts from. */
+    baseBranch: z.string().min(1).default('main'),
+    /** The piece's own branch. {{pieceId}} and {{brand}} are filled in. */
+    branch: z.string().min(1).default('studio/{{pieceId}}'),
+    /** Who the runner's commits are by. */
+    author: z.object({ name: z.string().trim().min(1).max(200), email: z.string().trim().min(3).max(200) }).default({ name: 'Studio agent', email: 'agent@studio.invalid' }),
+    /** Push the piece's branch after each commit. */
+    push: z.boolean().default(false),
+    auth: gitAuthSchema.optional(),
+  }),
+  z.object({
+    /** A plain directory: the agent works in the project's own folder, in place. Nothing is committed. */
+    mode: z.literal('dir'),
+    /** The folder a source is a path under (relative to the configuration file). */
+    root: z.string().min(1),
+  }),
+]);
+
+const PROJECT_KEY = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+/** How a piece's `source` (where its project lives) becomes the directory the agent works in. */
+const projectSchema = z.object({
+  /** The places a source can point into, by the key a source starts with ("videos:path/to/project"). */
+  repos: z.record(z.string(), projectRepoSchema).refine((r) => Object.keys(r).length > 0, 'Configure at least one repository or directory'),
+  /** The key a source without "<key>:" belongs to. Default: the only one, when there is one. */
+  default: z.string().optional(),
+  /** Instructions used instead of the version.changes_requested template when the piece has a project. */
+  template: z.string().min(1).optional(),
 });
 
 const brandSchema = z.object({
@@ -74,6 +127,8 @@ const brandSchema = z.object({
     sandbox: sandboxSchema.optional(),
   }),
   checks: checksSchema,
+  /** Pieces made from a project (code and material in a repository or a folder): how a piece's `source` becomes a working directory. */
+  project: projectSchema.optional(),
   /** Extra tries when the output fails the automatic checks, each costing another run of the agent. */
   checkRetries: z.number().int().min(0).max(3).default(1),
 });
@@ -95,11 +150,38 @@ const configSchema = z.object({
 type BrandInput = z.infer<typeof brandSchema>;
 /** The agent's settings, with every value of its environment read. */
 export type AgentSpec = Omit<BrandInput['agent'], 'env'> & { env: Record<string, string> };
+/** A git repository a project can live in, with its paths resolved and its credentials read. */
+export interface GitRepo {
+  key: string;
+  mode: 'git';
+  /** A URL, or an absolute path on this machine. */
+  repo: string;
+  baseBranch: string;
+  branch: string;
+  author: { name: string; email: string };
+  push: boolean;
+  auth?: { token?: string; username: string; sshKeyFile?: string; knownHostsFile?: string };
+}
+/** A directory projects are folders of. */
+export interface DirRepo {
+  key: string;
+  mode: 'dir';
+  /** Absolute. */
+  root: string;
+}
+export type ProjectRepo = GitRepo | DirRepo;
+export interface ProjectSpec {
+  repos: Record<string, ProjectRepo>;
+  default?: string;
+  template?: string;
+}
+
 /** A brand as the runner uses it: its token and webhook secrets read, from the file or the configuration. */
-export type Brand = Omit<BrandInput, 'token' | 'tokenFile' | 'webhookSecret' | 'webhookSecretFile' | 'agent'> & {
+export type Brand = Omit<BrandInput, 'token' | 'tokenFile' | 'webhookSecret' | 'webhookSecretFile' | 'agent' | 'project'> & {
   token: string;
   webhookSecret: string[];
   agent: AgentSpec;
+  project?: ProjectSpec;
 };
 export type ArgSpec = z.infer<typeof argSchema>;
 export type CostSpec = z.infer<typeof costSchema>;
@@ -192,7 +274,8 @@ export function parseConfig(raw: unknown, baseDir: string, env: Record<string, s
       if (b.agent.runAs && !agentEnv.HOME) {
         throw new Error("agent.runAs needs agent.env.HOME, the agent user's own home (the runner's is not passed to it)");
       }
-      brands[key] = { ...b, token, webhookSecret, agent: { ...b.agent, env: agentEnv } };
+      const project = b.project ? projectOf(key, b.project, file, secrets, warnings, b.agent.runAs) : undefined;
+      brands[key] = { ...b, token, webhookSecret, agent: { ...b.agent, env: agentEnv }, project };
 
       if (!b.tokenFile && fromEnvironment(rb.token)) {
         warnings.push(`${key}: the studio token comes from an environment variable. Anything running as the runner's user can read the runner's environment (/proc/<pid>/environ), the agent too unless it runs as another user or in a sandbox: put it in a file (mode 600) and use tokenFile.`);
@@ -217,6 +300,52 @@ export function parseConfig(raw: unknown, baseDir: string, env: Record<string, s
     ...c, brands, workspaceRoot, stateDir: path.resolve(baseDir, c.stateDir ?? path.join(workspaceRoot, '.state')), baseDir,
     secrets: new Secrets(secrets), warnings,
   };
+}
+
+/** A git address rather than a path: a URL (https://, ssh://, file://…) or scp-like (git@host:path). */
+const isRemote = (repo: string) => /^[a-z][a-z0-9+.-]*:\/\//i.test(repo) || /^[^/\s]+@[^/\s:]+:/.test(repo);
+
+/** Reads and checks a brand's project configuration: paths resolved, credentials read (and kept as secrets). */
+function projectOf(
+  brand: string, p: z.infer<typeof projectSchema>, file: (p: string) => string, secrets: { label: string; value: string }[], warnings: string[],
+  runAs: { uid: number; gid: number } | undefined,
+): ProjectSpec {
+  const repos: Record<string, ProjectRepo> = {};
+  for (const [key, r] of Object.entries(p.repos)) {
+    if (!PROJECT_KEY.test(key)) throw new Error(`project.repos: "${key}" is not a valid key (letters, digits, - and _; it is what a source starts with)`);
+    if (r.mode === 'dir') {
+      repos[key] = { key, mode: 'dir', root: file(r.root) };
+      if (runAs) warnings.push(`${brand}: project "${key}" works in place in ${file(r.root)}: the agent's user (uid ${runAs.uid}) needs to be able to write there.`);
+      continue;
+    }
+    for (const placeholder of r.branch.matchAll(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g)) {
+      if (!['pieceId', 'brand'].includes(placeholder[1]!)) throw new Error(`project.repos.${key}.branch uses {{${placeholder[1]}}}: only {{pieceId}} and {{brand}} are known`);
+    }
+    if (!/\{\{\s*pieceId\s*\}\}/.test(r.branch)) throw new Error(`project.repos.${key}.branch must hold {{pieceId}}: every piece needs a branch of its own`);
+    if (/^[a-z][a-z0-9+.-]*:\/\/[^/@\s]*:[^/@\s]*@/i.test(r.repo)) {
+      warnings.push(`${brand}: project "${key}" has a password in its address, which git keeps in the repository's configuration where the agent may read it: use project.repos.${key}.auth.tokenFile.`);
+    }
+    let auth: GitRepo['auth'];
+    if (r.auth) {
+      if (r.auth.tokenFile && r.auth.sshKeyFile) throw new Error(`project.repos.${key}.auth: a token (https) or an SSH key, not both`);
+      auth = { username: r.auth.username };
+      if (r.auth.tokenFile) {
+        auth.token = readSecretFile(file(r.auth.tokenFile));
+        secrets.push({ label: `${brand}: project.repos.${key} token`, value: auth.token });
+      }
+      if (r.auth.sshKeyFile) {
+        auth.sshKeyFile = file(r.auth.sshKeyFile);
+        secrets.push({ label: `${brand}: project.repos.${key} SSH key`, value: readSecretFile(auth.sshKeyFile) });
+      }
+      if (r.auth.knownHostsFile) auth.knownHostsFile = file(r.auth.knownHostsFile);
+    }
+    repos[key] = {
+      key, mode: 'git', repo: isRemote(r.repo) ? r.repo : file(r.repo), baseBranch: r.baseBranch, branch: r.branch, author: r.author, push: r.push, auth,
+    };
+  }
+  const keys = Object.keys(repos);
+  if (p.default !== undefined && !repos[p.default]) throw new Error(`project.default is "${p.default}", which is not one of project.repos (${keys.join(', ')})`);
+  return { repos, default: p.default ?? (keys.length === 1 ? keys[0] : undefined), template: p.template };
 }
 
 export function loadConfig(file: string, env: Record<string, string | undefined> = process.env): Config {
