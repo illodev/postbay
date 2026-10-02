@@ -1,0 +1,30 @@
+/* The "⋯" menu (components/MoreMenu.tsx): drawn at the end of the page, beside its button. Classes start with mm-. */
+.mm-trigger {
+  display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; flex: none;
+  border-radius: var(--radius-sm); border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer;
+  transition: background-color .12s, color .12s, border-color .12s;
+}
+.mm-trigger:hover, .mm-trigger[aria-expanded='true'] { background: var(--surface-2); color: var(--text); }
+.mm-trigger svg { width: 16px; height: 16px; }
+.mm-menu {
+  position: fixed; z-index: 80; min-width: 220px; max-width: min(320px, calc(100vw - 16px)); padding: 5px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: 0 16px 44px rgb(0 0 0 / 55%);
+  animation: mm-in .1s ease-out;
+}
+.mm-menu[data-up] { animation-name: mm-in-up; }
+@keyframes mm-in { from { opacity: 0; transform: translateY(-3px); } }
+@keyframes mm-in-up { from { opacity: 0; transform: translateY(3px); } }
+.mm-item {
+  display: flex; align-items: center; gap: 9px; width: 100%; min-height: 32px; padding: 0 9px; border: 0; border-radius: 6px;
+  background: none; color: var(--text); font: inherit; font-size: .84375rem; line-height: 1; text-align: left; cursor: pointer; white-space: nowrap;
+}
+.mm-item:hover, .mm-item:focus-visible { background: var(--surface-2); text-decoration: none; outline: none; }
+.mm-item svg { width: 15px; height: 15px; flex: none; color: var(--muted); }
+.mm-item .mm-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mm-item .mm-ext { width: 13px; height: 13px; color: var(--faint); }
+.mm-item.is-danger { color: var(--bad); }
+.mm-item.is-danger svg { color: var(--bad); }
+.mm-item.is-danger:hover, .mm-item.is-danger:focus-visible { background: var(--bad-soft); }
+.mm-item[aria-disabled='true'] { opacity: .45; cursor: not-allowed; }
+.mm-item[aria-disabled='true']:hover { background: none; }
+.mm-sep { height: 1px; margin: 4px 2px; background: var(--border); }
