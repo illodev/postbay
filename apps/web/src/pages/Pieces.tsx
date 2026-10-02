@@ -404,11 +404,12 @@ export function PiecesPage() {
 
   const toggle = useCallback(
     (id: string, range: boolean) => {
+      // Read the anchor now: the updater below runs later, after it has moved to this piece.
+      const ids = shown.map((p) => p.id);
+      const a = anchor.current ? ids.indexOf(anchor.current) : -1;
+      const b = ids.indexOf(id);
       setSelected((prev) => {
         const next = new Set(prev);
-        const ids = shown.map((p) => p.id);
-        const a = anchor.current ? ids.indexOf(anchor.current) : -1;
-        const b = ids.indexOf(id);
         if (range && a >= 0 && b >= 0) {
           for (const x of ids.slice(Math.min(a, b), Math.max(a, b) + 1)) next.add(x);
         } else if (next.has(id)) next.delete(id);
