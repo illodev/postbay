@@ -68,7 +68,10 @@ async function checkAnchor(ctx: Ctx, versionId: string, anchor: Anchor): Promise
     if (afterEnd(cue.start)) throw badRequest('invalid_anchor', 'That subtitle line comes after the end of the video');
     return {
       video,
-      anchor: { type: 'time', t: cue.start, t_end: cue.end, position: anchor.position, track: track.position, cue: cue.index, cue_text: cue.text.slice(0, 1000) },
+      anchor: {
+        type: 'time', t: cue.start, t_end: cue.end, position: anchor.position, track: track.position, cue: cue.index, cue_text: cue.text.slice(0, 1000),
+        ...(anchor.drawing ? { drawing: anchor.drawing } : {}),
+      },
     };
   }
   const hasPdf = assets.some((a) => a.kind === 'pdf');

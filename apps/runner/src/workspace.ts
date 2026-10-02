@@ -1,6 +1,6 @@
 import { chmod, chown, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { Comment, Requirements, Studio, VersionDetail } from './api.js';
+import type { Comment, Requirements, Shape, Studio, VersionDetail } from './api.js';
 import type { Logger } from './log.js';
 
 export interface Dirs {
@@ -76,15 +76,38 @@ export async function readResult(outDir: string): Promise<{ text: string } | { m
 
 const clock = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
 
+const pct = (n: number) => `${Math.round(n * 100)}%`;
+const span = (lo: number, hi: number) => (Math.round(lo * 100) === Math.round(hi * 100) ? pct(lo) : `${Math.round(lo * 100)}–${pct(hi)}`);
+
+/** One shape in words: what it is, where on the picture, and its colour. */
+function describeShape(s: Shape): string {
+  const colour = s.color ?? 'yellow';
+  if (s.type === 'rect') return `a ${colour} rectangle ${span(s.x, s.x + s.w)} from the left and ${span(s.y, s.y + s.h)} from the top`;
+  if (s.type === 'arrow') return `a ${colour} arrow pointing at ${pct(s.x2)} from the left and ${pct(s.y2)} from the top (from ${pct(s.x1)}, ${pct(s.y1)})`;
+  const xs = s.points.map((p) => p[0]), ys = s.points.map((p) => p[1]);
+  return `a ${colour} freehand line over ${span(Math.min(...xs), Math.max(...xs))} from the left and ${span(Math.min(...ys), Math.max(...ys))} from the top`;
+}
+
+/** What the reviewer drew while writing the comment, in a sentence; empty when nothing was drawn. */
+export function describeDrawing(shapes: Shape[] | undefined, on: 'frame' | 'page' = 'frame'): string {
+  if (!shapes?.length) return '';
+  const shown = shapes.slice(0, 6).map(describeShape);
+  const more = shapes.length > shown.length ? `, and ${shapes.length - shown.length} more` : '';
+  return `, with a drawing on the ${on}: ${shown.join('; ')}${more}`;
+}
+
 export function describeAnchor(a: Comment['anchor']): string {
   if (!a) return 'General: about the piece as a whole';
+  return describePlace(a) + describeDrawing(a.drawing, a.type === 'time' ? 'frame' : 'page');
+}
+
+function describePlace(a: NonNullable<Comment['anchor']>): string {
   // A comment on one line of the subtitles carries the line's own words: the agent edits that line, not "the video around 3 seconds".
   if (a.type === 'time' && a.cue !== undefined) {
     const when = a.t_end !== undefined ? `from ${clock(a.t)} to ${clock(a.t_end)}` : `at ${clock(a.t)}`;
     return `Subtitle line ${a.cue + 1} of subtitle file ${(a.track ?? 0) + 1}, ${when} (${a.t}–${a.t_end ?? a.t} seconds)${a.cue_text ? `, which says: "${a.cue_text.replace(/\n/g, ' / ')}"` : ''}`;
   }
   if (a.type === 'time') return a.t_end !== undefined ? `Video, from ${clock(a.t)} to ${clock(a.t_end)} (${a.t}–${a.t_end} seconds)` : `Video, at ${clock(a.t)} (${a.t} seconds)`;
-  const pct = (n: number) => `${Math.round(n * 100)}%`;
   return a.w === 0 && a.h === 0
     ? `Page ${a.page}, a point ${pct(a.x)} from the left and ${pct(a.y)} from the top`
     : `Page ${a.page}, an area ${pct(a.w)} wide and ${pct(a.h)} tall, ${pct(a.x)} from the left and ${pct(a.y)} from the top`;
