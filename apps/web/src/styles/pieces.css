@@ -11,7 +11,6 @@
 
 .pz-toolbar { container: pztb / inline-size; display: flex; align-items: center; gap: 12px; margin: 0 0 4px -10px; }
 .pz-tools { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; }
-.pz-dd { position: relative; display: inline-flex; }
 .pz-tb {
   appearance: none; display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px; border-radius: 7px; border: 0;
   background: none; color: var(--muted); font: 500 .8125rem/1 var(--font); cursor: pointer; white-space: nowrap; transition: background-color .12s, color .12s;
@@ -43,24 +42,16 @@
 .pz-linkish:hover { color: var(--text); }
 .pz-dot { color: var(--faint); }
 
-/* ───────────────────────────── popovers and menus ───────────────────────────── */
-.popover.pz-pop { top: calc(100% + 6px); width: max-content; min-width: 200px; max-width: min(320px, 92vw); padding: 5px; }
-.pz-pop-start { left: 0; }
-.pz-pop-end { right: 0; }
-.pz-pop .menu-item { height: 32px; padding: 0 9px; gap: 9px; font-size: .8125rem; line-height: 1; }
-.pz-pop .menu-item:focus-visible { outline: none; background: var(--control); }
-.pz-pop .menu-item:disabled { opacity: .45; cursor: not-allowed; }
-.pz-pop .menu-item:disabled:hover { background: none; }
-.pz-pop .menu-sep { height: 1px; background: var(--line); margin: 4px 6px; }
-.pz-mi .grow { white-space: nowrap; }
-.pz-mi .pz-mi-check { color: var(--text); width: 14px; height: 14px; }
-.pz-mcount { font: 400 .75rem/1 var(--font); color: var(--faint); font-variant-numeric: tabular-nums; min-width: 14px; text-align: right; }
-.pz-mdot { width: 7px; height: 7px; border-radius: 50%; flex: none; margin: 0 4px; }
-.pz-danger, .pz-pop .pz-danger svg { color: var(--bad); }
-.pz-menu-note { margin: 2px 9px 6px; max-width: 240px; font-size: .75rem; line-height: 1.4; color: var(--faint); }
+/* ───────────────────────────── menus (components/ui: Menu, Popover) ───────────────────────────── */
+/* A state's dot or a network's mark where a menu item's icon goes, so labels line up whatever leads them. */
+.pz-mdot { width: 8px; height: 8px; border-radius: 50%; flex: none; margin: 0 4px; }
+.float .menu-item .net { flex: none; }
+.float .menu-hint { font-variant-numeric: tabular-nums; }
+/* a note under a menu item that cannot be used, saying why */
+.pz-menu-note { margin: 0 8px 6px 33px; max-width: 200px; font-size: .75rem; line-height: 1.4; color: var(--faint); }
 
 /* appearance */
-.popover.pz-pop-look { width: 272px; padding: 8px 12px 6px; }
+.float.pz-look-pop { padding: 8px 12px 6px; }
 .pz-look { display: flex; flex-direction: column; }
 .pz-look-note { margin: 2px 0 4px; font-size: .75rem; line-height: 1; color: var(--faint); }
 .pz-look-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 38px; font-size: .8125rem; line-height: 1; color: var(--text); }
@@ -130,9 +121,7 @@
 .pz-by .avatar { font-size: .5rem !important; }
 .pz-by-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .pz-by-when, .pz-by-more { flex: none; color: var(--faint); }
-.pz-more-wrap { margin-left: auto; flex: none; position: relative; z-index: 2; }
-/* an open menu rises above the next row's chips */
-.pz-more-wrap:has([aria-expanded='true']) { z-index: 30; }
+.pz-more-wrap { margin-left: auto; flex: none; position: relative; z-index: 2; display: inline-flex; }
 .pz-more { appearance: none; width: 26px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .12s, background-color .12s; }
 .pz-more svg { width: 16px; height: 16px; stroke-width: 3; }
 .pz-card:hover .pz-more, .pz-card:focus-within .pz-more, .pz-more[aria-expanded='true'], .pz-more:focus-visible { opacity: 1; }
@@ -267,15 +256,13 @@
 .pz-options { display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; margin: 0 -6px; }
 .pz-option { appearance: none; display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--text); font: 500 .875rem/1 var(--font); cursor: pointer; text-align: left; }
 .pz-option:hover:not(:disabled) { background: var(--control); }
+.pz-option:focus-visible { outline-offset: -2px; background: var(--control); }
 .pz-option:disabled { opacity: .6; cursor: progress; }
 .pz-option svg { width: 15px; height: 15px; color: var(--muted); flex: none; }
 .pz-option-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pz-option-note { display: inline-flex; align-items: center; gap: 5px; font-size: .75rem; font-weight: 400; color: var(--muted); }
 .pz-option-note svg { width: 13px; height: 13px; color: var(--text); }
 .pz-confirm-warn { color: var(--warn); }
-/* The shared confirm's red button loses to .btn (styles.css loads after ui.css); inside this page it keeps its colour. */
-.pz .btn.btn-confirm-danger { background: var(--bad); color: #fff; }
-.pz .btn.btn-confirm-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 88%, #fff); }
 .pz-busy { position: fixed; right: 16px; bottom: 16px; z-index: 100; }
 
 /* ───────────────────────────── narrower ───────────────────────────── */

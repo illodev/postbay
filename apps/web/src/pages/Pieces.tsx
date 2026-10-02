@@ -1,24 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type PieceDetail, type PieceSummary, type VersionDetail } from '../api';
 import type { Campaign } from '../components/Layout';
 import { Icon, type IconName } from '../components/icons';
 import { PageBar } from '../components/PageBar';
 import { ScheduleDialog } from '../components/publications';
-import { ConfirmDialog, Dialog, ErrorBox, Field, NetMark, Segmented, Skeleton, Switch, errorMessage, useToast } from '../components/ui';
+import { ConfirmDialog, Dialog, ErrorBox, Field, Menu, MenuItem, MenuSeparator, NetMark, Popover, Segmented, Select, Skeleton, Switch, Tip, errorMessage, useToast } from '../components/ui';
 import { t, type Key } from '../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
-import { Dropdown } from './pieces/Dropdown';
 import {
-  DEFAULT_LOOK, DEFAULT_SORT, inState, isLook, isSort, isView, MENU_SORTS, sortPieces, STATE_FILTERS, stageOf, useStored, VIEWS,
+  DEFAULT_LOOK, DEFAULT_SORT, FIRST_DIR, inState, isLook, isSort, isView, MENU_SORTS, sortPieces, STATE_FILTERS, stageOf, useStored, VIEWS,
   type Look, type Sort, type Stage, type View,
 } from './pieces/model';
 import { BoardSkeleton, BoardView, discardLocked, EmptyState, GridSkeleton, GridView, ListSkeleton, ListView, type CardActions } from './pieces/views';
 import '../styles/pieces.css';
 
 const KINDS = ['video', 'carousel', 'post', 'story', 'pdf'] as const;
+/** A select cannot hold the empty string: this stands for "no campaign". */
+const NO_CAMPAIGN = 'none';
 const VIEW_ICON: Record<View, IconName> = { grid: 'grid', board: 'columns', list: 'list' };
 const STATE_DOT: Record<string, string> = {
   draft: 'var(--muted)', in_review: 'var(--warn)', changes_requested: 'var(--bad)', approved: 'var(--good)', scheduled: 'var(--info)', published: 'var(--live)', discarded: 'var(--faint)',
@@ -68,15 +69,15 @@ function NewPiece({ campaigns, campaignId, onClose }: { campaigns: Campaign[]; c
         </Field>
         <div className="pz-form-row">
           <Field label={t('pieces.field.kind')}>
-            <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
-              {KINDS.map((k) => <option key={k} value={k}>{t(`pieces.kindOption.${k}` as Key)}</option>)}
-            </select>
+            <Select label={t('pieces.field.kind')} value={form.kind} onChange={(kind) => setForm({ ...form, kind })} options={KINDS.map((k) => ({ value: k, label: t(`pieces.kindOption.${k}` as Key) }))} />
           </Field>
           <Field label={t('pieces.field.campaign')}>
-            <select value={form.campaignId} onChange={(e) => setForm({ ...form, campaignId: e.target.value })}>
-              <option value="">{t('pieces.field.noCampaign')}</option>
-              {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <Select
+              label={t('pieces.field.campaign')}
+              value={form.campaignId || NO_CAMPAIGN}
+              onChange={(v) => setForm({ ...form, campaignId: v === NO_CAMPAIGN ? '' : v })}
+              options={[{ value: NO_CAMPAIGN, label: t('pieces.field.noCampaign'), icon: <Icon name="ban" /> }, ...campaigns.map((c) => ({ value: c.id, label: c.name, icon: <Icon name="folder" /> }))]}
+            />
           </Field>
         </div>
         <Field label={t('pieces.field.brief')}>
@@ -128,10 +129,17 @@ function MoveDialog({ pieces, campaigns, onClose, onDone }: { pieces: PieceSumma
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['pieces'] }),
   });
+  // The dialog starts on the campaign the pieces are in, or on the first one, rather than on its close button.
+  const start = campaigns.find((c) => c.id === same)?.id ?? campaigns[0]?.id ?? null;
+  const startRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const id = setTimeout(() => startRef.current?.focus(), 0);
+    return () => clearTimeout(id);
+  }, []);
   const option = (c: Campaign | null) => {
     const current = same !== undefined && (c?.id ?? null) === same;
     return (
-      <button key={c?.id ?? 'none'} type="button" className={`pz-option ${current ? 'is-current' : ''}`} disabled={move.isPending} onClick={() => move.mutate(c)}>
+      <button key={c?.id ?? 'none'} ref={(c?.id ?? null) === start ? startRef : undefined} type="button" className={`pz-option ${current ? 'is-current' : ''}`} disabled={move.isPending} onClick={() => move.mutate(c)}>
         <Icon name={c ? 'folder' : 'ban'} />
         <span className="pz-option-name">{c ? c.name : t('pieces.move.none')}</span>
         {current && <span className="pz-option-note"><Icon name="check" />{t('pieces.move.current')}</span>}
@@ -283,7 +291,9 @@ function SelectionBar({ pieces, actions, onClear, onDownload, downloading }: {
   const live = pieces.filter((p) => p.review_state !== 'discarded');
   return (
     <div className="pz-selbar" role="region" aria-label={t('pieces.sel.label')}>
-      <button type="button" className="pz-selbar-x" onClick={onClear} aria-label={t('pieces.sel.clear')} title={t('pieces.sel.clear')}><Icon name="x" /></button>
+      <Tip label={t('pieces.sel.clearTip')} shortcut="Esc">
+        <button type="button" className="pz-selbar-x" onClick={onClear} aria-label={t('pieces.sel.clear')}><Icon name="x" /></button>
+      </Tip>
       <span className="pz-selbar-count">{t('pieces.sel.count', { count: pieces.length })}</span>
       <button type="button" className="btn" onClick={onDownload} disabled={downloading || !pieces.some((p) => p.latest_version)} title={t('pieces.sel.downloadHint')}>
         <Icon name="download" /><span className="pz-sbtn-label">{t('pieces.sel.download')}</span>
@@ -335,22 +345,14 @@ function AppearancePanel({ look, onChange }: { look: Look; onChange: (l: Look) =
   );
 }
 
-function MenuButton({ icon, label, value, props, active, className = '' }: { icon: IconName; label: string; value?: string; props: Record<string, unknown>; active?: boolean; className?: string }) {
+/** A toolbar button that opens a menu: "Estado: todos ⌄". Radix hands it the trigger's props and ref, which it passes on. */
+function MenuButton({ icon, label, value, active, className = '', ...rest }: { icon: IconName; label: string; value?: string; active?: boolean } & ComponentProps<'button'>) {
   return (
-    <button type="button" className={`pz-tb ${active ? 'is-active' : ''} ${className}`} aria-label={value ? `${label} ${value}` : label} {...props}>
+    <button type="button" className={`pz-tb ${active ? 'is-active' : ''} ${className}`} aria-label={value ? `${label} ${value}` : label} {...rest}>
       <Icon name={icon} />
       <span className="pz-tb-label">{label}</span>
       {value && <span className="pz-tb-value">{value}</span>}
       <Icon name="chevronDown" className="pz-tb-chev" />
-    </button>
-  );
-}
-
-function MenuOption({ checked, onClick, children }: { checked: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button type="button" className="menu-item pz-mi" role="menuitemradio" aria-checked={checked} onClick={onClick}>
-      {children}
-      <Icon name="check" className="pz-mi-check" style={{ visibility: checked ? 'visible' : 'hidden' }} />
     </button>
   );
 }
@@ -441,7 +443,8 @@ export function PiecesPage() {
   // ⌘A / Ctrl+A picks everything showing, Escape lets go, / goes to the search.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || document.querySelector('dialog[open]')) return;
+      // Not while a dialog, a menu or a list is open: Escape and the arrows are theirs.
+      if (e.defaultPrevented || document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return;
       const typing = (e.target as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable="true"]');
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && !typing && view !== 'board' && shown.length) {
         e.preventDefault();
@@ -529,62 +532,60 @@ export function PiecesPage() {
       <div className="pz-toolbar" role="toolbar" aria-label={t('pieces.toolbar')}>
         <div className="pz-tools">
           {view === 'grid' && (
-            <Dropdown
-              kind="dialog"
+            <Popover
               label={t('pieces.look.title')}
-              panelClassName="pz-pop-look"
-              button={(props) => (
-                <button type="button" className="pz-tb" aria-label={t('pieces.look.title')} title={t('pieces.look.title')} {...props}><Icon name="grid" /><span className="pz-tb-label">{t('pieces.look.title')}</span></button>
-              )}
+              width={272}
+              className="pz-look-pop"
+              trigger={
+                <button type="button" className="pz-tb" aria-label={t('pieces.look.title')}>
+                  <Icon name="grid" /><span className="pz-tb-label">{t('pieces.look.title')}</span>
+                </button>
+              }
             >
-              {() => <AppearancePanel look={look} onChange={setLook} />}
-            </Dropdown>
+              <AppearancePanel look={look} onChange={setLook} />
+            </Popover>
           )}
-          <Dropdown label={t('pieces.filter.state')} button={(props) => (
-            <MenuButton icon="filter" label={t('pieces.filter.stateShort')} value={state ? STATE_LABEL[state] : t('pieces.filter.allStates')} props={props} active={!!state} />
-          )}>
-            {(close) => STATE_FILTERS.map((s) => (
-              <MenuOption key={s || 'all'} checked={state === s} onClick={() => { close(); setParam('state', s || null); }}>
-                {s ? <span className="pz-mdot" style={{ background: STATE_DOT[s] }} /> : <Icon name="pieces" />}
-                <span className="grow">{s ? STATE_LABEL[s] : t('pieces.filter.allStatesLong')}</span>
-                <span className="pz-mcount">{scoped.filter((p) => inState(p, s)).length}</span>
-              </MenuOption>
+          <Menu align="start" width={256} trigger={<MenuButton icon="filter" label={t('pieces.filter.stateShort')} value={state ? STATE_LABEL[state] : t('pieces.filter.allStates')} active={!!state} />}>
+            {STATE_FILTERS.map((s) => (
+              <MenuItem
+                key={s || 'all'}
+                icon={s ? undefined : 'pieces'}
+                lead={s ? <span className="pz-mdot" style={{ background: STATE_DOT[s] }} aria-hidden="true" /> : undefined}
+                hint={String(scoped.filter((p) => inState(p, s)).length)}
+                checked={state === s}
+                onSelect={() => setParam('state', s || null)}
+              >
+                {s ? STATE_LABEL[s] : t('pieces.filter.allStatesLong')}
+              </MenuItem>
             ))}
-          </Dropdown>
-          <Dropdown label={t('pieces.filter.network')} button={(props) => (
-            <MenuButton icon="send" label={t('pieces.filter.networkShort')} value={net ? NETWORK_LABEL[net] ?? net : t('pieces.filter.allNetworks')} props={props} active={!!net} />
-          )}>
-            {(close) => (
-              <>
-                <MenuOption checked={!net} onClick={() => { close(); setNet(''); }}><Icon name="globe" /><span className="grow">{t('pieces.filter.allNetworksLong')}</span></MenuOption>
-                {networks.map((n) => (
-                  <MenuOption key={n} checked={net === n} onClick={() => { close(); setNet(n); }}>
-                    <NetMark network={n} size="sm" /><span className="grow">{NETWORK_LABEL[n] ?? n}</span>
-                    <span className="pz-mcount">{scoped.filter((p) => p.networks.includes(n) && inState(p, state)).length}</span>
-                  </MenuOption>
-                ))}
-                {!networks.length && <p className="pz-menu-note">{t('pieces.filter.noNetworks')}</p>}
-              </>
-            )}
-          </Dropdown>
-          <Dropdown label={t('pieces.sort.label')} button={(props) => <MenuButton icon="sort" label={t('pieces.sort.short')} value={sortLabel} props={props} className="pz-tb-sort" />}>
-            {(close) => (
-              <>
-                {MENU_SORTS.map((k) => (
-                  <MenuOption key={k} checked={sort.key === k} onClick={() => { close(); setSort({ key: k, dir: k === 'updated' ? 'desc' : 'asc' }); }}>
-                    <span className="grow">{t(`pieces.sort.${k}` as Key)}</span>
-                  </MenuOption>
-                ))}
-                <div className="menu-sep" />
-                <MenuOption checked={false} onClick={() => { close(); setSort({ ...sort, dir: sort.dir === 'asc' ? 'desc' : 'asc' }); }}>
-                  <Icon name="chevronDown" style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : undefined }} />
-                  <span className="grow">{sort.dir === 'asc' ? t('pieces.sort.asc') : t('pieces.sort.desc')}</span>
-                </MenuOption>
-              </>
-            )}
-          </Dropdown>
+          </Menu>
+          <Menu align="start" width={240} trigger={<MenuButton icon="send" label={t('pieces.filter.networkShort')} value={net ? NETWORK_LABEL[net] ?? net : t('pieces.filter.allNetworks')} active={!!net} />}>
+            <MenuItem icon="globe" checked={!net} onSelect={() => setNet('')}>{t('pieces.filter.allNetworksLong')}</MenuItem>
+            {networks.map((n) => (
+              <MenuItem
+                key={n}
+                lead={<NetMark network={n} size="sm" />}
+                hint={String(scoped.filter((p) => p.networks.includes(n) && inState(p, state)).length)}
+                checked={net === n}
+                onSelect={() => setNet(n)}
+              >
+                {NETWORK_LABEL[n] ?? n}
+              </MenuItem>
+            ))}
+            {!networks.length && <p className="pz-menu-note">{t('pieces.filter.noNetworks')}</p>}
+          </Menu>
+          <Menu align="start" width={220} trigger={<MenuButton icon="sort" label={t('pieces.sort.short')} value={sortLabel} className="pz-tb-sort" />}>
+            {MENU_SORTS.map((k) => (
+              <MenuItem key={k} checked={sort.key === k} onSelect={() => setSort({ key: k, dir: FIRST_DIR[k] })}>{t(`pieces.sort.${k}` as Key)}</MenuItem>
+            ))}
+            <MenuSeparator />
+            <MenuItem icon={sort.dir === 'asc' ? 'arrowUp' : 'arrowDown'} onSelect={() => setSort({ ...sort, dir: sort.dir === 'asc' ? 'desc' : 'asc' })}>
+              {sort.dir === 'asc' ? t('pieces.sort.asc') : t('pieces.sort.desc')}
+            </MenuItem>
+          </Menu>
         </div>
-        <label className="pz-search">
+        <Tip label={t('pieces.searchTip')} shortcut="/" side="bottom">
+          <label className="pz-search">
           <Icon name="search" />
           <input
             ref={searchRef}
@@ -602,7 +603,8 @@ export function PiecesPage() {
             }}
           />
           {!q && <kbd className="pz-kbd" aria-hidden="true">/</kbd>}
-        </label>
+          </label>
+        </Tip>
         <div className="pz-views">
           <Segmented
             label={t('pieces.view.label')}
