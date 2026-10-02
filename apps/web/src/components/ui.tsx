@@ -348,3 +348,40 @@ export function MenuButton({ label, items, align = 'right', icon = 'more', class
     </div>
   );
 }
+
+/**
+ * An on/off setting, as Frame.io draws them: the label (and a hint, only where it is needed) on the left, the switch on
+ * the right. For a real multi-select, a checkbox is still the thing.
+ */
+export function Switch({ label, hint, checked, onChange, disabled }: { label: ReactNode; hint?: ReactNode; checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) {
+  return (
+    <label className="switch-row">
+      <span className="switch-text">
+        <span className="switch-label">{label}</span>
+        {hint && <span className="switch-hint">{hint}</span>}
+      </span>
+      <input type="checkbox" role="switch" className="switch" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+    </label>
+  );
+}
+
+/** A small set of choices side by side (grid · board · list, S · M · L); arrows move between them. */
+export function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: { value: T; label: ReactNode; title?: string }[]; onChange: (value: T) => void }) {
+  const move = (e: React.KeyboardEvent, i: number) => {
+    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = options[(i + step + options.length) % options.length]!;
+    onChange(next.value);
+    ((e.currentTarget.parentElement?.children[(i + step + options.length) % options.length]) as HTMLElement | undefined)?.focus();
+  };
+  return (
+    <div className="segmented" role="radiogroup" aria-label={label}>
+      {options.map((o, i) => (
+        <button key={o.value} type="button" role="radio" aria-checked={o.value === value} tabIndex={o.value === value ? 0 : -1} title={o.title} onClick={() => onChange(o.value)} onKeyDown={(e) => move(e, i)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
