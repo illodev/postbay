@@ -455,7 +455,11 @@ describe('the longest run', () => {
     env.clock.set(at(36));
     expect(await expireRuns(env.ctx)).toBe(1);
     expect((await env.db.one('select status, outcome from agent_run where id = $1', [r.body.id]))).toMatchObject({ status: 'finished', outcome: 'timeout' });
-    expect((await told('agent.failed')).filter((n) => n.payload.runId === r.body.id)).toHaveLength(3);
+    // With a kind of its own: the run ran out of time, which is not the agent failing (it used to be told as agent.failed).
+    const timedOut = (await told('agent.timed_out')).filter((n) => n.payload.runId === r.body.id);
+    expect(timedOut).toHaveLength(3);
+    expect(timedOut[0]!.payload).toMatchObject({ outcome: 'timeout', message_i18n: { code: 'agent.studioTimeout' } });
+    expect((await told('agent.failed')).filter((n) => n.payload.runId === r.body.id)).toHaveLength(0);
     expect(await expireRuns(env.ctx)).toBe(0);
   });
 });

@@ -1,3 +1,4 @@
+import { english, msg } from '../../i18n/index.js';
 import { ConnectorError, type OAuthProvider, type TokenSet } from '../types.js';
 import type { TikTokClient } from './client.js';
 
@@ -45,7 +46,7 @@ export function createTikTokOAuth(client: TikTokClient, now: () => Date = () => 
       const me = await client.request<{ data?: { user?: { open_id?: string; union_id?: string; display_name?: string } } }>('/v2/user/info/', t.accessToken, { query: { fields: TIKTOK_USER_FIELDS } });
       const user = me.data?.user;
       const id = user?.open_id ?? b.open_id;
-      if (!id) throw new ConnectorError('auth', 'TikTok did not say which account signed in');
+      if (!id) throw new ConnectorError('auth', english(msg('connect.tiktok.noAccount')), { text: msg('connect.tiktok.noAccount') });
       // The @username, for links to the profile and its posts. Best effort: an account is usable without it.
       let username: string | undefined;
       try {
@@ -66,7 +67,7 @@ export function createTikTokOAuth(client: TikTokClient, now: () => Date = () => 
     },
 
     async refresh(previous) {
-      if (!previous.refreshToken) throw new ConnectorError('auth', 'There is no renewal token for this connection: connect it again');
+      if (!previous.refreshToken) throw new ConnectorError('auth', english(msg('connect.noRenewalToken')), { text: msg('connect.noRenewalToken') });
       return toToken(await client.token({ grant_type: 'refresh_token', refresh_token: previous.refreshToken }), previous);
     },
   };

@@ -24,7 +24,7 @@ const problems = [];
 let n = 0;
 
 async function newSession(email, viewport = { width: 1280, height: 900 }, mobile = false) {
-  const context = await browser.newContext({ baseURL: BASE, viewport, isMobile: mobile, hasTouch: mobile, acceptDownloads: true });
+  const context = await browser.newContext({ baseURL: BASE, locale: 'en-US', viewport, isMobile: mobile, hasTouch: mobile, acceptDownloads: true });
   const page = await context.newPage();
   page.on('pageerror', (e) => problems.push(`[${email}] page error: ${e.message}`));
   page.on('console', (m) => m.type() === 'error' && !/status of 4\d\d/.test(m.text()) && problems.push(`[${email}] console error: ${m.text()}`));
@@ -75,7 +75,7 @@ const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 const state = {};
 
 const admin = await newSession('admin@example.com');
-const api = (method, url, data) => admin.context.request.fetch(url, { method, data, headers: { 'x-requested-by': 'studio' } });
+const api = (method, url, data) => admin.context.request.fetch(url, { method, data, headers: { 'x-requested-by': 'studio', 'accept-language': 'en' } });
 
 await step('seed: the fake networks start blank, and members are added for the approver and the producer', async () => {
   await fakes.control({ op: 'reset' });
@@ -242,6 +242,11 @@ await step('schedule YouTube (no first comment there) and Facebook twice', async
   await d.getByTestId('plan').getByText('The app will publish this').waitFor();
   assert((await d.getByLabel('First comment (optional)').count()) === 0, 'YouTube has no first comment');
   await d.getByLabel('Text').fill('Spring menu: the full story');
+  // YouTube needs a made-for-kids declaration for every video. Nobody chose one for the channel, so it starts empty and has to be
+  // chosen: the required select stops the form until it is.
+  const kids = d.getByLabel('Is this video made for kids?');
+  assert((await kids.inputValue()) === '', 'made for kids must start empty when the channel has no default');
+  await kids.selectOption('no');
   await d.getByRole('button', { name: 'Schedule', exact: true }).click();
   await p.getByText('Scheduled: the app will publish it').waitFor();
 

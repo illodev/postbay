@@ -18,7 +18,11 @@ async function outsider(email: string, role = 'admin'): Promise<Actor> {
 }
 const isMember = async (userId: string) => !!(await env.db.one('select 1 from member where user_id = $1 and brand_id = $2', [userId, env.brandId]));
 const add = (email: string, role = 'reviewer') => env.call(env.users.admin, 'POST', `/api/brands/${env.brandId}/members`, { email, role });
-const mailTo = async (to: string) => { await new Promise((r) => setImmediate(r)); return env.mails.filter((m) => m.to === to); };
+/** The emails to someone, once they have gone: an invitation is emailed after the answer, so it is waited for (two seconds at most). */
+const mailTo = async (to: string) => {
+  for (let i = 0; i < 200 && !env.mails.some((m) => m.to === to); i++) await new Promise((r) => setTimeout(r, 10));
+  return env.mails.filter((m) => m.to === to);
+};
 
 describe('adding a person to a brand', () => {
   it('adds someone new, or someone already in this workspace, straight away, as before', async () => {

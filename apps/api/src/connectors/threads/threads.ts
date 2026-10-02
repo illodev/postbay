@@ -1,3 +1,5 @@
+import { goneNote } from '../notes.js';
+import { msg } from '../../i18n/index.js';
 import { validateAgainst } from '../validate.js';
 import {
   ConnectorError,
@@ -134,6 +136,11 @@ export function createThreads(client: ThreadsClient): Connector {
       let h: Handle = { ...handle };
       let mediaId: string = h.mediaId;
       if (!mediaId) {
+        // Written down BEFORE the call: if its answer is lost, the next try knows the post may exist, and `find` looks for it.
+        if (!h.publishAttemptedAt) {
+          h = { ...h, publishAttemptedAt: env.now().toISOString() };
+          await env.persist(h);
+        }
         const r = await client.post<{ id: string }>(`${uid}/threads_publish`, token, { creation_id: h.containerId });
         mediaId = r.id;
         h = { ...h, mediaId };
@@ -164,13 +171,39 @@ export function createThreads(client: ThreadsClient): Connector {
       return { externalId: mediaId, url };
     },
 
+    /**
+     * Whether an earlier `threads_publish` went through although its answer was lost: the container's status is PUBLISHED once it
+     * has been. Threads does not say which post it became, so that is looked for among the account's latest threads: made since a
+     * minute before the attempt, with the same text.
+     */
+    async find(input, account, handle: Handle, env: ConnectorEnv): Promise<Handle | null> {
+      if (handle.mediaId) return handle;
+      if (!handle.containerId) return null;
+      const token = (await env.token()).accessToken;
+      const c = await client.get<{ status?: string }>(handle.containerId as string, token, { fields: 'status' });
+      if (c.status !== 'PUBLISHED') return null;
+      const since = new Date(String(handle.publishAttemptedAt ?? new Date(input.scheduledAt.getTime() - 3600_000).toISOString())).getTime() - 60_000;
+      const r = await client.get<{ data?: { id: string; text?: string; timestamp: string; permalink?: string }[] }>(`${account.externalId}/threads`, token, {
+        fields: 'id,text,timestamp,permalink', limit: 25,
+      });
+      const found = (r.data ?? [])
+        .filter((p) => new Date(p.timestamp).getTime() >= since && (p.text ?? '') === input.text)
+        .sort((a, b) => a.timestamp.localeCompare(b.timestamp))[0];
+      if (!found) {
+        throw new ConnectorError('unknown', "Threads says this post was published, but it is not among the account's latest posts yet: it is looked for again before anything is sent.", {
+          text: msg('connector.threads.publishedNotFound'),
+        });
+      }
+      return { ...handle, mediaId: found.id, ...(found.permalink ? { permalink: found.permalink } : {}), recovered: true };
+    },
+
     async verify(_account, externalId, _handle, env): Promise<VerifyResult> {
       const token = (await env.token()).accessToken;
       try {
         const m = await client.get<{ id: string; permalink?: string }>(externalId, token, { fields: 'id,permalink' });
         return { visibility: 'public', url: m.permalink };
       } catch (err) {
-        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', note: 'Threads does not return this post any more' };
+        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', ...goneNote('threads', 'post') };
         throw err;
       }
     },

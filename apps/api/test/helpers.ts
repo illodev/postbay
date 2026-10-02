@@ -40,6 +40,8 @@ export interface Env {
   accounts: { instagram: string; youtube: string; facebook: string };
   users: Record<'admin' | 'approver' | 'approver2' | 'reviewer' | 'producer' | 'reader', Actor>;
   call: (as: Actor | null, method: string, url: string, body?: unknown) => Promise<{ status: number; body: any }>;
+  /** The same, asking for a language (`Accept-Language`), or for none (null), which means Spanish. `call` asks for English. */
+  callIn: (locale: string | null, as: Actor | null, method: string, url: string, body?: unknown) => Promise<{ status: number; body: any }>;
   upload: (as: Actor, variantId: string, files: UploadSpec[]) => Promise<string[]>;
   newVersion: (as: Actor, variantId: string, files?: UploadSpec[], extra?: Record<string, unknown>) => Promise<{ status: number; body: any }>;
   makePiece: (as: Actor, kind?: string, format?: string) => Promise<{ pieceId: string; variantId: string }>;
@@ -146,7 +148,9 @@ export async function createEnv(overrides: Partial<Record<string, string>> = {},
   await app.ready();
 
   const workspace = (await db.one('insert into workspace (name) values ($1) returning id', ['Test workspace']))!;
-  const brand = (await db.one(`insert into brand (workspace_id, name, timezone) values ($1,'Test brand','Europe/Madrid') returning id`, [workspace.id]))!;
+  // The test brand publishes in English and every call asks for English, so the tests read the studio's English texts; the
+  // Spanish ones (the default for a brand and for a request that says nothing) are tested on purpose (i18n.test.ts and others).
+  const brand = (await db.one(`insert into brand (workspace_id, name, timezone, locale) values ($1,'Test brand','Europe/Madrid','en') returning id`, [workspace.id]))!;
 
   const makeUser = async (label: string, role: Role): Promise<Actor> => {
     const email = `${label}@example.com`;
@@ -170,8 +174,8 @@ export async function createEnv(overrides: Partial<Record<string, string>> = {},
     ((await db.one(`insert into social_account (brand_id, network, external_id, display_name) values ($1,$2,$3,$4) returning id`, [brand.id, network, name, name]))!).id as string;
   const accounts = { instagram: await account('instagram', 'brand_ig'), youtube: await account('youtube', 'brand_yt'), facebook: await account('facebook', 'brand_fb') };
 
-  const call: Env['call'] = async (as, method, url, body) => {
-    const headers: Record<string, string> = {};
+  const callIn: Env['callIn'] = async (locale, as, method, url, body) => {
+    const headers: Record<string, string> = locale ? { 'accept-language': locale } : {};
     if (as?.cookie) {
       headers.cookie = as.cookie;
       headers['x-requested-by'] = 'studio';
@@ -182,6 +186,7 @@ export async function createEnv(overrides: Partial<Record<string, string>> = {},
     try { parsed = res.body ? JSON.parse(res.body) : null; } catch { parsed = res.body; }
     return { status: res.statusCode, body: parsed };
   };
+  const call: Env['call'] = (as, method, url, body) => callIn('en', as, method, url, body);
 
   const upload: Env['upload'] = async (as, variantId, files) => {
     const specs = files.map((f, i) => ({
@@ -260,7 +265,7 @@ export async function createEnv(overrides: Partial<Record<string, string>> = {},
   };
 
   return {
-    app, ctx, db, mails, brandId: brand.id, workspaceId: workspace.id, accounts, users, call, upload, newVersion, makePiece, approve,
+    app, ctx, db, mails, brandId: brand.id, workspaceId: workspace.id, accounts, users, call, callIn, upload, newVersion, makePiece, approve,
     meta, google, clock, settle, connect,
     async close() {
       await app.close();

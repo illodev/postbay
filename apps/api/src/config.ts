@@ -5,6 +5,9 @@ const bool = z
   .default('false')
   .transform((v) => v === 'true' || v === '1');
 
+/** An empty value (`KEY=` in an env file) means "not set", so the default applies. */
+const emptyIsUnset = (v: unknown) => (v === '' ? undefined : v);
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(3000),
@@ -17,6 +20,8 @@ const schema = z.object({
   STORAGE_LOCAL_DIR: z.string().default('.data/media'),
   // Where the pieces of a resumable upload wait until the whole file has arrived (see services/resumable.ts). Needs room for the largest upload in progress.
   STAGING_DIR: z.string().default('.data/staging'),
+  /** How much a brand may have declared in unfinished resumable uploads waiting on that disk, in GB. Past it a new big upload is refused. */
+  STAGING_MAX_GB_PER_BRAND: z.preprocess(emptyIsUnset, z.coerce.number().positive('STAGING_MAX_GB_PER_BRAND must be a positive number of GB').default(20)),
   S3_ENDPOINT: z.string().optional(),
   // Address browsers use for signed URLs when it differs from the one the app uses inside its network.
   S3_PUBLIC_ENDPOINT: z.string().optional(),
@@ -61,6 +66,12 @@ const schema = z.object({
   META_GRAPH_VERSION: z.string().default('v23.0'),
   META_GRAPH_URL: z.string().default('https://graph.facebook.com'),
   META_OAUTH_URL: z.string().default('https://www.facebook.com'),
+  /**
+   * Facebook Login for Business: the id of the login configuration the sign-in dialog uses instead of a list of permissions, and
+   * the one for brands with prizes (it adds the messaging permissions; without it the first is used for every brand).
+   */
+  META_LOGIN_CONFIG_ID: z.preprocess(emptyIsUnset, z.string().optional()),
+  META_LOGIN_CONFIG_ID_PRIZES: z.preprocess(emptyIsUnset, z.string().optional()),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_OAUTH_URL: z.string().default('https://accounts.google.com/o/oauth2/v2/auth'),
