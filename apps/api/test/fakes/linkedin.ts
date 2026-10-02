@@ -133,7 +133,12 @@ export class FakeLinkedIn extends FakeServer {
     }
     m = /^\/rest\/socialActions\/(.+)\/comments$/.exec(c.path);
     if (m && c.method === 'POST') {
-      this.comments.push({ post: decodeURIComponent(m[1]!), text: body.message?.text });
+      // The Comments API wants who writes it, what, and the post it is on (`object`), which must be the one in the address.
+      const target = decodeURIComponent(m[1]!);
+      if (!body.actor || !body.message?.text) return err(422, '/actor and /message are required');
+      if (!body.object) return err(422, 'ERROR :: /object :: field is required but not found and has no default value');
+      if (body.object !== target) return err(400, `object ${body.object} does not match the URN in the path`);
+      this.comments.push({ post: target, text: body.message.text });
       return reply.code(201).send({ id: `comment-${this.comments.length}` });
     }
     if (c.path === '/rest/organizationalEntityShareStatistics') {
