@@ -470,5 +470,5 @@ a.pc-ccount:hover { background: var(--control); color: var(--text); text-decorat
   .pc-fix-body { white-space: normal; }
   .pc-up-buttons { width: 100%; }
   .pc-up-buttons .btn { flex: 1; }
-  .pc-drop.is-compact { flex-wrap: wrap; }
+  .pc-drop.is-compact .pc-drop-hint { display: none; }
 }
