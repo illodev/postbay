@@ -63,11 +63,18 @@ export function MoreMenu({ items, label, className, children, align = 'end' }: {
     const onScroll = (e: Event) => {
       if (!menu.current?.contains(e.target as Node)) close();
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      close(true);
+    };
     document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onScroll);
     return () => {
       document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onScroll);
     };
@@ -76,11 +83,7 @@ export function MoreMenu({ items, label, className, children, align = 'end' }: {
   const onMenuKey = (e: React.KeyboardEvent) => {
     const list = [...(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])') ?? [])];
     const i = list.indexOf(document.activeElement as HTMLElement);
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      close(true);
-    } else if (e.key === 'ArrowDown') {
+    if (e.key === 'ArrowDown') {
       e.preventDefault();
       list[(i + 1) % list.length]?.focus();
     } else if (e.key === 'ArrowUp') {

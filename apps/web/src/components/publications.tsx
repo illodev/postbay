@@ -1012,10 +1012,10 @@ export function PublicationList({ pubs, variants = [], brandId, zone, brand, can
     let primaryKey: string | null = null;
     if (canSchedule && p.status === 'failed' && !p.manual) {
       primaryKey = 'retry';
-      primary = <button type="button" className="btn btn-small btn-primary" onClick={() => setRetry(p)}>{t('publications.list.retry')}</button>;
+      primary = <button type="button" className="btn btn-small" onClick={() => setRetry(p)}>{t('publications.list.retry')}</button>;
     } else if (canSchedule && dueByHand(p)) {
       primaryKey = 'publish';
-      primary = <button type="button" className="btn btn-small btn-primary" onClick={() => setPack(p.id)}>{t('publications.list.publish')}</button>;
+      primary = <button type="button" className="btn btn-small" onClick={() => setPack(p.id)}>{t('publications.list.publish')}</button>;
     } else if (canSchedule && p.status === 'awaiting_reapproval') {
       primaryKey = 'confirm';
       primary = <button type="button" className="btn btn-small" disabled={act.isPending} onClick={() => act.mutate({ id: p.id, action: 'confirm' })} title={me ? t('publications.list.confirmHint', { email: me }) : undefined}>{t('publications.list.confirm')}</button>;
