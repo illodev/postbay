@@ -8,6 +8,7 @@ export const scheduling = define({
   es: {
     'sched.agent.off': 'Esta marca no deja que el agente programe: un administrador puede permitirlo en Ajustes › Agente',
     'sched.agent.noRun': 'Un token solo programa dentro de una ejecución del agente sobre esta pieza que siga en marcha',
+    'sched.agent.noDependency': 'El agente no puede hacer que su publicación dependa de otra',
     'sched.slot.unknown': 'Ese hueco no es de esta marca',
     'sched.slot.notAnOccurrence': 'Ese momento no es uno de los del hueco: tiene que caer en su día de la semana y a su hora',
     'sched.slot.summary': 'Se programará el {day} a las {time} en {account} (hueco «{slot}»)',
@@ -29,6 +30,7 @@ export const scheduling = define({
   en: {
     'sched.agent.off': 'This brand does not let the agent schedule: an admin can allow it in Settings › Agent',
     'sched.agent.noRun': 'A token schedules only inside an agent run on this piece that is still running',
+    'sched.agent.noDependency': 'The agent cannot make its post depend on another',
     'sched.slot.unknown': 'That slot does not belong to this brand',
     'sched.slot.notAnOccurrence': "That time is not one of the slot's: it has to fall on its weekday, at its time",
     'sched.slot.summary': 'It will be scheduled on {day} at {time} on {account} (slot "{slot}")',

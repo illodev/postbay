@@ -191,6 +191,8 @@ export async function scheduleVersion(
   ctx: Ctx, db: Queryable, p: Principal | null, versionId: string, input: z.infer<typeof scheduleInput>, by: ScheduledBy, slotId: string | null = null,
 ): Promise<Row> {
   const when = new Date(input.scheduledAt);
+  // A post that depends on another holds that other one to its order: the agent does not get to tie a person's post down.
+  if (by.kind === 'agent' && input.dependsOn) throw badRequest('invalid_dependency', msg('sched.agent.noDependency'));
   const version = await loadVersion(db, versionId);
   await lockVariant(db, version.variant_id);
   const brand = await loadBrand(db, version.brand_id);

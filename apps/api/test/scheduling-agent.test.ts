@@ -70,6 +70,8 @@ describe('the agent scheduling what is approved', () => {
 
     // Never an account the approval does not cover, a time a person could not choose, or a version that is not approved.
     expect((await scheduleAs(bot, versionId, { accountId: env.accounts.youtube, scheduledAt: inDays(4) })).body.error.code).toBe('account_not_approved');
+    // Nor tie its post to another one (which would hold that one to its order).
+    expect((await scheduleAs(bot, versionId, { accountId: env.accounts.facebook, scheduledAt: inDays(4), dependsOn: r.body.id })).body.error.code).toBe('invalid_dependency');
     expect((await scheduleAs(bot, versionId, { accountId: env.accounts.facebook, scheduledAt: new Date(Date.now() - 60_000).toISOString() })).body.error.code).toBe('past_date');
     await env.call(env.users.approver, 'POST', `/api/brands/${env.brandId}/blocked-dates`, { day: inDays(5).slice(0, 10), reason: '' });
     expect((await scheduleAs(bot, versionId, { accountId: env.accounts.facebook, scheduledAt: inDays(5) })).body.error.code).toBe('blocked_date');
