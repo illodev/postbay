@@ -756,3 +756,109 @@ describe('what is kept about people', () => {
     expect(pub.id).toBeTruthy();
   });
 });
+
+describe('a prize made from a piece of the studio', () => {
+  /** A PDF piece with one version, approved unless told otherwise, and the bytes of its file. */
+  async function bookPiece(o: { approve?: boolean } = {}) {
+    const data = randomBytes(300);
+    const { pieceId, variantId } = await env.makePiece(env.users.producer, 'pdf', 'document');
+    const v = await env.newVersion(env.users.producer, variantId, [{ name: 'book-v1.pdf', mime: 'application/pdf', kind: 'pdf', data }]);
+    expect(v.status, JSON.stringify(v.body)).toBe(201);
+    if (o.approve !== false) expect((await env.approve(env.users.approver, v.body.id, [ig])).status).toBe(201);
+    return { pieceId, variantId, versionId: v.body.id as string, data };
+  }
+  const piecePrize = (pieceId: string, name = 'Recipe book (the piece)') => env.call(admin(), 'POST', brandUrl('/prizes'), { kind: 'piece', name, pieceId });
+  const fetchSigned = async (url: string) => {
+    const signed = new URL(url, 'http://media.test');
+    const got = await env.app.inject({ method: 'GET', url: signed.pathname + signed.search });
+    return { path: signed.pathname, body: Buffer.from(got.rawPayload), status: got.statusCode };
+  };
+  async function sentTo(pubId: string, externalId: string, person: string, prize: string) {
+    await ruleOn(pubId, { prizeId: prize });
+    comment(externalId, { personId: person, username: person });
+    await pollComments(env.ctx);
+    await scanPrizeDeliveries(env.ctx);
+    const m = env.meta.messages.find((x) => x.text.includes('/prize/') && !used.has(x.text));
+    used.add(m!.text);
+    return /\/prize\/([\w-]+)/.exec(m!.text)![1]!;
+  }
+  const used = new Set<string>();
+
+  it('needs a piece of the brand with an approved version, and says which version it hands out', async () => {
+    expect((await env.call(admin(), 'POST', brandUrl('/prizes'), { kind: 'piece', name: 'x', pieceId: '00000000-0000-0000-0000-000000000000' })).body.error.code).toBe('unknown_piece');
+    const draft = await bookPiece({ approve: false });
+    const refused = await piecePrize(draft.pieceId);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatchObject({ code: 'no_approved_version', message: 'That piece has no approved version: approve one before using it as a prize' });
+    expect((await env.callIn('es', admin(), 'POST', brandUrl('/prizes'), { kind: 'piece', name: 'x', pieceId: draft.pieceId })).body.error.message).toBe('Esa pieza no tiene ninguna versión aprobada: aprueba una antes de usarla como premio');
+
+    const book = await bookPiece();
+    const r = await piecePrize(book.pieceId);
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.prize).toMatchObject({
+      kind: 'piece', usable: true, file_name: 'book-v1.pdf', file_bytes: 300, piece: { id: book.pieceId }, unavailable_reason: null,
+      version: { id: book.versionId, number: 1, format: 'document', file_name: 'book-v1.pdf' },
+    });
+    expect(r.body.prize.upload).toBeUndefined();
+    const listed = (await env.call(admin(), 'GET', brandUrl('/prizes'))).body.find((x: any) => x.id === r.body.prize.id);
+    expect(listed).toMatchObject({ kind: 'piece', usable: true, piece: { id: book.pieceId, title: expect.stringMatching(/^Piece /) }, version: { number: 1 } });
+  });
+
+  it('hands out the latest approved version at the moment of download: the one before while a new one is in review, the new one once approved', async () => {
+    const book = await bookPiece();
+    const prize = (await piecePrize(book.pieceId)).body.prize.id as string;
+    const pub = await published(ig);
+    const secret = await sentTo(pub.id, pub.externalId, 'u-piece-1', prize);
+    const page = await env.call(null, 'GET', `/api/public/prizes/${secret}`);
+    expect(page.body).toMatchObject({ prize: { name: 'Recipe book (the piece)', kind: 'file', file_name: 'book-v1.pdf' }, available: true, unavailable_reason: null });
+    const first = await fetchSigned((await env.call(null, 'POST', `/api/public/prizes/${secret}/download`)).body.url);
+    expect(first.status).toBe(200);
+    expect(first.body.equals(book.data)).toBe(true);
+
+    // A new version in review does not take the prize away: the approved one is still handed out.
+    const data2 = randomBytes(400);
+    const v2 = await env.newVersion(env.users.producer, book.variantId, [{ name: 'book-v2.pdf', mime: 'application/pdf', kind: 'pdf', data: data2 }]);
+    expect((await env.call(null, 'GET', `/api/public/prizes/${secret}`)).body.prize.file_name).toBe('book-v1.pdf');
+    // Approved: whoever downloads from now on gets it, through the same link.
+    await env.approve(env.users.approver, v2.body.id, [ig]);
+    expect((await env.call(null, 'GET', `/api/public/prizes/${secret}`)).body.prize.file_name).toBe('book-v2.pdf');
+    const second = await fetchSigned((await env.call(null, 'POST', `/api/public/prizes/${secret}/download`)).body.url);
+    expect(second.body.equals(data2)).toBe(true);
+    expect((await env.call(admin(), 'GET', brandUrl('/prizes'))).body.find((x: any) => x.id === prize).version).toMatchObject({ id: v2.body.id, number: 2 });
+    expect((await env.db.one('select downloads from prize_delivery where token_hash = $1', [sha(secret)]))!.downloads).toBe(2);
+  });
+
+  it('shows as having no approved version once the piece is discarded, and hands out nothing until it has one', async () => {
+    const book = await bookPiece();
+    const prize = (await piecePrize(book.pieceId, 'Book to be withdrawn')).body.prize.id as string;
+    const pub = await published(ig);
+    const secret = await sentTo(pub.id, pub.externalId, 'u-piece-2', prize);
+    expect((await env.call(env.users.approver, 'POST', `/api/pieces/${book.pieceId}/discard`)).status).toBe(200);
+
+    const listed = (await env.call(admin(), 'GET', brandUrl('/prizes'))).body.find((x: any) => x.id === prize);
+    expect(listed).toMatchObject({ usable: false, version: null, file_name: null, unavailable_reason: 'No approved version' });
+    expect((await env.callIn('es', admin(), 'GET', brandUrl('/prizes'))).body.find((x: any) => x.id === prize).unavailable_reason).toBe('Sin versión aprobada');
+    const page = await env.call(null, 'GET', `/api/public/prizes/${secret}`);
+    expect(page.status).toBe(200);
+    expect(page.body).toMatchObject({ available: false, unavailable_reason: 'This prize is not available right now. Try again later.', prize: { file_name: null } });
+    const dl = await env.call(null, 'POST', `/api/public/prizes/${secret}/download`);
+    expect(dl.status).toBe(409);
+    expect(dl.body.error.code).toBe('no_approved_version');
+    expect((await env.db.one('select downloads from prize_delivery where token_hash = $1', [sha(secret)]))!.downloads).toBe(0);
+
+    // It cannot be put on another post; and someone who comments the keyword now is written down, but their message waits for an
+    // approved version instead of promising nothing.
+    const other = await published(ig);
+    expect((await env.call(admin(), 'PUT', `/api/publications/${other.id}/prize`, { prizeId: prize, ...RULE })).body.error.code).toBe('no_approved_version');
+    const before = env.meta.messages.length;
+    comment(pub.externalId, { personId: 'u-piece-3', username: 'carmen' });
+    env.clock.advance(5000);
+    await pollComments(env.ctx);
+    await scanPrizeDeliveries(env.ctx);
+    expect(env.meta.messages.length).toBe(before);
+    const waiting = (await deliveries(pub.id)).find((d) => d.person_id === 'u-piece-3')!;
+    expect(waiting).toMatchObject({ status: 'pending', attempts: 0 });
+    expect(waiting.reason).toContain('no approved version');
+    expect((await env.callIn('es', admin(), 'GET', `/api/publications/${pub.id}/prize/deliveries`)).body.find((d: any) => d.person === 'carmen').reason).toBe('La pieza del premio no tiene ninguna versión aprobada: el mensaje sale en cuanto la tenga');
+  });
+});

@@ -160,6 +160,22 @@ switch (mode) {
     write(result({ notes: `project ${dir}; branch ${branch}; saw ${seen.join(',')}; first line: ${instructions.split('\n')[0]}` }));
     break;
   }
+  case 'schedule': {
+    // An agent that schedules an approved version: by default, the first free slot of each account it was approved for; with
+    // FAKE_SCHEDULE, exactly that ($VERSION stands for the approved version's id).
+    const approved = JSON.parse(readFileSync('input/approved.json', 'utf8'));
+    const cal = JSON.parse(readFileSync('input/calendar.json', 'utf8'));
+    const schedule = process.env.FAKE_SCHEDULE
+      ? JSON.parse(process.env.FAKE_SCHEDULE.replaceAll('$VERSION', approved.version.id))
+      : approved.accounts
+          .map((a) => {
+            const s = cal.slots.find((x) => x.account_id === a.id && !x.filled && !x.past && !x.blocked);
+            return s && { versionId: approved.version.id, accountId: a.id, at: s.at, text: `Out in the slot ${s.label || 'that was free'}` };
+          })
+          .filter(Boolean);
+    write({ notes: `Picked ${schedule.length}; told the version: ${instructions.includes(approved.version.id)}`, schedule });
+    break;
+  }
   case 'instructions':
     revise();
     writeFileSync(path.join(cwd, 'seen-instructions.md'), instructions);

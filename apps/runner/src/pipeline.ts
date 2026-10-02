@@ -2,13 +2,13 @@ import { rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { agentProjectDir, logPrefix, parseCost, planAgent, runAgent } from './agent.js';
-import { Studio, StudioError, type Comment, type RunStart } from './api.js';
+import { Studio, StudioError, type Calendar, type Comment, type RunStart } from './api.js';
 import { checkOutput, type CheckResult } from './checks.js';
 import type { Brand, Config } from './config.js';
 import type { Logger } from './log.js';
 import { acquire, commitProject, prepareProject, ProjectError, type Project } from './project.js';
 import type { Item, Queue } from './queue.js';
-import { RESULT_FORMAT, render, type TemplateVariable } from './template.js';
+import { RESULT_FORMAT, SCHEDULE_FORMAT, render, type TemplateVariable } from './template.js';
 import type { Secrets } from './secrets.js';
 import { agentDir, collectFiles, describeComments, describeRequirements, dirsFor, ensureDirs, prepareChanges, readResult, type OutputFile, type Prepared } from './workspace.js';
 
@@ -43,6 +43,17 @@ const resultSchema = z.object({
       campaignId: z.string().uuid().optional(),
     })
     .optional(),
+  /** For an approved version (`version.approved`): what to schedule, where and when. The studio decides whether it may. */
+  schedule: z
+    .array(z.object({
+      versionId: z.string().uuid(),
+      accountId: z.string().uuid(),
+      at: z.string().min(10).max(40),
+      text: z.string().max(10_000).default(''),
+      firstComment: z.string().max(5000).default(''),
+    }))
+    .max(20)
+    .default([]),
 });
 type Result = z.infer<typeof resultSchema>;
 
@@ -82,6 +93,9 @@ interface Work {
   /** What the commit message says the round was about. */
   pieceTitle?: string;
   revising?: number;
+  /** A run for an approved version: what the agent asked to schedule, and what the studio answered to each (by its index). */
+  schedule?: Result['schedule'];
+  posted?: { i: number; ok: boolean; accountId: string; at: string; publicationId?: string; code?: string; message?: string }[];
 }
 
 const MIN = 60_000;
@@ -131,8 +145,12 @@ export async function handle(deps: PipelineDeps, item: Item): Promise<Outcome> {
       if (go === 'drop') return finishItem(ctx);
     }
     if (item.stage === 'started') {
-      const ended = await doWork(ctx);
+      const ended = isScheduling(item) ? await planSchedule(ctx) : await doWork(ctx);
       if (ended) return finishItem(ctx);
+    }
+    if (item.stage === 'agent_done' && isScheduling(item)) {
+      await postSchedule(ctx);
+      return finishItem(ctx);
     }
     if (item.stage === 'agent_done') {
       const ended = await upload(ctx);
@@ -160,6 +178,8 @@ const finishItem = (c: Ctx): Outcome => {
 };
 
 const isSlot = (item: Item) => item.type === 'slot.needs_content';
+/** A version people approved: an agent that may schedule it (where the brand allows it) picks when and where. */
+const isScheduling = (item: Item) => item.type === 'version.approved';
 const data = (item: Item) => item.payload.data as any;
 
 // ───────────────────────────── starting ─────────────────────────────
@@ -173,7 +193,19 @@ async function begin(c: Ctx): Promise<'go' | 'drop'> {
     const me = await studio.tokenInfo();
     brandId = me.brand.id;
     brandName = me.brand.name;
-    if (scope.pieceId) {
+    if (isScheduling(item)) {
+      // Scheduling is the brand's to allow: without it, no run is started (and nothing is spent) for the studio to refuse.
+      const info = await studio.brandSettings(brandId);
+      if (!info.agent.can_schedule_approved) {
+        c.log.info({ item: item.id }, 'the brand does not let the agent schedule what is approved: nothing to do');
+        return 'drop';
+      }
+      const v = await studio.version(data(item).version.id);
+      if (v.review_state !== 'approved') {
+        c.log.info({ item: item.id, state: v.review_state }, 'the version is no longer approved: nothing to schedule');
+        return 'drop';
+      }
+    } else if (scope.pieceId) {
       // A request that a person (or another run) has already moved past is not worth an agent's time.
       const v = await studio.version(data(item).version.id);
       if (v.review_state !== 'changes_requested') {
@@ -435,6 +467,177 @@ async function doWork(c: Ctx): Promise<boolean> {
   }
 }
 
+// ───────────────────────────── scheduling an approved version ─────────────────────────────
+
+const DAY_MS = 86_400_000;
+/** How far ahead the agent is shown the calendar. */
+const CALENDAR_DAYS = 21;
+/** A day of the calendar in the brand's zone, as YYYY-MM-DD. */
+const dayIn = (zone: string, ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+const localTime = (zone: string, iso: string) =>
+  new Intl.DateTimeFormat('en-GB', { timeZone: zone, weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(iso));
+
+/** The calendar of the accounts a version was approved for, as text: the free slots, then what is already there. */
+function describeCalendar(cal: Calendar, accountIds: string[]): string {
+  const mine = (x: { account_id: string }) => accountIds.includes(x.account_id);
+  const free = cal.slots.filter((x) => mine(x) && !x.filled && !x.past && !x.blocked);
+  const taken = cal.publications.filter((x) => mine(x) && x.status !== 'cancelled' && x.status !== 'failed');
+  const lines = [`Times are in ${cal.timezone}. ${cal.paused ? '**The brand is paused: nothing can be scheduled now.**' : ''}`.trim(), '', '### Free slots'];
+  lines.push(...(free.length ? free.map((x) => `- ${localTime(cal.timezone, x.at)}: ${x.account_name} (${x.network})${x.label ? `, slot "${x.label}"` : ''}. \`at\`: ${x.at}, \`accountId\`: ${x.account_id}`) : ['_None in the next weeks._']));
+  lines.push('', '### Already scheduled on these accounts');
+  lines.push(...(taken.length ? taken.map((x) => `- ${localTime(cal.timezone, x.scheduled_at)}: ${x.account_name} (${x.network}), "${x.piece_title}" v${x.version_number} (${x.status})`) : ['_Nothing._']));
+  if (cal.blocked.length) lines.push('', '### Blocked days (nothing is published)', ...cal.blocked.map((b) => `- ${b.day}${b.reason ? `: ${b.reason}` : ''}`));
+  return lines.join('\n');
+}
+
+/**
+ * A run for an approved version: the agent is shown the version, the accounts it was approved for and their calendar, and says in
+ * result.json what to schedule. It makes no files, and nothing is checked or uploaded: the studio decides, one by one, what may be
+ * scheduled (postSchedule).
+ */
+async function planSchedule(c: Ctx): Promise<boolean> {
+  const { item, deps, brand, studio } = c;
+  const work = item.work as Work;
+  const d = data(item);
+  const dirs = dirsFor(deps.config.workspaceRoot, item.brand, scopeOf(c).key, item.runId!);
+  const access = { runAs: brand.agent.runAs };
+  item.runDir = dirs.run;
+  const template = deps.templates.get(`${item.brand}:${item.type}`);
+  if (!template) return conclude(c, 'failed', { notes: `No instruction template for ${item.type}` }, null);
+
+  const vars: Partial<Record<TemplateVariable, string>> = {};
+  try {
+    await ensureDirs(dirs, access);
+    const info = await studio.brandSettings(work.brandId);
+    const version = await studio.version(d.version.id);
+    const now = deps.now();
+    const cal = await studio.calendar(work.brandId, dayIn(info.timezone, now), dayIn(info.timezone, now + CALENDAR_DAYS * DAY_MS));
+    const accounts: { id: string; network: string; display_name: string }[] = d.accounts ?? [];
+    await writeFile(path.join(dirs.input, 'approved.json'), JSON.stringify(d, null, 2));
+    await writeFile(path.join(dirs.input, 'calendar.json'), JSON.stringify(cal, null, 2));
+    Object.assign(vars, {
+      brand: work.brandName, piece_title: version.piece.title, piece_brief: version.piece.brief || '_No brief._', piece_kind: version.piece.kind,
+      format: version.variant.format, style: version.variant.style || '', version_number: String(version.number), version_id: version.id,
+      accounts: accounts.length ? accounts.map((a) => `- ${a.display_name} (${a.network}): \`accountId\` ${a.id}`).join('\n') : '_None._',
+      calendar: describeCalendar(cal, accounts.map((a) => a.id)),
+      round: String(item.round ?? ''), max_rounds: String(item.maxRounds ?? ''), max_minutes: String(item.maxMinutes ?? ''), max_cost: item.maxCost == null ? '' : String(item.maxCost),
+      currency: info.agent.currency, result_format: SCHEDULE_FORMAT, input_dir: 'input', output_dir: 'output', sources_dir: path.relative(dirs.run, dirs.sources), run_dir: '.',
+    });
+  } catch (err) {
+    if (gone(err)) return conclude(c, 'aborted', { notes: `The piece or its version disappeared: ${err}` }, null);
+    if (transient(err)) throw new Retry(deps.now() + 30_000, String(err));
+    throw err;
+  }
+
+  const abort = new AbortController();
+  const stopBeat = keepAlive(c, abort);
+  const onShutdown = () => abort.abort();
+  deps.signal?.addEventListener('abort', onShutdown, { once: true });
+  try {
+    const remaining = work.deadline - deps.now();
+    if (remaining < 1_000) return conclude(c, 'timeout', { notes: 'The time allowed for the run ran out before the agent could start.' }, null);
+    await agentDir(dirs.output, access);
+    const instructions = render(template, vars);
+    await writeFile(path.join(dirs.run, 'instructions.md'), instructions);
+    let res;
+    try {
+      const plan = planAgent(brand.agent, dirs, {
+        brand: item.brand, runId: item.runId!, pieceId: scopeOf(c).pieceId ?? '', maxMinutes: String(item.maxMinutes ?? ''),
+        maxBudget: item.maxCost == null ? undefined : String(Math.max(0, item.maxCost - work.cost)),
+      });
+      res = await runAgent({
+        ...plan, stdin: brand.agent.input === 'stdin' ? instructions : undefined, timeoutMs: remaining,
+        killGraceMs: brand.agent.killGraceSeconds * 1000, logPrefix: logPrefix(dirs.run, 0), signal: abort.signal,
+      });
+    } catch (err) {
+      return conclude(c, 'failed', { notes: String(err) }, null);
+    }
+    work.agentRan = true;
+    if (res.aborted) {
+      if (deps.signal?.aborted) throw new Retry(deps.now() + 5_000, 'the runner is shutting down');
+      c.log.warn({ run: item.runId }, 'the run was closed by the studio');
+      deps.queue.done(item);
+      return true;
+    }
+    let result: Result | null = null;
+    let problem: string | null = null;
+    const read = await readResult(dirs.output);
+    if ('problem' in read) problem = read.problem;
+    else if ('missing' in read) problem = 'The agent left no result.json.';
+    else {
+      try {
+        result = resultSchema.parse(JSON.parse(read.text));
+      } catch (err) {
+        problem = `result.json could not be read: ${clip(String(err), 300)}`;
+      }
+    }
+    work.cost += parseCost(brand.agent.cost, res.stdout, result);
+    if (res.timedOut) return conclude(c, 'timeout', { notes: `The agent was stopped after ${Math.round(res.durationMs / 60000)} minutes.` }, null);
+    if (problem || !result) {
+      if (res.exitCode !== 0 && res.exitCode !== null) return conclude(c, 'failed', { notes: `The agent exited with ${res.exitCode}. ${clip(res.stderr.trim().split('\n').slice(-5).join(' '), 400)}` }, null);
+      return conclude(c, 'failed', { notes: problem ?? 'The agent left no result.' }, null);
+    }
+    // What it asks to schedule goes out to the public as the post's text: none of this runner's secrets may be in it.
+    if ((await secretsIn(deps.config.secrets, result, [])).length) {
+      c.log.error({ run: item.runId, brand: item.brand }, "the agent's result holds a secret of this runner: nothing of it is posted");
+      return conclude(c, 'failed', { notes: LEAK_NOTE }, null);
+    }
+    work.schedule = result.schedule;
+    work.notes = result.notes;
+    work.posted = [];
+    item.stage = 'agent_done';
+    deps.queue.save(item);
+    return false;
+  } finally {
+    stopBeat();
+    deps.signal?.removeEventListener('abort', onShutdown);
+  }
+}
+
+/**
+ * Asks the studio to schedule each thing the agent chose, one at a time, and closes the run with what came of it: `scheduled` when
+ * anything was, `failed` when the studio refused all of it, `needs_people` when the agent chose nothing (approvers are told, and a person
+ * schedules it). Each answer is written down as it comes, so a restart does not ask twice.
+ */
+async function postSchedule(c: Ctx): Promise<void> {
+  const { item, studio, deps } = c;
+  const work = item.work as Work;
+  work.posted ??= [];
+  for (const [i, e] of (work.schedule ?? []).entries()) {
+    if (work.posted.some((p) => p.i === i)) continue;
+    try {
+      const pub = await studio.schedule(e.versionId, { accountId: e.accountId, scheduledAt: e.at, text: e.text, firstComment: e.firstComment });
+      work.posted.push({ i, ok: true, accountId: e.accountId, at: pub.scheduled_at, publicationId: pub.id });
+      c.log.info({ run: item.runId, publication: pub.id, at: pub.scheduled_at }, 'scheduled what was approved');
+    } catch (err) {
+      if (transient(err)) throw new Retry(deps.now() + 30_000, String(err));
+      if (!(err instanceof StudioError)) throw err;
+      work.posted.push({ i, ok: false, accountId: e.accountId, at: e.at, code: err.code, message: clip(err.message, 300) });
+      c.log.warn({ run: item.runId, code: err.code, at: e.at }, 'the studio refused to schedule it');
+    }
+    deps.queue.save(item);
+  }
+  const ok = work.posted.filter((p) => p.ok);
+  const refused = work.posted.filter((p) => !p.ok);
+  const why = refused.map((r) => `${r.at} on ${r.accountId}: ${r.message} (${r.code})`).join('; ');
+  const outcome = ok.length ? 'scheduled' : refused.length ? 'failed' : 'needs_people';
+  const notes =
+    outcome === 'scheduled'
+      ? `Scheduled ${ok.length} post${ok.length === 1 ? '' : 's'}${refused.length ? `; the studio refused ${refused.length}: ${why}` : ''}. ${work.notes}`
+      : outcome === 'failed'
+        ? `The studio refused everything the agent asked to schedule: ${why}`
+        : work.notes || 'The agent scheduled nothing: a person has to.';
+  try {
+    await studio.finishRun(item.runId!, {
+      outcome, cost: work.cost, notes: clip(notes.trim(), 900), versionId: data(item).version.id,
+      detail: { scheduled: ok.map(({ i: _i, ok: _o, ...p }) => p), refused: refused.map(({ i: _i, ok: _o, ...p }) => p) },
+    });
+  } catch (err) {
+    if (transient(err)) throw new Retry(deps.now() + 30_000, String(err));
+    c.log.warn({ run: item.runId, err: String(err) }, 'could not close the run');
+  }
+}
+
 // ───────────────────────────── the project ─────────────────────────────
 
 /** The commit message: the round, the piece, and each comment the agent was given with what it said, as trailers git can search. */
@@ -524,7 +727,11 @@ async function upload(c: Ctx): Promise<boolean> {
     if (isSlot(item)) {
       const spec = work.piece!;
       const d = data(item);
-      work.pieceId ??= (await studio.createPiece(work.brandId, { title: spec.title, kind: spec.kind, brief: spec.brief, targetDate: d.slot.day, campaignId: spec.campaignId ?? d.campaigns?.[0]?.id ?? null, aiGenerated: true })).id;
+      // Made for this slot: the studio schedules it there once people approve it (unless they untick it).
+      work.pieceId ??= (await studio.createPiece(work.brandId, {
+        title: spec.title, kind: spec.kind, brief: spec.brief, targetDate: d.slot.day, campaignId: spec.campaignId ?? d.campaigns?.[0]?.id ?? null, aiGenerated: true,
+        slot: { id: d.slot.id, at: d.slot.at },
+      })).id;
       work.variantId ??= (await studio.addVariant(work.pieceId, { format: spec.format, style: spec.style })).id;
       deps.queue.save(item);
       variantId = work.variantId;
