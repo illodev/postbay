@@ -121,7 +121,7 @@ export async function personLocale(db: Queryable, userId: string): Promise<Local
 
 /**
  * In-app notifications (and email if SMTP is configured, see background.ts).
- * Never notifies whoever triggered the event.
+ * Never notifies whoever triggered the event, nor a member deactivated in the brand.
  */
 export async function notifyRoles(
   db: Queryable,
@@ -134,7 +134,7 @@ export async function notifyRoles(
   await db.query(
     `insert into notification (user_id, brand_id, kind, payload)
      select m.user_id, m.brand_id, $3, $4 from member m
-     where m.brand_id = $1 and m.role = any($2) and m.user_id is distinct from $5`,
+     where m.brand_id = $1 and m.role = any($2) and m.user_id is distinct from $5 and m.deactivated_at is null`,
     [brandId, roles, kind, JSON.stringify(payload), exceptUserId],
   );
 }
@@ -151,7 +151,7 @@ export async function notifyUsers(
   for (const id of ids) {
     await db.query(
       `insert into notification (user_id, brand_id, kind, payload)
-       select $1, $2, $3, $4 where exists (select 1 from member where user_id = $1 and brand_id = $2)`,
+       select $1, $2, $3, $4 where exists (select 1 from member where user_id = $1 and brand_id = $2 and deactivated_at is null)`,
       [id, brandId, kind, JSON.stringify(payload)],
     );
   }

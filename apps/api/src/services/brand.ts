@@ -4,14 +4,14 @@ import { authorize, roleIn, type Principal } from '../auth/principal.js';
 import type { Ctx } from '../context.js';
 import { ROLES } from '../domain/roles.js';
 import { isValidZone } from '../domain/time.js';
-import { badRequest, conflict, forbidden, notFound } from '../errors.js';
+import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { DateTime } from 'luxon';
 import { audit } from './audit.js';
 import { agentOf, agentSettings } from './agent.js';
 import { prizeSettings, prizesOf } from './prizes.js';
 import { subscribeEvents } from './connectors.js';
 import { recipientLocale } from './notify.js';
-import { msg, t } from '../i18n/index.js';
+import { msg, t, type Localized } from '../i18n/index.js';
 import { loadBrand, rulesOf } from './loaders.js';
 
 export const NETWORKS = ['instagram', 'facebook', 'youtube', 'tiktok', 'linkedin', 'x', 'threads', 'pinterest', 'bluesky'] as const;
@@ -122,17 +122,19 @@ export const memberInput = z.object({
 
 /**
  * The brand's people. `can_reset_second_factor` says whether the person asking may reset that member's authenticator: only an
- * admin of every brand the member belongs to may, and nobody their own (see resetForMember in services/secondfactor.ts).
+ * admin of every brand the member belongs to may, and nobody their own (see resetForMember in services/secondfactor.ts). A deactivated
+ * member is listed too (after the active ones), with `active: false`, when and by whom (`deactivated_at`, `deactivated_by`).
  */
 export async function listMembers(ctx: Ctx, p: Principal, brandId: string) {
   await authorize(ctx.db, p, brandId, 'brand.manage');
   return ctx.db.query(
-    `select m.id, m.role, u.id as user_id, u.email, u.name,
+    `select m.id, m.role, u.id as user_id, u.email, u.name, (m.deactivated_at is null) as active, m.deactivated_at,
+            case when m.deactivated_at is null then null else coalesce(d.name, d.email) end as deactivated_by,
             exists(select 1 from user_totp t where t.user_id = u.id and t.confirmed_at is not null) as second_factor,
             (u.id <> $2 and not exists(select 1 from member o where o.user_id = u.id and not exists(
-              select 1 from member a where a.brand_id = o.brand_id and a.user_id = $2 and a.role = 'admin'))) as can_reset_second_factor
-     from member m join app_user u on u.id = m.user_id
-     where m.brand_id = $1 order by u.email`,
+              select 1 from member a where a.brand_id = o.brand_id and a.user_id = $2 and a.role = 'admin' and a.deactivated_at is null))) as can_reset_second_factor
+     from member m join app_user u on u.id = m.user_id left join app_user d on d.id = m.deactivated_by
+     where m.brand_id = $1 order by (m.deactivated_at is not null), u.email`,
     [brandId, p.kind === 'user' ? p.userId : null],
   );
 }
@@ -151,7 +153,8 @@ export async function addMember(ctx: Ctx, p: Principal, brandId: string, raw: un
     await authorize(db, p, brandId, 'brand.manage');
     const existing = await db.one<{ id: string }>('select id from app_user where lower(email) = $1', [input.email]);
     if (existing) {
-      const exists = await db.one('select 1 from member where user_id = $1 and brand_id = $2', [existing.id, brandId]);
+      const exists = await db.one<{ deactivated_at: Date | null }>('select deactivated_at from member where user_id = $1 and brand_id = $2', [existing.id, brandId]);
+      if (exists?.deactivated_at) throw conflict('already_member', msg('member.existsDeactivated'), { deactivated: true });
       if (exists) throw conflict('already_member', msg('error.brand.alreadyMember'));
       const elsewhere = await db.one(
         `select 1 from member m join brand b on b.id = m.brand_id
@@ -270,7 +273,7 @@ type Tx = Parameters<Parameters<Ctx['db']['tx']>[0]>[0];
  * Revokes the producer tokens a person made for a brand, when they stop being able to make them (they leave the brand, or are no
  * longer its admin). An agent running on one of them stops at its next call; the brand's admins make it a new one.
  */
-async function revokeTokensOf(db: Tx, p: Principal, brandId: string, userId: string, reason: 'member_removed' | 'no_longer_admin') {
+async function revokeTokensOf(db: Tx, p: Principal, brandId: string, userId: string, reason: 'member_removed' | 'no_longer_admin' | 'member_deactivated') {
   const rows = await db.query<{ id: string; name: string }>(
     'update api_token set revoked_at = now() where brand_id = $1 and created_by = $2 and revoked_at is null returning id, name',
     [brandId, userId],
@@ -279,15 +282,25 @@ async function revokeTokensOf(db: Tx, p: Principal, brandId: string, userId: str
   return rows.length;
 }
 
-async function assertNotLastAdmin(db: Tx, brandId: string, memberId: string) {
-  const other = await db.one(`select 1 from member where brand_id = $1 and role = 'admin' and id <> $2`, [brandId, memberId]);
-  if (!other) throw conflict('last_admin', msg('error.brand.lastAdmin'));
+/**
+ * The brand's admins, locked for the rest of the transaction, before the member being changed is: two admins taking each other out at
+ * the same moment then happen one after the other (the second is refused), always in the same order, so they never deadlock.
+ */
+async function lockAdmins(db: Tx, brandId: string) {
+  await db.query(`select id from member where brand_id = $1 and role = 'admin' order by id for update`, [brandId]);
+}
+
+/** Refuses to leave the brand without an active admin. A deactivated admin does not count: they cannot manage anything. */
+async function assertNotLastAdmin(db: Tx, brandId: string, memberId: string, text: Localized = msg('error.brand.lastAdmin')) {
+  const other = await db.one(`select 1 from member where brand_id = $1 and role = 'admin' and deactivated_at is null and id <> $2`, [brandId, memberId]);
+  if (!other) throw conflict('last_admin', text);
 }
 
 export async function changeMemberRole(ctx: Ctx, p: Principal, brandId: string, memberId: string, role: unknown) {
   const next = z.enum(ROLES).parse(role);
   return ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.manage');
+    await lockAdmins(db, brandId);
     const m = await db.one('select * from member where id = $1 and brand_id = $2 for update', [memberId, brandId]);
     if (!m) throw notFound('Member');
     if (m.role === 'admin' && next !== 'admin') await assertNotLastAdmin(db, brandId, memberId);
@@ -298,9 +311,58 @@ export async function changeMemberRole(ctx: Ctx, p: Principal, brandId: string, 
   });
 }
 
+/**
+ * Deactivates a member of the brand, without removing them. They keep their place in its history (their comments, approvals and
+ * uploads still show their name, and approvals they gave still count), but until they are reactivated they cannot open the brand
+ * (`member_deactivated`), are told nothing about it (no notification is made for them, and what was waiting to be emailed or pushed
+ * to them is dropped), and the producer tokens they made for it are revoked. Reactivating does not bring the tokens back: an admin
+ * makes new ones. Nobody deactivates themselves, and the last active admin cannot be deactivated.
+ */
+export async function deactivateMember(ctx: Ctx, p: Principal, brandId: string, memberId: string) {
+  return ctx.db.tx(async (db) => {
+    await authorize(db, p, brandId, 'brand.manage');
+    await lockAdmins(db, brandId);
+    const m = await db.one('select * from member where id = $1 and brand_id = $2 for update', [memberId, brandId]);
+    if (!m) throw notFound('Member');
+    if (p.kind === 'user' && m.user_id === p.userId) throw new AppError(403, 'cannot_deactivate_self', msg('member.cannotDeactivateSelf'));
+    if (m.deactivated_at) throw conflict('already_deactivated', msg('member.alreadyDeactivated'));
+    if (m.role === 'admin') await assertNotLastAdmin(db, brandId, memberId, msg('member.lastActiveAdmin'));
+    const by = p.kind === 'user' ? p.userId : null;
+    const row = (await db.one<{ deactivated_at: Date }>('update member set deactivated_at = $2, deactivated_by = $3 where id = $1 returning deactivated_at', [memberId, ctx.now(), by]))!;
+    const tokensRevoked = await revokeTokensOf(db, p, brandId, m.user_id, 'member_deactivated');
+    // What was already waiting to reach them by email or push about this brand does not go out either (Slack is the brand's, not theirs).
+    await db.query(
+      `update notification set emailed_at = coalesce(emailed_at, $3), pushed_at = coalesce(pushed_at, $3)
+       where user_id = $1 and brand_id = $2 and (emailed_at is null or pushed_at is null)`,
+      [m.user_id, brandId, ctx.now()],
+    );
+    const who = await db.one<{ email: string }>('select email from app_user where id = $1', [m.user_id]);
+    await audit(db, p, brandId, 'member.deactivated', 'member', memberId, { active: true, role: m.role }, { active: false, role: m.role, email: who?.email ?? null, tokens_revoked: tokensRevoked });
+    return { id: memberId, active: false, deactivated_at: row.deactivated_at, tokensRevoked };
+  });
+}
+
+/** Lets a deactivated member back in, with the role they had. The tokens revoked when they were deactivated stay revoked. */
+export async function reactivateMember(ctx: Ctx, p: Principal, brandId: string, memberId: string) {
+  return ctx.db.tx(async (db) => {
+    await authorize(db, p, brandId, 'brand.manage');
+    const m = await db.one('select * from member where id = $1 and brand_id = $2 for update', [memberId, brandId]);
+    if (!m) throw notFound('Member');
+    if (!m.deactivated_at) throw conflict('not_deactivated', msg('member.notDeactivated'));
+    await db.query('update member set deactivated_at = null, deactivated_by = null where id = $1', [memberId]);
+    const kept = (await db.one<{ n: number }>(
+      'select count(*)::int as n from api_token where brand_id = $1 and created_by = $2 and revoked_at is not null and expires_at > $3',
+      [brandId, m.user_id, ctx.now()],
+    ))!.n;
+    await audit(db, p, brandId, 'member.reactivated', 'member', memberId, { active: false, deactivated_at: m.deactivated_at }, { active: true, role: m.role });
+    return { id: memberId, active: true, role: m.role, tokensStillRevoked: kept };
+  });
+}
+
 export async function removeMember(ctx: Ctx, p: Principal, brandId: string, memberId: string) {
   return ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.manage');
+    await lockAdmins(db, brandId);
     const m = await db.one('select * from member where id = $1 and brand_id = $2 for update', [memberId, brandId]);
     if (!m) throw notFound('Member');
     if (m.role === 'admin') await assertNotLastAdmin(db, brandId, memberId);
