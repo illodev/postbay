@@ -1,4 +1,6 @@
-# Content Studio
+<p><img src="docs/brand/postbay-logo-light.svg#gh-light-mode-only" alt="Postbay" height="48"><img src="docs/brand/postbay-logo-dark.svg#gh-dark-mode-only" alt="Postbay" height="48"></p>
+
+# Postbay
 
 A self-hosted studio that connects three things that usually live apart: whoever produces the content, the team that
 reviews it, and the networks where it goes out. Producers upload videos, carousels, posts, stories and PDFs. The team
