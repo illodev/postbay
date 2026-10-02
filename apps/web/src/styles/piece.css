@@ -146,6 +146,7 @@ a.pc-thumb:hover img { transform: scale(1.03); }
 }
 .pc-drop.is-over { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
 .pc-drop.is-busy { opacity: .55; }
+@media (hover: none) { .pc-drop-text { display: none; } }
 .pc-drop-icon { width: 26px; height: 26px; color: var(--faint); }
 .pc-drop.is-over .pc-drop-icon { color: var(--accent); }
 .pc-files { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
@@ -182,7 +183,7 @@ a.pc-thumb:hover img { transform: scale(1.03); }
 /* ───────────────────────────── narrower screens ───────────────────────────── */
 @media (max-width: 1240px) {
   /* One column, in reading order: brief, variants, agent, publications. */
-  .pc-layout { display: flex; flex-direction: column; gap: 1.5rem; }
+  .pc-layout { display: flex; flex-direction: column; align-items: stretch; gap: 1.5rem; }
   .pc-main, .pc-side { display: contents; }
   .pc-o-brief { order: 1; }
   .pc-o-variants { order: 2; }

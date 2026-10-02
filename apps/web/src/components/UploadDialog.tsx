@@ -267,7 +267,7 @@ export function UploadDialog({ variant, variants, latestVersionId, onClose }: {
               <svg className="pc-drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M12 15V4M7 9l5-5 5 5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
               </svg>
-              <span>{shape === 'document' ? t('piece.upload.dropOne') : t('piece.upload.drop')}</span>
+              <span className="pc-drop-text">{shape === 'document' ? t('piece.upload.dropOne') : t('piece.upload.drop')}</span>
               <button type="button" className="btn btn-small" disabled={busy} onClick={() => input.current?.click()}>
                 {shape === 'document' ? t('piece.upload.chooseOne') : t('piece.upload.choose')}
               </button>
