@@ -82,6 +82,10 @@ export interface PieceSummary {
   created_at: string;
   variant_count: number;
   open_comments: number;
+  campaign_id: string | null;
+  source?: string | null;
+  /** Filled by the richer list (latest version, its format, who made it, what is scheduled). */
+  latest_by_agent?: boolean;
 }
 
 export interface VersionSummary {

@@ -7,6 +7,7 @@ import { Empty, ErrorBox, Spinner } from './components/ui';
 import { t } from './i18n';
 import { SessionProvider, useMe } from './lib/session';
 import { CalendarPage } from './pages/Calendar';
+import { HomePage } from './pages/Home';
 import { Login, AuthCallback } from './pages/Login';
 import { SecondFactorPage } from './pages/SecondFactor';
 import { SecurityPage } from './pages/Security';
@@ -39,7 +40,7 @@ function Authed() {
     <SessionProvider me={me}>
       <Routes>
         <Route element={<Layout />}>
-          <Route index element={<Navigate to="/pieces" replace />} />
+          <Route index element={<HomePage />} />
           <Route path="pieces" element={<PiecesPage />} />
           <Route path="pieces/:pieceId" element={<PiecePage />} />
           <Route path="review/:versionId" element={<Suspense fallback={<Spinner />}><ReviewPage /></Suspense>} />

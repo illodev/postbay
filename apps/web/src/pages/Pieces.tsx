@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type PieceSummary } from '../api';
+import { PageBar } from '../components/PageBar';
 import { Chip, Dialog, Empty, ErrorBox, Field, Spinner, useToast } from '../components/ui';
 import { t, tMaybe, type Key } from '../i18n';
 import { fmtDay, fmtShort } from '../lib/format';
@@ -113,21 +114,43 @@ function PieceCard({ p }: { p: PieceSummary }) {
 
 export function PiecesPage() {
   const { brand, can } = useSession();
-  const [state, setState] = useState('');
+  const [params, setParams] = useSearchParams();
+  // The sidebar's folders and collections arrive as query parameters.
+  const state = params.get('state') ?? '';
+  const campaign = params.get('campaign');
+  const byAgent = params.get('by') === 'agent';
   const [q, setQ] = useState('');
-  const [creating, setCreating] = useState(false);
-  const { data, error, isLoading } = useQuery({
+  const creating = params.get('new') === '1';
+  const setCreating = (open: boolean) => {
+    const next = new URLSearchParams(params);
+    if (open) next.set('new', '1');
+    else next.delete('new');
+    setParams(next, { replace: true });
+  };
+  const setState = (s: string) => {
+    const next = new URLSearchParams(params);
+    if (s) next.set('state', s);
+    else next.delete('state');
+    setParams(next);
+  };
+  const { data: all, error, isLoading } = useQuery({
     queryKey: ['pieces', brand.id, state, q],
     queryFn: () => api.get<PieceSummary[]>(`/api/brands/${brand.id}/pieces?${new URLSearchParams({ ...(state ? { state } : {}), ...(q ? { q } : {}) })}`),
   });
+  const { data: campaigns } = useQuery({ queryKey: ['campaigns', brand.id], queryFn: () => api.get<{ id: string; name: string }[]>(`/api/brands/${brand.id}/campaigns`) });
+  const data = all?.filter((p) => (!campaign || p.campaign_id === campaign) && (!byAgent || p.latest_by_agent));
+  const where = campaign ? campaigns?.find((c) => c.id === campaign)?.name : byAgent ? t('layout.collection.agent') : state ? t(`layout.collection.${state}` as Key) : null;
   return (
     <>
+      <PageBar
+        crumbs={[{ label: t('pieces.title'), to: '/pieces' }, ...(where ? [{ label: where }] : [])]}
+        actions={can('createPiece') && <button className="btn btn-primary btn-small" onClick={() => setCreating(true)}>{t('pieces.new')}</button>}
+      />
       <div className="page-head">
         <div>
           <h1>{t('pieces.title')}</h1>
           <p className="muted">{t('pieces.subtitle', { brand: brand.name })}</p>
         </div>
-        {can('createPiece') && <button className="btn btn-primary" onClick={() => setCreating(true)}>{t('pieces.new')}</button>}
       </div>
       <div className="toolbar">
         <div className="search-input">
