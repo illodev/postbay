@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mediaSource, type Ctx } from '../context.js';
@@ -8,8 +8,8 @@ import { notFound } from '../errors.js';
 
 /**
  * Small JPEG previews for the pieces list: one per version, made once and kept in storage under `thumbs/`.
- * The picture is the version's cover if it has one, else its first image, else a frame of its video. A PDF has none:
- * the list draws its own placeholder.
+ * The picture is the version's cover if it has one, else its first image, else a frame of its video, else the first page
+ * of its PDF (drawn by pdftoppm, from poppler; without it a PDF has no preview and the list draws a placeholder).
  */
 
 export const THUMB_WIDTHS = [240, 480, 960] as const;
@@ -53,7 +53,12 @@ export async function versionThumb(ctx: Ctx, p: Principal, versionId: string, wi
     [versionId],
   );
   const pick = assets.find((a) => a.kind === 'cover' || a.kind === 'image' || a.kind === 'video');
-  if (!pick) return null;
+  if (!pick) {
+    const pdf = assets.find((a) => a.kind === 'pdf');
+    const page = pdf ? await pdfFirstPage(ctx, pdf.storage_key, width) : null;
+    if (page) await ctx.storage.put(cacheKey, page, 'image/jpeg');
+    return page;
+  }
 
   // A frame a third of the way in: the first ones are often a black, a fade or a title card.
   const at = pick.kind === 'video' ? Math.min(8, ((pick.duration_ms ?? 0) / 1000) * 0.3) : null;
@@ -61,6 +66,26 @@ export async function versionThumb(ctx: Ctx, p: Principal, versionId: string, wi
   if (!jpg) return null;
   await ctx.storage.put(cacheKey, jpg, 'image/jpeg');
   return jpg;
+}
+
+/** The first page of a stored PDF as a JPEG `width` wide, or null when pdftoppm is missing or the file is unreadable. */
+async function pdfFirstPage(ctx: Ctx, key: string, width: number): Promise<Buffer | null> {
+  const bytes = await ctx.storage.get(key);
+  if (!bytes) return null;
+  const dir = await mkdtemp(path.join(tmpdir(), 'thumb-'));
+  try {
+    const src = path.join(dir, 'in.pdf');
+    await writeFile(src, bytes);
+    await new Promise<void>((resolve, reject) => {
+      execFile('pdftoppm', ['-jpeg', '-jpegopt', 'quality=82', '-f', '1', '-l', '1', '-singlefile', '-scale-to-x', String(width), '-scale-to-y', '-1', src, path.join(dir, 'page')],
+        { timeout: 30_000 }, (err) => (err ? reject(err) : resolve()));
+    });
+    return await readFile(path.join(dir, 'page.jpg'));
+  } catch {
+    return null;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 /**
