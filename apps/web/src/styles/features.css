@@ -54,4 +54,6 @@
 .fx-slot-for { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: .8125rem; }
 
 /* Prizes: the kind of prize, as a small segmented choice that keeps its own width. */
-.fx-kind { display: flex; }
+.fx-kind { display: flex; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.fx-kind::-webkit-scrollbar { display: none; }
+.fx-kind .segmented { flex: none; }
