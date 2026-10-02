@@ -129,16 +129,39 @@ describe('a paused brand publishes nothing', () => {
     const objectId = (await row(pub.id)).handle.objectId as string;
     const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date(pub.scheduled_at));
     expect((await env.call(env.users.approver, 'POST', `/api/brands/${env.brandId}/blocked-dates`, { day, reason: 'Mourning' })).status).toBe(201);
-    expect(await wakeFrozen(env.ctx)).toBeGreaterThanOrEqual(1); // what the worker's sweep does
+    // Blocking the day wakes it at once: no sweep is needed for the network's copy to come down.
+    expect(new Date((await row(pub.id)).next_run_at).getTime()).toBeLessThanOrEqual(env.clock.now().getTime());
     await env.settle();
     expect(env.meta.posts.has(objectId)).toBe(false);
     expect((await row(pub.id)).status).toBe('scheduled');
+    expect(await wakeFrozen(env.ctx)).toBe(0); // and the sweep has nothing left to catch
 
-    // Unblocked: it is looked at again within minutes and held by the network again.
+    // Unblocked: it is prepared and held by the network again at once, not at its next look minutes later.
     await env.call(env.users.approver, 'DELETE', `/api/brands/${env.brandId}/blocked-dates/${day}`);
-    env.clock.advance(TIMING.frozenRecheckSeconds * 1000);
     await env.settle();
     expect(await row(pub.id)).toMatchObject({ status: 'ready', native_scheduled: true, frozen_at: null });
+    const audited = await env.db.query(`select action, after from audit_event where brand_id = $1 and action in ('date.blocked','date.unblocked') order by id`, [env.brandId]);
+    expect(audited.map((a) => [a.action, a.after.publications])).toEqual([['date.blocked', 1], ['date.unblocked', 1]]);
+  });
+
+  it('wakes only the publications of the day that was blocked, and does nothing for a day that was not blocked', async () => {
+    const a = await scheduled({ account: fb, leadMs: 3 * 60 * MIN });
+    const b = await scheduled({ account: fb, leadMs: 3 * 60 * MIN + 26 * 60 * MIN }); // the next day
+    env.clock.set(new Date(a.pub.prepare_at));
+    await env.settle();
+    expect((await row(a.pub.id)).status).toBe('ready');
+    const fmt = (d: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date(d));
+    expect(fmt(a.pub.scheduled_at)).not.toBe(fmt(b.pub.scheduled_at));
+    const later = (await row(b.pub.id)).next_run_at;
+    expect((await env.call(env.users.approver, 'POST', `/api/brands/${env.brandId}/blocked-dates`, { day: fmt(a.pub.scheduled_at), reason: '' })).status).toBe(201);
+    expect((await row(b.pub.id)).next_run_at).toEqual(later);
+    await env.settle();
+    expect((await row(a.pub.id)).status).toBe('scheduled');
+    expect((await row(b.pub.id)).status).toBe('scheduled');
+    // Removing a block that is not there wakes nothing.
+    const other = new Date(new Date(b.pub.scheduled_at).getTime() + 3 * 86_400_000).toISOString().slice(0, 10);
+    expect((await env.call(env.users.approver, 'DELETE', `/api/brands/${env.brandId}/blocked-dates/${other}`)).status).toBe(200);
+    expect((await row(b.pub.id)).next_run_at).toEqual(later);
   });
 });
 

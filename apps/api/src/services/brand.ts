@@ -497,6 +497,28 @@ export async function listBlocked(ctx: Ctx, p: Principal, brandId: string) {
   return ctx.db.query('select day, reason from blocked_date where brand_id = $1 order by day', [brandId]);
 }
 
+/**
+ * The automatic publications of one day of the brand (in its time zone) that a block or an unblock changes, woken now: on blocking,
+ * the ones already being prepared or ready, so what a network holds for them is taken down at once instead of at the worker's next
+ * sweep; on unblocking, the ones it held back, so they are prepared again (or handed to a person if their hour has passed) at once
+ * instead of at their next look a few minutes later.
+ */
+async function wakeDay(ctx: Ctx, db: Tx, brandId: string, day: string, blocked: boolean): Promise<number> {
+  const now = ctx.now();
+  const rows = await db.query(
+    `update publication pub set next_run_at = $3
+     from variant v join piece pc on pc.id = v.piece_id join brand b on b.id = pc.brand_id
+     where v.id = pub.variant_id and pc.brand_id = $1 and not pub.manual
+       and (pub.scheduled_at at time zone b.timezone)::date = $2::date
+       and (case when $4 then pub.status in ('preparing','ready') and pub.frozen_at is null and pub.scheduled_at > $3
+                 else pub.status in ('scheduled','preparing','ready') and pub.frozen_at is not null end)
+       and (pub.next_run_at is null or pub.next_run_at > $3)
+     returning pub.id`,
+    [brandId, day, now, blocked],
+  );
+  return rows.length;
+}
+
 export async function blockDate(ctx: Ctx, p: Principal, brandId: string, raw: unknown) {
   const input = blockedInput.parse(raw);
   return ctx.db.tx(async (db) => {
@@ -505,7 +527,8 @@ export async function blockDate(ctx: Ctx, p: Principal, brandId: string, raw: un
       'insert into blocked_date (brand_id, day, reason) values ($1,$2,$3) on conflict (brand_id, day) do update set reason = excluded.reason',
       [brandId, input.day, input.reason],
     );
-    await audit(db, p, brandId, 'date.blocked', 'brand', brandId, null, input);
+    const woken = await wakeDay(ctx, db, brandId, input.day, true);
+    await audit(db, p, brandId, 'date.blocked', 'brand', brandId, null, { ...input, publications: woken });
     return input;
   });
 }
@@ -513,8 +536,9 @@ export async function blockDate(ctx: Ctx, p: Principal, brandId: string, raw: un
 export async function unblockDate(ctx: Ctx, p: Principal, brandId: string, day: string) {
   return ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'publication.schedule');
-    await db.query('delete from blocked_date where brand_id = $1 and day = $2', [brandId, day]);
-    await audit(db, p, brandId, 'date.unblocked', 'brand', brandId, { day }, null);
+    const gone = await db.one('delete from blocked_date where brand_id = $1 and day = $2 returning day', [brandId, day]);
+    const woken = gone ? await wakeDay(ctx, db, brandId, day, false) : 0;
+    await audit(db, p, brandId, 'date.unblocked', 'brand', brandId, { day }, { publications: woken });
     return { day };
   });
 }
