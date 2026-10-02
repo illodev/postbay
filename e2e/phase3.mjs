@@ -30,6 +30,8 @@ const runnerLog = [];
 
 async function newSession(email, viewport = { width: 1280, height: 900 }, mobile = false) {
   const context = await browser.newContext({ baseURL: BASE, locale: 'en-US', viewport, isMobile: mobile, hasTouch: mobile });
+  // The interface is in Spanish unless the person chose otherwise; these steps read its English.
+  await context.addInitScript(() => { try { localStorage.setItem('studio.locale', 'en'); } catch { /* no storage: Spanish */ } });
   const page = await context.newPage();
   pages.push([email, page]);
   page.on('pageerror', (e) => problems.push(`[${email}] page error: ${e.message}`));

@@ -25,6 +25,8 @@ let n = 0;
 
 async function newSession(email, viewport = { width: 1280, height: 900 }, mobile = false) {
   const context = await browser.newContext({ baseURL: BASE, locale: 'en-US', viewport, isMobile: mobile, hasTouch: mobile, acceptDownloads: true });
+  // The interface is in Spanish unless the person chose otherwise; these steps read its English.
+  await context.addInitScript(() => { try { localStorage.setItem('studio.locale', 'en'); } catch { /* no storage: Spanish */ } });
   const page = await context.newPage();
   page.on('pageerror', (e) => problems.push(`[${email}] page error: ${e.message}`));
   page.on('console', (m) => m.type() === 'error' && !/status of 4\d\d/.test(m.text()) && problems.push(`[${email}] console error: ${m.text()}`));
@@ -246,24 +248,24 @@ await step('approver: calendar shows the post and empty slots, and a post can be
   const p = approver.page;
   await p.goto('/calendar');
   await p.getByText('Spring menu reel').first().waitFor();
-  assert((await p.locator('.cal-slot').count()) > 0, 'expected empty slots from the Tuesday and Thursday rules');
+  assert((await p.locator('.oc-slot').count()) > 0, 'expected empty slots from the Tuesday and Thursday rules');
   await shot(p, 'calendar-month');
   const dayOfItem = () =>
     p.evaluate(() => {
-      const el = [...document.querySelectorAll('.cal-item')].find((e) => e.textContent.includes('Spring menu reel'));
-      return el?.closest('.cal-day')?.getAttribute('aria-label') ?? null;
+      const el = [...document.querySelectorAll('.oc-pub')].find((e) => e.textContent.includes('Spring menu reel'));
+      return el?.closest('.oc-day')?.getAttribute('aria-label') ?? null;
     });
   const dayBefore = await dayOfItem();
   assert(dayBefore, 'the post is not in any calendar cell');
-  const labels = await p.locator('.cal-day:not(.out):not(.blocked)').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')));
+  const labels = await p.locator('.oc-day:not(.out):not(.blocked)').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')));
   const nextLabel = labels[labels.indexOf(dayBefore) + 1] ?? labels[labels.indexOf(dayBefore) - 1];
   assert(nextLabel, 'no neighbouring day to drop on');
-  await p.locator('.cal-item', { hasText: 'Spring menu reel' }).first().dragTo(p.locator(`.cal-day[aria-label="${nextLabel}"]`));
-  await p.getByText('Moved', { exact: true }).waitFor();
+  await p.locator('.oc-pub', { hasText: 'Spring menu reel' }).first().dragTo(p.locator(`.oc-day[aria-label="${nextLabel}"]`));
+  await p.getByText(/^Moved to /).waitFor();
   await p.waitForFunction(
     (before) => {
-      const el = [...document.querySelectorAll('.cal-item')].find((e) => e.textContent.includes('Spring menu reel'));
-      const now = el?.closest('.cal-day')?.getAttribute('aria-label');
+      const el = [...document.querySelectorAll('.oc-pub')].find((e) => e.textContent.includes('Spring menu reel'));
+      const now = el?.closest('.oc-day')?.getAttribute('aria-label');
       return !!now && now !== before;
     },
     dayBefore,
@@ -275,6 +277,8 @@ await step('approver: pausing the brand blocks moves and shows the banner; resum
   const p = approver.page;
   await p.goto('/settings');
   await p.getByRole('button', { name: 'Pause brand' }).click();
+  // The app asks first, in its own dialog.
+  await p.getByRole('dialog').getByRole('button', { name: 'Pause brand' }).click();
   await p.getByRole('status').filter({ hasText: 'This brand is paused' }).waitFor();
   await shot(p, 'brand-paused');
   await p.getByRole('button', { name: 'Resume brand' }).click();
@@ -285,17 +289,15 @@ await step('assisted publishing: a due post is packaged and recorded as publishe
   const p = approver.page;
   execFileSync('psql', [DB, '-c', `update publication set scheduled_at = now() - interval '2 minutes' where status = 'scheduled'`], { stdio: 'pipe' });
   await p.goto('/today');
-  await p.getByRole('button', { name: 'Publish…' }).click();
-  const d = p.getByRole('dialog');
-  await d.getByText('Our spring menu is here').waitFor();
-  await d.getByRole('link', { name: 'Download' }).first().waitFor();
+  // A due post is a card on the page with its text, its files and the form that records it.
+  const due = p.getByRole('region', { name: 'Due now' });
+  await due.getByText('Our spring menu is here').first().waitFor();
+  await due.getByRole('link', { name: /^Download / }).first().waitFor();
   await shot(p, 'publish-pack');
-  await d.getByRole('button', { name: 'I published it…' }).click();
-  const d2 = p.getByRole('dialog');
-  await d2.getByLabel(/Link to the post/).fill('https://example.com/p/spring-menu');
-  await d2.getByRole('button', { name: 'Mark as published' }).click();
+  await due.getByLabel(/Link to the post/).fill('https://example.com/p/spring-menu');
+  await due.getByRole('button', { name: 'Mark as published' }).click();
   await p.getByText('Marked as published').waitFor();
-  await p.getByText('Nothing to publish right now').waitFor();
+  await p.getByText('Nothing to publish by hand right now.').waitFor();
 });
 
 // ───────────────────────────── PDF and carousel ─────────────────────────────
@@ -389,7 +391,7 @@ await step('mobile: pieces, review and calendar fit the screen', async () => {
   await noHorizontalScroll(p, 'calendar');
   await shot(p, 'mobile-calendar');
   await p.goto('/settings');
-  await p.getByRole('heading', { name: 'Settings' }).waitFor();
+  await p.getByRole('navigation', { name: 'Breadcrumb' }).getByText('Settings').waitFor();
   await noHorizontalScroll(p, 'settings');
 });
 

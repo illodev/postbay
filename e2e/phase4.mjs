@@ -27,6 +27,8 @@ let n = 0;
 
 async function newSession(email, viewport = { width: 1280, height: 900 }, mobile = false) {
   const context = await browser.newContext({ baseURL: BASE, locale: 'en-US', viewport, isMobile: mobile, hasTouch: mobile, acceptDownloads: true });
+  // The interface is in Spanish unless the person chose otherwise; these steps read its English.
+  await context.addInitScript(() => { try { localStorage.setItem('studio.locale', 'en'); } catch { /* no storage: Spanish */ } });
   const page = await context.newPage();
   page.on('pageerror', (e) => problems.push(`[${email}] page error: ${e.message}`));
   page.on('console', (m) => m.type() === 'error' && !/status of (4\d\d|5\d\d)/.test(m.text()) && problems.push(`[${email}] console error: ${m.text()}`));
@@ -40,6 +42,8 @@ async function newSession(email, viewport = { width: 1280, height: 900 }, mobile
 /** A visitor with no account: the page a prize message links to is opened like this. */
 async function anonymous(viewport = { width: 1280, height: 800 }) {
   const context = await browser.newContext({ baseURL: BASE, locale: 'en-US', viewport, acceptDownloads: true });
+  // The interface is in Spanish unless the person chose otherwise; these steps read its English.
+  await context.addInitScript(() => { try { localStorage.setItem('studio.locale', 'en'); } catch { /* no storage: Spanish */ } });
   const page = await context.newPage();
   page.on('pageerror', (e) => problems.push(`[anonymous] page error: ${e.message}`));
   page.on('console', (m) => m.type() === 'error' && !/status of (4\d\d|5\d\d)/.test(m.text()) && problems.push(`[anonymous] console error: ${m.text()}`));
@@ -184,11 +188,12 @@ await step('secrets: no token or password reaches the browser, and the database 
 await step('approval flags: TikTok and Pinterest say posts stay private until the network approves the app, and an admin can flip it', async () => {
   const p = admin.page;
   await p.goto('/settings?tab=accounts');
-  const tiktok = p.locator('tbody tr', { hasText: 'TikTok' });
+  // Each account is a row; a network that reviews the app has a switch under it.
+  const tiktok = p.locator('li.ent', { hasText: 'TikTok' });
   await tiktok.getByText(/until then posts are made private/).waitFor();
-  const pinterest = p.locator('tbody tr', { hasText: 'Pinterest' });
+  const pinterest = p.locator('li.ent', { hasText: 'Pinterest' });
   await pinterest.getByText(/until then pins are not visible to others/).waitFor();
-  assert((await p.locator('tbody tr', { hasText: 'Threads' }).getByRole('checkbox').count()) === 0, 'Threads has no approval flag');
+  assert((await p.locator('li.ent', { hasText: 'Threads' }).getByRole('switch').count()) === 0, 'Threads has no approval flag');
   await shot(p, 'accounts-all-networks');
 });
 
@@ -443,8 +448,9 @@ await step('results: readings come in when they fall due, and each network is sh
     return (Number(c) > 0 && c === all) || `${c} of ${all} read`;
   }, 90_000, false);
   await p.goto('/results');
-  await p.getByRole('heading', { name: 'Results' }).waitFor();
-  const sections = await p.locator('section.card[aria-label]').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')));
+  await p.getByRole('navigation', { name: 'Breadcrumb' }).getByText('Results').waitFor();
+  // One section per network, named by its heading.
+  const sections = await p.locator('section.rs-net').evaluateAll((els) => els.map((e) => e.querySelector('h2')?.textContent?.trim() ?? ''));
   for (const name of ['Instagram', 'Facebook', 'Threads', 'Bluesky', 'X', 'LinkedIn']) assert(sections.includes(name), `no results section for ${name}: ${sections.join(', ')}`);
   // Private posts are listed (they were published) but have no readings: nothing is taken until a post is public.
   for (const name of ['TikTok', 'Pinterest']) {
@@ -533,9 +539,11 @@ await step('reconnect Meta with prizes on: the sign-in now asks for the messagin
   await fakes.control({ op: 'meta.scopes', scopes: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'instagram_basic', 'instagram_content_publish', 'instagram_manage_messages', 'pages_messaging', 'instagram_manage_comments', 'instagram_manage_insights'] });
   const p = admin.page;
   await p.goto('/settings?tab=accounts');
-  const row = p.locator('tbody tr', { hasText: 'Instagram' });
+  const row = p.locator('li.ent', { hasText: 'Instagram' }).first();
   const start = p.waitForRequest((r) => r.url().includes('/connections/meta') && r.method() === 'POST');
-  await row.getByRole('button', { name: 'Renew' }).click();
+  // Renewing is in the row's "⋯" menu.
+  await row.getByRole('button', { name: /^Actions for / }).click();
+  await p.getByRole('menuitem', { name: 'Renew' }).click();
   await start;
   await p.waitForURL(/connection=/);
   const d = p.getByRole('dialog');
@@ -678,10 +686,11 @@ await step('erasing a person: by the name they show, from Settings', async () =>
   const p = admin.page;
   await p.goto('/settings?tab=prizes');
   await p.getByRole('heading', { name: 'Erase a person' }).waitFor();
-  p.once('dialog', (dlg) => dlg.accept());
   const erase = p.locator('form', { has: p.getByRole('heading', { name: 'Erase a person' }) });
   await erase.getByRole('textbox', { name: 'Name', exact: true }).fill('carl');
   await erase.getByRole('button', { name: 'Erase', exact: true }).click();
+  // The app asks first, in its own dialog.
+  await p.getByRole('dialog').getByRole('button', { name: 'Erase', exact: true }).click();
   await p.getByText(/Deleted 1 entry/).waitFor();
   assert(sql(`select count(*) from prize_delivery where person_name = 'carl'`) === '0', 'carl should be gone');
   assert(sql(`select count(*) from prize_delivery where person_name = 'alex'`) !== '0', 'alex should be untouched');
