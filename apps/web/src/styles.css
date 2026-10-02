@@ -78,7 +78,7 @@ details > summary { cursor: pointer; color: var(--muted); }
 .rail { position: sticky; top: 0; height: 100dvh; background: var(--rail); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 0; z-index: 30; }
 .rail-logo { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, #8f86ff, #5a4cf0); display: grid; place-items: center; margin-bottom: 12px; }
 .rail-logo svg { width: 12px; height: 12px; }
-.rail-btn { position: relative; width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; color: var(--muted); background: none; border: 0; cursor: pointer; }
+.rail-btn { position: relative; width: 36px; height: 36px; padding: 0; border-radius: 9px; display: grid; place-items: center; color: var(--muted); background: none; border: 0; cursor: pointer; }
 .rail-btn:hover { background: var(--surface); color: var(--text); text-decoration: none; }
 .rail-btn.active { background: var(--surface-2); color: var(--text); }
 .rail-btn svg { width: 18px; height: 18px; }

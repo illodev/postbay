@@ -181,6 +181,59 @@ function NewCampaign({ onClose }: { onClose: () => void }) {
   );
 }
 
+function NewBrand({ onClose }: { onClose: () => void }) {
+  const { brand, setBrandId } = useSession();
+  const { locale } = useLocale();
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const zones = (() => {
+    try {
+      return (Intl as unknown as { supportedValuesOf(k: string): string[] }).supportedValuesOf('timeZone');
+    } catch {
+      return [brand.timezone];
+    }
+  })();
+  const [form, setForm] = useState({ name: '', timezone: brand.timezone, locale: locale as string });
+  const create = useMutation({
+    mutationFn: () => api.post<{ id: string }>('/api/brands', { fromBrandId: brand.id, ...form }),
+    onSuccess: async (b) => {
+      await qc.invalidateQueries({ queryKey: ['me'] });
+      setBrandId(b.id);
+      navigate('/');
+      onClose();
+    },
+  });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    create.mutate();
+  };
+  return (
+    <Dialog title={t('layout.newBrand')} onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
+        <p className="muted small" style={{ margin: 0 }}>{t('layout.newBrandHint')}</p>
+        <Field label={t('layout.brandName')}>
+          <input type="text" required autoFocus maxLength={200} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </Field>
+        <Field label={t('layout.brandTimezone')} hint={t('layout.brandTimezoneHint')}>
+          <select value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })}>
+            {(zones.includes(form.timezone) ? zones : [form.timezone, ...zones]).map((z) => <option key={z} value={z}>{z}</option>)}
+          </select>
+        </Field>
+        <Field label={t('layout.brandLanguage')} hint={t('layout.brandLanguageHint')}>
+          <select value={form.locale} onChange={(e) => setForm({ ...form, locale: e.target.value })}>
+            {LOCALES.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+          </select>
+        </Field>
+        {create.error && <ErrorBox error={create.error} />}
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
+          <button className="btn btn-primary" disabled={!form.name.trim() || create.isPending}>{t('layout.createBrand')}</button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
 /** Smart collections: pieces gathered by what is happening to them, wherever they live. */
 const COLLECTIONS: { key: string; param: string; colour: string; count?: (p: PieceSummary) => boolean }[] = [
   { key: 'in_review', param: 'state=in_review', colour: 'var(--warn)', count: (p) => p.review_state === 'in_review' },
@@ -199,6 +252,7 @@ function Sidebar() {
   const [brandsOpen, setBrandsOpen] = useState(false);
   const brandsRef = useOutside(brandsOpen, () => setBrandsOpen(false));
   const [creating, setCreating] = useState(false);
+  const [newBrand, setNewBrand] = useState(false);
   const { data: campaigns } = useQuery({ queryKey: ['campaigns', brand.id], queryFn: () => api.get<Campaign[]>(`/api/brands/${brand.id}/campaigns`) });
   const { data: all } = useQuery({ queryKey: ['pieces', brand.id, '', ''], queryFn: () => api.get<PieceSummary[]>(`/api/brands/${brand.id}/pieces`) });
   const live = (all ?? []).filter((p) => p.review_state !== 'discarded');
@@ -208,10 +262,10 @@ function Sidebar() {
   return (
     <aside className="sidebar" aria-label={t('layout.nav.main')}>
       <div ref={brandsRef} style={{ position: 'relative' }}>
-        <button className="brand-switch" onClick={() => me.brands.length > 1 && setBrandsOpen(!brandsOpen)} aria-expanded={brandsOpen} aria-haspopup={me.brands.length > 1 ? 'menu' : undefined}>
+        <button className="brand-switch" onClick={() => setBrandsOpen(!brandsOpen)} aria-expanded={brandsOpen} aria-haspopup="menu">
           <span className="brand-mark" aria-hidden="true">{brand.name.slice(0, 1).toUpperCase()}</span>
           <span className="name">{brand.name}</span>
-          {me.brands.length > 1 && <Icon name="chevronDown" />}
+          <Icon name="chevronDown" />
         </button>
         {brandsOpen && (
           <div className="popover" style={{ left: 0, top: 'calc(100% + 4px)', width: '100%' }} role="menu">
@@ -223,6 +277,12 @@ function Sidebar() {
                 {b.id === brand.id && <Icon name="check" />}
               </button>
             ))}
+            {can('manage') && (
+              <>
+                <div className="menu-sep" />
+                <button className="menu-item" role="menuitem" onClick={() => { setBrandsOpen(false); setNewBrand(true); }}><Icon name="plus" />{t('layout.newBrand')}</button>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -265,6 +325,7 @@ function Sidebar() {
         {(can('manage') || can('audit')) && <NavLink to="/settings"><Icon name="settings" /><span className="label">{t('layout.nav.settings')}</span></NavLink>}
       </nav>
       {creating && <NewCampaign onClose={() => setCreating(false)} />}
+      {newBrand && <NewBrand onClose={() => setNewBrand(false)} />}
     </aside>
   );
 }

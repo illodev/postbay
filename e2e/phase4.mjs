@@ -26,7 +26,7 @@ const problems = [];
 let n = 0;
 
 async function newSession(email, viewport = { width: 1280, height: 900 }, mobile = false) {
-  const context = await browser.newContext({ baseURL: BASE, viewport, isMobile: mobile, hasTouch: mobile, acceptDownloads: true });
+  const context = await browser.newContext({ baseURL: BASE, locale: 'en-US', viewport, isMobile: mobile, hasTouch: mobile, acceptDownloads: true });
   const page = await context.newPage();
   page.on('pageerror', (e) => problems.push(`[${email}] page error: ${e.message}`));
   page.on('console', (m) => m.type() === 'error' && !/status of (4\d\d|5\d\d)/.test(m.text()) && problems.push(`[${email}] console error: ${m.text()}`));
@@ -39,7 +39,7 @@ async function newSession(email, viewport = { width: 1280, height: 900 }, mobile
 
 /** A visitor with no account: the page a prize message links to is opened like this. */
 async function anonymous(viewport = { width: 1280, height: 800 }) {
-  const context = await browser.newContext({ baseURL: BASE, viewport, acceptDownloads: true });
+  const context = await browser.newContext({ baseURL: BASE, locale: 'en-US', viewport, acceptDownloads: true });
   const page = await context.newPage();
   page.on('pageerror', (e) => problems.push(`[anonymous] page error: ${e.message}`));
   page.on('console', (m) => m.type() === 'error' && !/status of (4\d\d|5\d\d)/.test(m.text()) && problems.push(`[anonymous] console error: ${m.text()}`));
@@ -89,7 +89,7 @@ const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 const state = {};
 
 const admin = await newSession('admin@example.com');
-const api = (method, url, data) => admin.context.request.fetch(url, { method, data, headers: { 'x-requested-by': 'studio' } });
+const api = (method, url, data) => admin.context.request.fetch(url, { method, data, headers: { 'x-requested-by': 'studio', 'accept-language': 'en' } });
 const accountOf = async (network) => (await (await api('GET', `/api/brands/${state.brandId}/accounts`)).json()).find((a) => a.network === network);
 
 await step('seed: the fake networks start blank, members are added, and TikTok has this site as its verified media domain', async () => {
@@ -312,43 +312,55 @@ await step('Pinterest: title and destination link are settings of the pin; it sc
   await p.getByText('Scheduled: the app will publish it').waitFor();
 });
 
-await step('TikTok: nothing is chosen for the person, the consent text is shown word for word, and branded content is policed', async () => {
+await step('TikTok: the settings come from TikTok while the post is written, nothing is chosen for the person, one consent sentence at a time', async () => {
   const p = approver.page;
   const d = await openSchedule(p, 'tiktok');
   await textBox(d).fill('Spring menu on TikTok #spring');
+  // The settings are asked of TikTok now (creator_info, through /api/brands/:id/accounts/:id/options): who posts, and what it allows.
   const opts = d.getByTestId('options-tiktok');
   await opts.waitFor();
-  assert((await opts.getByLabel(/Who can see this post/).inputValue()) === '', 'who can see the post must start empty');
+  await opts.getByText(/^Posting to TikTok as /).waitFor();
+  const privacy = opts.getByLabel(/Who can see this post/);
+  assert((await privacy.inputValue()) === '', 'who can see the post must start empty');
+  // The app has not passed TikTok's audit: TikTok only takes "Only me", so that is the only choice offered.
+  const offered = (await privacy.locator('option').allTextContents()).filter((t) => t !== 'Choose…');
+  assert(JSON.stringify(offered) === JSON.stringify(['Only me']), `before the audit only "Only me" is offered, got ${JSON.stringify(offered)}`);
   for (const label of ['Allow comments', 'Allow duets', 'Allow stitches']) {
     const box = opts.getByLabel(new RegExp(label));
     if (await box.count()) assert(!(await box.isChecked()), `${label} must start unticked`);
   }
   // A photo post: duets and stitches are for videos.
   await d.getByTestId('plan').getByText(/Photos/).waitFor().catch(() => {});
-  await opts.getByText("By posting, you agree to TikTok's Music Usage Confirmation.").waitFor();
+  const plainConsent = opts.getByText("By posting, you agree to TikTok's Music Usage Confirmation.", { exact: true });
+  const brandedConsent = opts.getByText("By posting, you agree to TikTok's Branded Content Policy and Music Usage Confirmation.", { exact: true });
+  await plainConsent.waitFor();
+  assert((await brandedConsent.count()) === 0, 'only one consent sentence is shown at a time');
   await d.getByText(/Choose who can see this post/).waitFor();
   assert(await scheduleButton(d).isDisabled(), 'without a privacy choice it cannot be scheduled');
   await d.getByText(/has not passed TikTok's audit yet/).waitFor();
   await shot(p, 'schedule-tiktok-empty');
 
-  await opts.getByLabel(/Who can see this post/).selectOption({ label: 'Everyone' });
+  await privacy.selectOption({ label: 'Only me' });
   await d.getByText(/Choose who can see this post/).waitFor({ state: 'detached' });
   await d.getByText(/TikTok needs this agreement before posting/).waitFor();
 
-  // Promoting something has to say what, and branded content cannot be private.
+  // Promoting something has to say what; branded content cannot be private, and brings its own consent sentence instead of the plain one.
   await opts.getByLabel(/This post promotes a brand/).check();
   await d.getByText(/say whether it is your own brand, branded content, or both/).waitFor();
   await opts.getByLabel(/^Branded content/).check();
-  await opts.getByLabel(/Who can see this post/).selectOption({ label: 'Only me' });
+  assert(await privacy.locator('option', { hasText: 'Only me' }).isDisabled(), '"Only me" cannot be picked for branded content');
   await d.getByText(/Branded content cannot be private/).waitFor();
-  await opts.getByLabel(/Who can see this post/).selectOption({ label: 'Everyone' });
-  await d.getByText(/This needs TikTok's agreement for branded content|TikTok needs this agreement for branded content/).waitFor();
+  await brandedConsent.waitFor();
+  assert((await plainConsent.count()) === 0, 'the branded-content consent replaces the plain one');
+  await d.getByText(/TikTok needs this agreement for branded content/).waitFor();
   await shot(p, 'schedule-tiktok-branded');
   await opts.getByLabel(/This post promotes a brand/).uncheck();
   await d.getByText(/Branded content cannot be private|say whether it is your own brand/).waitFor({ state: 'detached' });
+  await plainConsent.waitFor();
+  assert((await brandedConsent.count()) === 0, 'back to the plain consent sentence');
   // The consent is the last thing missing.
   await d.getByText(/TikTok needs this agreement before posting/).waitFor();
-  await opts.getByRole('checkbox', { name: /I agree/ }).first().check();
+  await opts.getByRole('checkbox', { name: /I agree/ }).check();
   await d.getByText(/TikTok needs this agreement before posting/).waitFor({ state: 'detached' });
   await shot(p, 'schedule-tiktok-ready');
   await scheduleButton(d).click();
@@ -370,8 +382,8 @@ await step('Instagram and Facebook: a plain caption, as before', async () => {
 await step('what was typed is kept as the post\'s options (and nothing hidden is sent)', async () => {
   const rows = sql(`select a.network, p.options::text from publication p join social_account a on a.id = p.social_account_id order by a.network`).split('\n');
   const opts = Object.fromEntries(rows.map((r) => { const [net, ...rest] = r.split('|'); return [net, JSON.parse(rest.join('|'))]; }));
-  assert(opts.tiktok.privacy === 'PUBLIC_TO_EVERYONE' && opts.tiktok.consent === true, `TikTok options wrong: ${JSON.stringify(opts.tiktok)}`);
-  assert(opts.tiktok.consentBranded === undefined && opts.tiktok.yourBrand === undefined, `hidden TikTok fields were sent: ${JSON.stringify(opts.tiktok)}`);
+  assert(opts.tiktok.privacy === 'SELF_ONLY' && opts.tiktok.consent === true, `TikTok options wrong: ${JSON.stringify(opts.tiktok)}`);
+  assert(opts.tiktok.consentBranded === undefined && opts.tiktok.yourBrand === undefined && opts.tiktok.brandedContent === undefined, `hidden TikTok fields were sent: ${JSON.stringify(opts.tiktok)}`);
   assert(opts.x.altText === 'A latte on a wooden table', `X alt text wrong: ${JSON.stringify(opts.x)}`);
   assert(opts.pinterest.link === 'https://example.com/spring-menu' && opts.pinterest.title === 'Spring menu', `Pinterest options wrong: ${JSON.stringify(opts.pinterest)}`);
 });

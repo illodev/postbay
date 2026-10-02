@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createConnectorSet } from '../src/connectors/registry.js';
 import { TikTokClient } from '../src/connectors/tiktok/client.js';
 import { createTikTok } from '../src/connectors/tiktok/tiktok.js';
+import { withLocale } from '../src/i18n/index.js';
 import { FakeTikTok } from './fakes/tiktok.js';
 import { account, configFor, env, expectError, image, input, media, prepareUntilDone, redirect } from './connector-helpers.js';
 
@@ -152,7 +153,8 @@ describe('TikTok: the controls it obliges the app to show', () => {
   });
 
   it('warns that every post is private until TikTok audits the app, and that photos need a verified domain', () => {
-    expect(tt().validate(input({ placement: 'video', options: filled() }), acc(false))).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'tiktok.unaudited', message: expect.stringContaining('TikTok account itself is set to private') }));
+    // Read in English (outside a request the studio speaks Spanish).
+    expect(withLocale('en', () => tt().validate(input({ placement: 'video', options: filled() }), acc(false)))).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'tiktok.unaudited', message: expect.stringContaining('TikTok account itself is set to private') }));
     expect(tt().validate(input({ placement: 'video', options: filled() }), acc(true)).some((i) => i.code === 'tiktok.unaudited')).toBe(false);
     expect(tt().validate(input({ placement: 'photo', media: [image()], options: filled() }), acc(true))).toContainEqual(expect.objectContaining({ code: 'tiktok.photo.domain' }));
   });

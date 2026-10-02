@@ -126,6 +126,16 @@ export class FakeLinkedIn extends FakeServer {
       }
       return reply.code(201).send('');
     }
+    if (c.path === '/rest/posts' && c.method === 'GET' && c.query.q === 'author') {
+      // "Find posts by authors": the organization's posts, newest first.
+      const author = String(c.query.author ?? '');
+      const elements = [...this.posts.values()]
+        .filter(() => author.startsWith('urn:li:organization:'))
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, Number(c.query.count ?? 10))
+        .map((p) => ({ id: p.id, author, commentary: p.commentary, content: p.content, createdAt: p.createdAt, lifecycleState: p.lifecycleState }));
+      return reply.send({ elements, paging: { start: 0, count: elements.length } });
+    }
     m = /^\/rest\/posts\/(.+)$/.exec(c.path);
     if (m) {
       const p = this.posts.get(decodeURIComponent(m[1]!));

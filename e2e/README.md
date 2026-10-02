@@ -2,6 +2,9 @@
 
 Five browser runs: [phase 1's flow](#phase-1-smoke-test), [phase 2's publishing against fake networks](#phase-2-publishing-against-fake-networks), [phase 3's agent loop](#phase-3-the-agent-loop), [phase 4's other networks, results and prizes](#phase-4-the-other-networks-results-and-prizes) and [phase 5's sign-in, notifications, subtitles and big uploads](#phase-5-signing-in-notifications-subtitles-and-big-uploads).
 
+The browsers run in English (`locale: 'en-US'`) and the scripts' own API calls ask for English: the API answers in the language a request
+asks for (Spanish when it asks for none), and these runs read the English texts.
+
 ## Phase 1 smoke test
 
 Drives the real app in a real browser over the whole phase 1 flow, with real ffmpeg and a real PostgreSQL, and fails on
@@ -125,8 +128,9 @@ real networks answer the way the stand-ins do: they were written from each netwo
 
 It covers: a connect button per network; sign-in pages for five of them, a board picker for Pinterest, and a handle and app-password form for
 Bluesky (a wrong password refused, the right one never coming back to the page); tokens sealed in the database; the approval flag for TikTok and
-Pinterest; the settings each network asks for in the schedule dialog (TikTok's empty privacy choice, unticked permissions, its consent text word for
-word and the branded-content rules; alt text; Pinterest's title and link) and only the fields showing being saved; Bluesky's limit counting characters
+Pinterest; the settings each network asks for in the schedule dialog (TikTok's settings asked of TikTok while the post is written, its empty
+privacy choice with only "Only me" before the audit, unticked permissions, one consent sentence at a time, word for word, and the branded-content
+rules; alt text; Pinterest's title and link) and only the fields showing being saved; Bluesky's limit counting characters
 as a person sees them; the worker publishing to all eight and what each fake received; TikTok kept private until audited; the readings and the results
 page, one section per network and never a total across them; prizes (switching them on, a link and a file, the reconnect needed for the permission to
 message, the rule and its checks, Meta's signed webhook and its handshake, a private reply within seconds, once per person, the public page and the
@@ -158,7 +162,7 @@ provider, Slack, push service or network answers the way the stand-ins do. Two t
 
 It covers: an admin sent to set up a second factor before anything else is reachable; the key and ten recovery codes shown once and stored sealed
 or hashed; a wrong code and a spent code refused; a recovery code that works once; five wrong codes locking someone out, and an admin's reset
-(audited) lifting it; recovery codes renewed with a current code; single sign-on (the button, a person who exists signed in and linked, a stranger and a
+(audited) signing that session out, so the person signs in again and sets up a new authenticator; recovery codes renewed with a current code; single sign-on (the button, a person who exists signed in and linked, a stranger and a
 foreign domain refused with no account made, an admin still asked for the authenticator, a token for another app refused); Slack (a foreign address
 refused, the address sealed and never sent back, a test message, one post per event for the team, posting stopped when Slack says the address is gone
 and the admin told once, a new address starting it again); push (turned on in a browser, a test message, a new version pushed and decrypted, a kind

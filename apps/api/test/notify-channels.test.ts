@@ -362,7 +362,7 @@ describe('Slack', () => {
   });
 
   it('writes text Slack cannot mistake for its own markup', () => {
-    const m = slackMessage('http://app.test', 'version.uploaded', { pieceId: 'p1' }, 'Tom & Jerry <ltd>', '<!channel> *Spring* & <https://evil.example|click>');
+    const m = slackMessage('en', 'http://app.test', 'version.uploaded', { pieceId: 'p1' }, 'Tom & Jerry <ltd>', '<!channel> *Spring* & <https://evil.example|click>');
     expect(m.text).not.toMatch(/<!channel>/);
     expect(m.text).toContain('&lt;!channel&gt; *Spring* &amp; &lt;https://evil.example|click&gt;');
     expect(m.text).toContain('*Tom &amp; Jerry &lt;ltd&gt;*');
