@@ -1,4 +1,6 @@
-# Content Studio
+<p><img src="docs/brand/postbay-logo-light.svg#gh-light-mode-only" alt="Postbay" height="48"><img src="docs/brand/postbay-logo-dark.svg#gh-dark-mode-only" alt="Postbay" height="48"></p>
+
+# Postbay
 
 A self-hosted studio that connects three things that usually live apart: whoever produces the content, the team that
 reviews it, and the networks where it goes out. Producers upload videos, carousels, posts, stories and PDFs. The team
@@ -340,6 +342,7 @@ scripts use `Authorization: Bearer <producer token>`. Texts for people come in t
 | `GET`, `PUT /notifications/preferences`; `PUT /notifications/locale` | What a person is told by email and push, and the language it is written in (`es`, `en`, or `null` for the brand's) |
 | `POST /brands/:id/members/:memberId/deactivate`, `/reactivate` | Deactivate a member of the brand, or let them back in (their revoked tokens stay revoked) |
 | `GET`, `POST /brands/:id/prizes` | The prize library; a prize is a `piece` (`pieceId`), a `file` or a `link` |
+| `PATCH /brands/:id` (`rules.variant_styles`) | The styles a variant can have, in order (at most 30, each up to 40 characters, no two alike). A variant's `style` stays text; an agent is told them in `GET /brands/:id/requirements` |
 
 [docs/phase-3.md](docs/phase-3.md) has the event payloads and how to verify a signature.
 

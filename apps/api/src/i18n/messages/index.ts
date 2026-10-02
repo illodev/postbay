@@ -13,9 +13,10 @@ import { prizes } from './prizes.js';
 import { prizePieces } from './prize-pieces.js';
 import { publishing } from './publishing.js';
 import { scheduling } from './scheduling.js';
+import { styles } from './styles.js';
 
 // One entry per area. A new area file is added here and to the All type below.
-const AREAS = [common, notify, publishing, connectors, issues, checks, errors, connect, agent, prizes, members, prizePieces, scheduling, mcp];
+const AREAS = [common, notify, publishing, connectors, issues, checks, errors, connect, agent, prizes, members, prizePieces, scheduling, styles, mcp];
 
 type All = typeof common.es &
   typeof notify.es &
@@ -30,6 +31,7 @@ type All = typeof common.es &
   typeof members.es &
   typeof prizePieces.es &
   typeof scheduling.es &
+  typeof styles.es &
   typeof mcp.es;
 
 export type Key = Extract<keyof All, string>;

@@ -39,9 +39,15 @@ function Authed() {
   if (error) return <div className="page"><ErrorBox error={error} /></div>;
   if (!me) return null;
   if (me.brands.length === 0) {
+    // Deactivated everywhere they belong: say where, rather than that they belong nowhere.
+    const gone = me.deactivated_in ?? [];
     return (
       <div className="page">
-        <Empty title={t('layout.noBrands')}>{t('layout.noBrandsHint', { email: me.user.email })}</Empty>
+        {gone.length > 0 ? (
+          <Empty title={t('deactivated.noBrands')}>{t('deactivated.where', { brands: gone.map((b) => b.name).join(', ') })}</Empty>
+        ) : (
+          <Empty title={t('layout.noBrands')}>{t('layout.noBrandsHint', { email: me.user.email })}</Empty>
+        )}
       </div>
     );
   }

@@ -10,7 +10,10 @@ import { Chip, Dialog, ErrorBox, errorMessage, Field, NetMark, Popover, Segmente
 import { t, tMaybe, type Key } from '../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
+import type { Campaign } from '../components/Layout';
+import { NewPiece, type ForSlot } from './Pieces';
 import '../styles/ops.css';
+import '../styles/features.css';
 
 type View = 'month' | 'week' | 'list';
 type Pub = CalendarData['publications'][number];
@@ -317,6 +320,10 @@ export function CalendarPage() {
   const [dropDay, setDropDay] = useState<string | null>(null);
   const [blocking, setBlocking] = useState(false);
   const [scheduling, setScheduling] = useState<{ versionId: string; when?: string } | null>(null);
+  // A free slot someone wants a piece made for: the new piece is linked to it, and approving it schedules it there.
+  const [forSlot, setForSlot] = useState<ForSlot | null>(null);
+  const canCreate = can('createPiece');
+  const campaigns = useQuery({ queryKey: ['campaigns', brand.id], queryFn: () => api.get<Campaign[]>(`/api/brands/${brand.id}/campaigns`), enabled: !!forSlot });
   const [trayOpen, setTrayOpen] = useState(() => {
     try { return localStorage.getItem('studio.calendar.tray') !== '0'; } catch { return true; }
   });
@@ -411,13 +418,22 @@ export function CalendarPage() {
   const item = (e: Entry, tall: boolean) => {
     if (e.kind === 'slot') {
       const s = e.slot;
-      return (
-        <Tip key={`s-${s.id}-${s.at}`} label={t('calendar.slotTitle', { label: s.label || t('calendar.slot'), account: `${NETWORK_LABEL[s.network] ?? s.network} · ${s.account_name}` })}>
-          <div className="oc-item oc-slot">
-            <span className="oc-time">{hourIn(s.at, zone)}</span>
-            <NetMark network={s.network} size="xs" />
-            <span className="oc-name">{s.label || t('calendar.slot')}</span>
-          </div>
+      const inner = (
+        <>
+          <span className="oc-time">{hourIn(s.at, zone)}</span>
+          <NetMark network={s.network} size="xs" />
+          <span className="oc-name">{s.label || t('calendar.slot')}</span>
+        </>
+      );
+      const what = t('calendar.slotTitle', { label: s.label || t('calendar.slot'), account: `${NETWORK_LABEL[s.network] ?? s.network} · ${s.account_name}` });
+      // A free slot is where a new piece can be made for: clicking it starts one.
+      return canCreate ? (
+        <Tip key={`s-${s.id}-${s.at}`} label={<>{what}<br />{t('fx.slot.create')}</>}>
+          <button type="button" className="oc-item oc-slot fx-slot-btn" onClick={() => setForSlot(s)}>{inner}</button>
+        </Tip>
+      ) : (
+        <Tip key={`s-${s.id}-${s.at}`} label={what}>
+          <div className="oc-item oc-slot" tabIndex={0}>{inner}</div>
         </Tip>
       );
     }
@@ -565,6 +581,11 @@ export function CalendarPage() {
                           <span className="ops-row-title">{e.slot.label || t('calendar.slot')}</span>
                           <span className="ops-row-sub"><NetMark network={e.slot.network} size="xs" />{NETWORK_LABEL[e.slot.network] ?? e.slot.network} · {e.slot.account_name}</span>
                         </div>
+                        {canCreate && (
+                          <div className="ops-row-side">
+                            <button type="button" className="btn btn-small btn-ghost" onClick={() => setForSlot(e.slot)}><Icon name="plus" />{t('fx.slot.createShort')}</button>
+                          </div>
+                        )}
                       </li>
                     ) : (
                       <li
@@ -738,6 +759,7 @@ export function CalendarPage() {
       )}
       {blocking && <BlockDialog brandId={brand.id} onClose={() => setBlocking(false)} />}
       {scheduling && <ScheduleFor versionId={scheduling.versionId} when={scheduling.when} brandId={brand.id} zone={zone} onClose={() => setScheduling(null)} />}
+      {forSlot && <NewPiece campaigns={campaigns.data ?? []} campaignId={null} slot={forSlot} onClose={() => setForSlot(null)} />}
     </div>
   );
 }

@@ -8,7 +8,7 @@ import type { Queryable } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { audit } from './audit.js';
 import { emitChangesRequested } from './approvals.js';
-import { loadBrand, loadPiece } from './loaders.js';
+import { loadBrand, loadPiece, rulesOf } from './loaders.js';
 import { notifyRoles } from './notify.js';
 import { english, msg, type Localized } from '../i18n/index.js';
 
@@ -463,5 +463,7 @@ export async function requirements(ctx: Ctx, p: Principal, brandId: string) {
       };
     }),
     approval_checklist: (brand.approval_rules as { checklist?: string[] } | null)?.checklist ?? [],
+    // The styles a variant of this brand can have: one an agent makes uses one of them.
+    variant_styles: rulesOf(brand).variant_styles,
   };
 }

@@ -351,6 +351,7 @@ async function doWork(c: Ctx): Promise<boolean> {
     brand: work.brandName,
     round: String(item.round ?? 1), max_rounds: String(item.maxRounds ?? ''), max_minutes: String(item.maxMinutes ?? ''), max_cost: item.maxCost == null ? '' : String(item.maxCost), currency: info.agent.currency,
     requirements: describeRequirements(requirements), checklist: requirements.approval_checklist.length ? requirements.approval_checklist.map((x) => `- ${x}`).join('\n') : '_No checklist._',
+    styles: requirements.variant_styles?.length ? requirements.variant_styles.map((x) => `- ${x}`).join('\n') : '_The brand has no list of styles: leave the style empty._',
     result_format: RESULT_FORMAT, input_dir: 'input', output_dir: 'output', sources_dir: path.relative(dirs.run, dirs.sources), run_dir: '.', failures: '',
     source: work.project?.source ?? '', project_dir: work.project ? agentProjectDir(brand.agent, dirs, work.project.dir) : '', project_branch: work.project?.branch ?? '',
   });
@@ -727,12 +728,16 @@ async function upload(c: Ctx): Promise<boolean> {
     if (isSlot(item)) {
       const spec = work.piece!;
       const d = data(item);
+      // The variant's style is one of the brand's (spelled as the brand spells it), or none: an invented one is dropped.
+      const styles = (await studio.requirements(work.brandId).catch(() => null))?.variant_styles ?? [];
+      const style = styles.find((s) => s.toLocaleLowerCase() === spec.style.trim().toLocaleLowerCase()) ?? '';
+      if (spec.style.trim() && !style) c.log.warn({ run: item.runId, style: spec.style }, 'the agent chose a style the brand does not have: the variant gets none');
       // Made for this slot: the studio schedules it there once people approve it (unless they untick it).
       work.pieceId ??= (await studio.createPiece(work.brandId, {
         title: spec.title, kind: spec.kind, brief: spec.brief, targetDate: d.slot.day, campaignId: spec.campaignId ?? d.campaigns?.[0]?.id ?? null, aiGenerated: true,
         slot: { id: d.slot.id, at: d.slot.at },
       })).id;
-      work.variantId ??= (await studio.addVariant(work.pieceId, { format: spec.format, style: spec.style })).id;
+      work.variantId ??= (await studio.addVariant(work.pieceId, { format: spec.format, style })).id;
       deps.queue.save(item);
       variantId = work.variantId;
     } else {

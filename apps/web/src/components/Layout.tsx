@@ -8,7 +8,9 @@ import { useSession } from '../lib/session';
 import { Avatar, displayName } from './Avatar';
 import { PaletteProvider, usePalette } from './CommandPalette';
 import { Icon, type IconName } from './icons';
+import { LogoMark } from './Logo';
 import { Dialog, ErrorBox, Field, Menu, MenuItem, MenuLabel, MenuSeparator, Popover, Select, Tip, useToast, errorMessage } from './ui';
+import '../styles/features.css';
 
 export interface Campaign {
   id: string;
@@ -269,6 +271,13 @@ function Sidebar() {
             {b.name}
           </MenuItem>
         ))}
+        {/* Brands this person was deactivated in: listed apart, and closed to them. */}
+        {(me.deactivated_in?.length ?? 0) > 0 && <MenuLabel>{t('deactivated.switcher')}</MenuLabel>}
+        {(me.deactivated_in ?? []).map((b) => (
+          <MenuItem key={b.id} disabled lead={<span className="brand-mark brand-mark-sm" aria-hidden="true">{b.name.slice(0, 1).toUpperCase()}</span>} onSelect={() => {}}>
+            {b.name}
+          </MenuItem>
+        ))}
         {can('manage') && (
           <>
             <MenuSeparator />
@@ -321,7 +330,7 @@ function Sidebar() {
 }
 
 function Shell() {
-  const { brand, can } = useSession();
+  const { brand, can, deactivatedBrand } = useSession();
   const location = useLocation();
   const palette = usePalette();
   const [menu, setMenu] = useState(false);
@@ -335,7 +344,7 @@ function Shell() {
     <div className={`shell ${menu ? 'menu-open' : ''}`}>
       <nav className="rail" aria-label={t('layout.nav.main')}>
         <NavLink to="/" className="rail-logo" aria-label={t('layout.home')}>
-          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1.5v9l7-4.5z" fill="#fff" /></svg>
+          <LogoMark size={26} />
         </NavLink>
         <RailLink to="/" end icon="home" label={t('layout.nav.home')} />
         <RailLink to="/pieces" icon="pieces" label={t('layout.nav.pieces')} />
@@ -359,6 +368,9 @@ function Shell() {
           <span className="mobilebar-brand">{brand.name}</span>
           <button className="icon-btn" onClick={palette.open} aria-label={t('layout.palette.title')}><Icon name="search" size={18} /></button>
         </header>
+        {deactivatedBrand && (
+          <div className="fx-banner" role="status"><Icon name="ban" />{t('deactivated.banner', { brand: deactivatedBrand.name })}</div>
+        )}
         {brand.paused && <div className="banner" role="status">{t('layout.paused')}</div>}
         <main className="page">
           <Outlet />

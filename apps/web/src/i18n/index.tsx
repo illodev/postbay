@@ -85,6 +85,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     setState(l);
     // What the server wrote (reasons, checks) came in the old language: ask for it again.
     queryClient.invalidateQueries();
+    // Emails, Slack and push follow the person's language too. Not signed in yet (the sign-in page): nothing to keep, and that is fine.
+    void fetch('/api/notifications/locale', {
+      method: 'PUT', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-requested-by': 'studio' }, body: JSON.stringify({ locale: l }),
+    }).catch(() => {});
   };
   return (
     <LocaleCtx.Provider value={{ locale, setLocale }}>

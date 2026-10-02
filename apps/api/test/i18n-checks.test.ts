@@ -101,6 +101,12 @@ describe('connecting', () => {
     const bluesky = list.body.providers.find((p: any) => p.id === 'bluesky');
     expect(bluesky.fields.map((f: any) => f.label)).toEqual(['Usuario', 'Contraseña de app', 'Servidor']);
     expect((await env.call(env.users.admin, 'GET', brandUrl('/integrations'))).body.providers.find((p: any) => p.id === 'meta').label).toBe('Facebook and Instagram');
+    // The placements too: the review names its safe zones with them.
+    const placement = (body: any, network: string, id: string) => body.capabilities[network].placements.find((p: any) => p.id === id).label;
+    expect(placement(list.body, 'instagram', 'feed_image')).toBe('Foto del feed');
+    expect(placement(list.body, 'tiktok', 'video')).toBe('Vídeo');
+    const english = (await env.call(env.users.admin, 'GET', brandUrl('/integrations'))).body;
+    expect(placement(english, 'instagram', 'feed_image')).toBe('Feed photo');
   });
 
   it("keeps why Meta does not push an account's comments as a code, and the account list reads it in each language", async () => {

@@ -19,6 +19,12 @@ Your working directory is this run's directory.
 - `{{sources_dir}}` is yours, kept between runs.
 - Write the files in `{{output_dir}}`.
 
+## The brand's styles
+
+A variant's `style` is one of these, written as it is here:
+
+{{styles}}
+
 ## What the networks accept
 
 {{requirements}}
@@ -36,7 +42,7 @@ You have about {{max_minutes}} minutes and about {{max_cost}} {{currency}} for t
 In addition to what follows, `result.json` must say what the piece is:
 
 ```json
-{ "piece": { "title": "…", "kind": "video", "format": "9:16", "brief": "What it is and why, in two sentences." } }
+{ "piece": { "title": "…", "kind": "video", "format": "9:16", "style": "One of the brand's styles, or empty", "brief": "What it is and why, in two sentences." } }
 ```
 
 `kind` is one of video, carousel, post, story, pdf; `format` one of 9:16, 4:5, 1:1, 16:9, carousel, document.

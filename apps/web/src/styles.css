@@ -91,8 +91,10 @@ details > summary { cursor: pointer; color: var(--muted); }
 /* ───────────────────────────── shell: icon rail + sidebar + content ───────────────────────────── */
 .shell { display: grid; grid-template-columns: var(--rail-w) var(--sidebar) minmax(0, 1fr); min-height: 100dvh; }
 .rail { position: sticky; top: 0; height: 100dvh; background: var(--rail); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 0; z-index: 30; }
-.rail-logo { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; margin-bottom: 12px; }
-.rail-logo svg { width: 12px; height: 12px; }
+.rail-logo { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; margin-bottom: 10px; }
+.rail-logo:hover { background: var(--control); }
+.rail-logo svg { display: block; }
+.logo { display: block; width: auto; color: var(--text); }
 .rail-btn { position: relative; width: 36px; height: 36px; padding: 0; border-radius: 9px; display: grid; place-items: center; color: var(--muted); background: none; border: 0; cursor: pointer; }
 .rail-btn:hover { background: var(--control); color: var(--text); text-decoration: none; }
 .rail-btn.active { background: var(--surface-3); color: var(--text); }
@@ -462,7 +464,7 @@ dialog.dialog::backdrop { background: rgb(5 6 8 / 72%); }
 .cal-slot.past { opacity: .5; }
 
 /* ───────────────────────────── auth ───────────────────────────── */
-.auth { min-height: 100dvh; display: grid; place-items: center; padding: 1rem; background: radial-gradient(60rem 40rem at 50% -10%, rgb(255 178 36 / 9%), transparent 60%), var(--bg); }
+.auth { min-height: 100dvh; display: grid; place-items: center; padding: 1rem; background: var(--bg); }
 .auth .card { width: min(420px, 100%); padding: 1.6rem; box-shadow: var(--shadow); }
 
 /* ───────────────────────────── per-network text ───────────────────────────── */

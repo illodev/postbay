@@ -52,7 +52,7 @@ export const account = define({
     'account.recovery.done': 'Ya los he guardado',
     'account.recovery.fileTitle': 'Códigos de recuperación de Postbay',
     'account.recovery.fileNote': 'Cada uno vale una vez.',
-    'account.recovery.fileName': 'codigos-de-recuperacion-estudio.txt',
+    'account.recovery.fileName': 'codigos-de-recuperacion-postbay.txt',
 
     'account.enroll.intro': 'Una app de autenticación (Google Authenticator, Microsoft Authenticator, 1Password, Authy…) te da un código de seis cifras nuevo cada 30 segundos.',
     'account.enroll.start': 'Configurar una app de autenticación',
@@ -91,7 +91,7 @@ export const account = define({
     'account.push.off': 'Desactivadas',
     'account.push.unsupportedChip': 'No disponibles',
     'account.push.onHint': 'Te llegan aunque la pestaña esté cerrada.',
-    'account.push.offHint': 'Actívalas para enterarte sin tener el estudio abierto.',
+    'account.push.offHint': 'Actívalas para enterarte sin tener Postbay abierto.',
     'account.push.unsupported': 'Este navegador no puede recibir notificaciones.',
     'account.push.devices': { one: 'Las tienes activadas en {count} navegador.', other: 'Las tienes activadas en {count} navegadores.' },
     'account.push.turnOn': 'Activar aquí',
@@ -122,7 +122,7 @@ export const account = define({
     'account.kind.agent.needs_person': 'El agente devuelve una pieza a una persona',
     'account.kind.agent.failed': 'Falla una ejecución del agente',
 
-    'account.login.title': 'Entra en el estudio',
+    'account.login.title': 'Entra en Postbay',
     'account.login.subtitle': 'Te mandamos un enlace por correo: no hay contraseña que recordar.',
     'account.login.subtitleNoEmail': 'Entra con la cuenta de tu equipo.',
     'account.login.email': 'Correo electrónico',
@@ -205,7 +205,7 @@ export const account = define({
     'account.recovery.done': 'I have saved them',
     'account.recovery.fileTitle': 'Postbay recovery codes',
     'account.recovery.fileNote': 'Each works once.',
-    'account.recovery.fileName': 'studio-recovery-codes.txt',
+    'account.recovery.fileName': 'postbay-recovery-codes.txt',
 
     'account.enroll.intro': 'An authenticator app (Google Authenticator, Microsoft Authenticator, 1Password, Authy…) gives you a new six-digit code every 30 seconds.',
     'account.enroll.start': 'Set up an authenticator',
@@ -244,7 +244,7 @@ export const account = define({
     'account.push.off': 'Off',
     'account.push.unsupportedChip': 'Not available',
     'account.push.onHint': 'They reach you even with the tab closed.',
-    'account.push.offHint': 'Turn it on to hear about things without the studio open.',
+    'account.push.offHint': 'Turn it on to hear about things without Postbay open.',
     'account.push.unsupported': 'This browser cannot receive push messages.',
     'account.push.devices': { one: 'You have push on in {count} browser.', other: 'You have push on in {count} browsers.' },
     'account.push.turnOn': 'Turn on here',
@@ -274,7 +274,7 @@ export const account = define({
     'account.kind.agent.needs_person': 'The agent hands a piece back to a person',
     'account.kind.agent.failed': 'An agent run fails',
 
-    'account.login.title': 'Sign in',
+    'account.login.title': 'Sign in to Postbay',
     'account.login.subtitle': 'We email you a link: there is no password to remember.',
     'account.login.subtitleNoEmail': "Sign in with your team's account.",
     'account.login.email': 'Email',

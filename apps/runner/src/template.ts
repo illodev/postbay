@@ -8,6 +8,8 @@ export const TEMPLATE_VARIABLES = [
   'reason', 'note', 'requested_by', 'comments', 'people_only', 'previous_files', 'requirements', 'checklist', 'failures', 'result_format',
   'input_dir', 'output_dir', 'sources_dir', 'run_dir',
   'slot', 'slot_day', 'campaigns',
+  // The styles a variant of the brand can have, as a list (a variant the agent makes uses one of them, or none).
+  'styles',
   // A piece made from a project: its `source` as the studio has it, the directory the agent works in (absolute, as the agent sees it)
   // and, in git mode, the piece's branch. Empty for a piece without a project.
   'source', 'project_dir', 'project_branch',

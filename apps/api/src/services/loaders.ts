@@ -71,6 +71,8 @@ export interface ApprovalRules {
   auto_fill_slots: boolean;
   /** When filling free slots was switched on (set by the studio): only versions approved since then are put into them. */
   auto_fill_since: string | null;
+  /** The styles a variant can have, in order (services/brand.ts). */
+  variant_styles: string[];
 }
 
 export const rulesOf = (brand: Row): ApprovalRules => ({
@@ -79,5 +81,6 @@ export const rulesOf = (brand: Row): ApprovalRules => ({
   checklist: [],
   auto_fill_slots: false,
   auto_fill_since: null,
+  variant_styles: [],
   ...(brand.approval_rules as Partial<ApprovalRules>),
 });

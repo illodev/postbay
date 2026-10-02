@@ -103,7 +103,7 @@ switch (mode) {
     write({
       notes: 'A first cut for the empty slot',
       comments: [],
-      piece: { title: 'Slot filler: the spring menu', kind: 'video', format: '9:16', brief: 'Show the spring menu in five seconds.' },
+      piece: { title: 'Slot filler: the spring menu', kind: 'video', format: '9:16', brief: 'Show the spring menu in five seconds.', style: process.env.FAKE_STYLE ?? '' },
     });
     break;
   }
