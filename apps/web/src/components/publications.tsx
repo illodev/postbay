@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type FormEvent } from 'react';
-import { api, type Account, type Attempt, type Capabilities, type Integrations, type Issue, type Plan, type PublicationRow, type VersionDetail } from '../api';
+import { api, type Account, type AccountOptionsReply, type Attempt, type Capabilities, type Integrations, type Issue, type Plan, type PublicationRow, type VersionDetail } from '../api';
 import { countHashtags, countLength, countMentions, truncatePreview } from '../lib/text';
 import { ERROR_CLASS_LABEL, fmtBytes, fmtDateTime, isoToZonedInput, NETWORK_LABEL, STEP_LABEL, VISIBILITY_LABEL, zonedToIso } from '../lib/format';
 import { Chip, CopyButton, Dialog, ErrorBox, Field } from './ui';
@@ -106,11 +106,20 @@ export function ScheduleDialog({ version, brandId, zone, onClose }: { version: V
   const account = options.find((a) => a.id === chosen);
   const caps = account ? integ?.capabilities[account.network] : undefined;
   const mode = byHand ? 'manual' : undefined;
+  // The settings for this account, asked when the account is chosen: TikTok has to be asked, as the post is written, what this
+  // creator may do, and only that is offered.
+  const accountOpts = useQuery({
+    queryKey: ['account-options', brandId, chosen],
+    enabled: !!account?.automated && !byHand,
+    staleTime: 0,
+    queryFn: () => api.get<AccountOptionsReply>(`/api/brands/${brandId}/accounts/${chosen}/options`),
+  });
+  const fields = account?.automated && !byHand ? accountOpts.data?.fields : undefined;
   // What the network asks for, with its defaults under whatever the person has changed. Only what is showing is sent.
-  const values: OptionValues = { ...defaultValues(caps?.options), ...typed };
+  const values: OptionValues = { ...defaultValues(fields), ...typed };
 
   // The server decides how it would go out and what would stop it. Asked again a moment after typing stops.
-  const probe = useDebounced({ chosen, text, firstComment, placement, mode, when, options: sendableOptions(caps?.options, placement || undefined, values) }, 350);
+  const probe = useDebounced({ chosen, text, firstComment, placement, mode, when, options: sendableOptions(fields, placement || undefined, values) }, 350);
   const plan = useQuery({
     queryKey: ['plan', version.id, probe],
     enabled: !!probe.chosen,
@@ -130,7 +139,7 @@ export function ScheduleDialog({ version, brandId, zone, onClose }: { version: V
   const create = useMutation({
     mutationFn: () => api.post(`/api/versions/${version.id}/publications`, {
       accountId: chosen, scheduledAt: zonedToIso(when, zone), text, firstComment, placement: placement || undefined, mode,
-      options: sendableOptions(caps?.options, p?.placement ?? (placement || undefined), values),
+      options: sendableOptions(fields, p?.placement ?? (placement || undefined), values),
     }),
     onSuccess: () => {
       invalidate();
@@ -196,8 +205,10 @@ export function ScheduleDialog({ version, brandId, zone, onClose }: { version: V
         )}
 
         <NetworkText caps={caps} label="Text" hint="The caption or description for this account." value={text} onChange={setText} />
+        {account && !byHand && accountOpts.isLoading && <p className="muted small" style={{ margin: 0 }}>Asking {NETWORK_LABEL[account.network] ?? account.network} what this account can post…</p>}
+        {account && !byHand && accountOpts.error && <ErrorBox error={accountOpts.error} />}
         {account && !byHand && (
-          <NetworkOptions network={account.network} fields={caps?.options} placement={p?.placement ?? (placement || undefined)} values={values} onChange={(k, v) => setTyped((t) => ({ ...t, [k]: v }))} />
+          <NetworkOptions network={account.network} fields={fields} placement={p?.placement ?? (placement || undefined)} values={values} onChange={(k, v) => setTyped((t) => ({ ...t, [k]: v }))} />
         )}
         {canComment && (
           <div className="stack" style={{ gap: '.35rem' }}>

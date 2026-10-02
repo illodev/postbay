@@ -33,6 +33,8 @@ export class FakeGoogle {
   grantedScope = 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly';
   /** When set, every video reports being rejected for this reason. */
   rejection: string | null = null;
+  /** How long after its publishAt YouTube actually makes a scheduled video public: it is not at the second. */
+  publishDelayMs = 0;
   accessTokens = new Set<string>();
   refreshTokens = new Set<string>(['refresh-1']);
   videos = new Map<string, VideoRecord>();
@@ -113,6 +115,18 @@ export class FakeGoogle {
     }
     if (path === '/upload/youtube/v3/videos' && req.method === 'POST' && req.query.uploadType === 'resumable') {
       const body = req.body as { snippet: any; status: any };
+      // The Data API's own rules for the text: no < or > in either, a title of up to 100 characters, a description of up to 5,000 bytes.
+      const title = String(body.snippet?.title ?? '');
+      const description = String(body.snippet?.description ?? '');
+      if (!title.trim() || title.length > 100 || /[<>]/.test(title)) {
+        return reply.code(400).send({ error: { code: 400, message: 'The request metadata specifies an invalid or empty video title.', errors: [{ reason: 'invalidTitle', domain: 'youtube.video' }] } });
+      }
+      if (/[<>]/.test(description) || Buffer.byteLength(description, 'utf8') > 5000) {
+        return reply.code(400).send({ error: { code: 400, message: 'The request metadata specifies an invalid video description.', errors: [{ reason: 'invalidDescription', domain: 'youtube.video' }] } });
+      }
+      if (body.status?.publishAt && body.status?.privacyStatus !== 'private') {
+        return reply.code(400).send({ error: { code: 400, message: 'A video can be scheduled only while it is private.', errors: [{ reason: 'invalidPublishAt', domain: 'youtube.video' }] } });
+      }
       const id = `sess-${++this.seq}`;
       this.sessions.set(id, { size: Number(req.headers['x-upload-content-length']), received: 0, chunks: [], meta: body, contentType: String(req.headers['x-upload-content-type']) });
       reply.header('location', `${this.url}/upload/session/${id}`);
@@ -168,7 +182,7 @@ export class FakeGoogle {
     const s: Record<string, any> = { ...v.status, uploadStatus: v.uploaded ? 'processed' : 'uploaded' };
     // Not audited: always private. Audited: private until publishAt, then public.
     if (!this.audited) return { ...s, privacyStatus: 'private' };
-    if (s.publishAt && new Date(s.publishAt).getTime() <= this.now()) return { ...s, privacyStatus: 'public', publishAt: undefined };
+    if (s.publishAt && new Date(s.publishAt).getTime() + this.publishDelayMs <= this.now()) return { ...s, privacyStatus: 'public', publishAt: undefined };
     return s;
   }
 

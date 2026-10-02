@@ -22,6 +22,8 @@ beforeEach(async () => {
   env.meta.insightsPermission = true;
   env.meta.igInsights = { views: 2000, reach: 1500, likes: 120, comments: 14, saved: 30, shares: 22, replies: 5, navigation: 40, ig_reels_avg_watch_time: 6500 };
   env.google.audited = false;
+  // The account's flag goes with Google's: a channel said to be audited is given time to go public after its hour.
+  await env.db.query(`update social_account set provider_data = provider_data || '{"audited":false}' where id = $1`, [yt]);
 });
 
 const MIN = 60_000;

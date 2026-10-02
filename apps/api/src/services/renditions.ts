@@ -31,20 +31,30 @@ export function probeMeta(p: ProbeResult): Record<string, unknown> {
     audioCodec: p.audioCodec ?? null,
     pixFmt: p.pixFmt ?? null,
     mp4: p.mp4 ?? null,
+    container: p.container ?? null,
+    faststart: p.faststart ?? null,
+    mpo: p.mpo ?? null,
     videoKbps: p.videoKbps ?? null,
     hasAudio: p.hasAudio ?? null,
   };
 }
 
+const CONTAINER_NAME: Record<string, string> = { mov: 'QuickTime (MOV)', matroska: 'Matroska/WebM', unknown: 'not one this app can read' };
+
 /** Everything about an original that makes it unfit for a video profile. Empty means it goes out as it is. */
 export function videoMismatches(p: ProbeResult, bytes: number, profile: VideoProfile): string[] {
   const out: string[] = [];
-  if (!p.mp4) out.push('the container is not MP4');
+  // The real container, from the file's first bytes: ffprobe calls an MP4 and a MOV by the same family name.
+  if (p.container !== undefined && p.container !== null ? p.container !== 'mp4' : !p.mp4) {
+    out.push(`the container is ${p.container && CONTAINER_NAME[p.container] ? `${CONTAINER_NAME[p.container]}, ` : ''}not MP4`);
+  }
+  if (profile.faststart && p.faststart === false) out.push('its index (the moov atom) is at the end of the file, not at the front');
   if (p.videoCodec !== profile.videoCodec) out.push(`the video codec is ${p.videoCodec ?? 'unknown'}, not H.264`);
   if (p.audioCodec && p.audioCodec !== profile.audioCodec) out.push(`the audio codec is ${p.audioCodec}, not AAC`);
   if (p.pixFmt !== profile.pixFmt) out.push(`the pixel format is ${p.pixFmt ?? 'unknown'}, not ${profile.pixFmt}`);
   if ((p.width ?? 0) > profile.maxWidth || (p.height ?? 0) > profile.maxHeight) out.push(`it is larger than ${profile.maxWidth}×${profile.maxHeight}`);
   if ((p.fps ?? 0) > profile.maxFps) out.push(`it runs above ${profile.maxFps} fps`);
+  if (profile.minFps && p.fps && p.fps < profile.minFps - 0.01) out.push(`it runs below ${profile.minFps} fps`);
   if ((p.videoKbps ?? 0) > profile.maxVideoKbps) out.push(`its bitrate is above ${profile.maxVideoKbps} kbps`);
   if (bytes > profile.maxBytes) out.push('it is larger than the size limit');
   return out;
@@ -52,7 +62,10 @@ export function videoMismatches(p: ProbeResult, bytes: number, profile: VideoPro
 
 export function imageMismatches(p: ProbeResult, mime: string, bytes: number, profile: ImageProfile): string[] {
   const out: string[] = [];
-  if (mime !== 'image/jpeg') out.push('it is not a JPEG');
+  // What the file is, not what it was declared as: a PNG named .jpg is not a JPEG, and an MPO (two pictures in one file) is refused.
+  const container = p.container ?? (mime === 'image/jpeg' ? 'jpeg' : 'other');
+  if (container !== 'jpeg') out.push('it is not a JPEG');
+  else if (p.mpo) out.push('it is a Multi-Picture Object (MPO), not a plain JPEG');
   if ((p.width ?? 0) > profile.maxWidth) out.push(`it is wider than ${profile.maxWidth} px`);
   if (bytes > profile.maxBytes) out.push('it is larger than the size limit');
   return out;
@@ -64,6 +77,8 @@ function probeOf(asset: Row): ProbeResult {
     width: asset.width, height: asset.height, durationMs: asset.duration_ms, fps: asset.fps === null ? null : Number(asset.fps),
     videoCodec: m.videoCodec ?? null, audioCodec: m.audioCodec ?? null, pixFmt: m.pixFmt ?? null,
     mp4: m.mp4 ?? undefined, videoKbps: m.videoKbps ?? null, hasAudio: m.hasAudio ?? undefined,
+    // Rows measured before these were kept lack them, and are measured again.
+    container: m.container ?? undefined, faststart: m.faststart === undefined ? undefined : m.faststart, mpo: m.mpo ?? undefined,
   };
 }
 
@@ -85,12 +100,16 @@ export async function fileFor(ctx: Ctx, brandId: string, asset: Row, profile: Fi
 
   let probe = probeOf(asset);
   const source = await mediaSource(ctx, asset.storage_key);
-  const needsFullProbe = profile.kind === 'video' ? probe.videoCodec === null || probe.mp4 === undefined : probe.width === null;
+  const needsFullProbe = profile.kind === 'video'
+    ? probe.videoCodec === null || probe.container === undefined || (profile.faststart && probe.faststart === undefined)
+    : probe.width === null || probe.container === undefined;
   if (needsFullProbe) probe = { ...probe, ...(await ctx.media.probe(source)) };
 
   const reasons = profile.kind === 'video' ? videoMismatches(probe, asset.bytes, profile) : imageMismatches(probe, asset.mime, asset.bytes, profile);
   if (reasons.length === 0) {
-    return { key: asset.storage_key, mime: asset.mime, bytes: asset.bytes, sha256: asset.sha256, width: asset.width, height: asset.height, durationMs: asset.duration_ms, transcoded: false, reasons: [] };
+    // It goes out as it is, under the type it really is (an MP4 someone declared as video/quicktime is still an MP4).
+    const mime = probe.container === 'mp4' ? 'video/mp4' : probe.container === 'jpeg' ? 'image/jpeg' : asset.mime;
+    return { key: asset.storage_key, mime, bytes: asset.bytes, sha256: asset.sha256, width: asset.width, height: asset.height, durationMs: asset.duration_ms, transcoded: false, reasons: [] };
   }
 
   const ext = profile.kind === 'video' ? 'mp4' : 'jpg';

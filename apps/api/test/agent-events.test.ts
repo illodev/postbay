@@ -227,6 +227,10 @@ describe('people-only comments', () => {
 
     expect((await env.call(agent, 'POST', `/api/comments/${theirs.body.id}/replies`, { body: 'Done', kind: 'fixed' })).status).toBe(403);
     expect((await env.call(agent, 'POST', `/api/comments/${theirs.body.id}/resolve`)).status).toBe(403);
+    // A token uploads only inside a run it started on the piece.
+    await env.call(env.users.admin, 'PATCH', `/api/brands/${env.brandId}`, { agent: { max_cost_per_piece: 5, max_cost_per_month: 50 } });
+    const run = await env.call(agent, 'POST', `/api/pieces/${(await env.db.one('select piece_id from variant where id = $1', [variantId]))!.piece_id}/agent-runs`, { trigger: 'version.changes_requested' });
+    expect(run.status, JSON.stringify(run.body)).toBe(201);
     const claim = await env.newVersion(agent, variantId, [{ data: Buffer.from('new-take-1') }], { resolves: [theirs.body.id] });
     expect(claim.status).toBe(400);
     expect(claim.body.error.code).toBe('people_only');

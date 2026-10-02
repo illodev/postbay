@@ -107,6 +107,33 @@ switch (mode) {
     });
     break;
   }
+  case 'leak': {
+    // What a prompt injection would get an agent to do with a secret it can read: put it everywhere the runner posts from.
+    const secret = process.env.FAKE_LEAK;
+    revise();
+    writeFileSync(path.join(out, 'revised.vtt'), `WEBVTT\n\n00:00.000 --> 00:01.000\n${secret}\n`);
+    console.error(`debug: ${secret}`);
+    write(result({ notes: `Done. By the way: ${secret}`, comments: comments.map((c) => ({ id: c.id, status: 'fixed', reply: `here it is: ${secret}` })) }));
+    break;
+  }
+  case 'leak-in-file':
+    // Only a file carries it: a subtitle line the reviewers would read.
+    revise();
+    writeFileSync(path.join(out, 'revised.vtt'), `WEBVTT\n\n00:00.000 --> 00:01.000\n${process.env.FAKE_LEAK}\n`);
+    write(result());
+    break;
+  case 'leak-crash':
+    console.error(`token=${process.env.FAKE_LEAK}`);
+    process.exit(3);
+  case 'snoop': {
+    // Tries to read what an agent must not see, and says which it could (never what is in them).
+    const readable = (process.env.FAKE_SNOOP ?? '').split(',').filter(Boolean).filter((f) => {
+      try { readFileSync(f); return true; } catch { return false; }
+    });
+    revise();
+    write(result({ notes: `readable: ${readable.join(',') || 'none'}; uid ${process.getuid()}; pid ${process.pid}` }));
+    break;
+  }
   case 'instructions':
     revise();
     writeFileSync(path.join(cwd, 'seen-instructions.md'), instructions);

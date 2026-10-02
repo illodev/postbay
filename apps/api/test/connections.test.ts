@@ -199,6 +199,64 @@ describe('connecting YouTube', () => {
     const list = await env.call(env.users.reader, 'GET', brandUrl('/accounts'));
     expect(list.body.find((a: any) => a.id === id).details.audited).toBe(true);
   });
+
+  it("keeps a YouTube channel's made-for-kids default, which each video's declaration starts from", async () => {
+    const id = (await env.db.one(`select id from social_account where network = 'youtube' and external_id = 'UC-lumen' and token_encrypted is not null`))!.id;
+    expect((await env.call(env.users.admin, 'PATCH', brandUrl(`/accounts/${env.accounts.instagram}`), { madeForKids: false })).status).toBe(400);
+    expect((await env.call(env.users.admin, 'PATCH', brandUrl(`/accounts/${id}`), { madeForKids: false })).status).toBe(200);
+    expect((await accountRow(id)).provider_data.madeForKids).toBe(false);
+    const field = (await env.call(env.users.admin, 'GET', brandUrl(`/accounts/${id}/options`))).body.fields.find((f: any) => f.key === 'madeForKids');
+    expect(field).toMatchObject({ type: 'select', required: true, default: 'no' });
+    expect((await env.call(env.users.admin, 'PATCH', brandUrl(`/accounts/${id}`), { madeForKids: null })).status).toBe(200);
+    expect((await accountRow(id)).provider_data).not.toHaveProperty('madeForKids');
+  });
+});
+
+describe("Meta's webhooks: the app subscribed to the Page's events", () => {
+  it('subscribes when an account is connected with the permission, keeps both accounts\' fields, says so in the check, and unsubscribes on disconnect', async () => {
+    env.meta.pages = [{ id: '777', name: 'Webhook Page', token: 'page-token-777', ig: { id: '888', username: 'webhook.page' } }];
+    const scopes = env.meta.grantedScopes;
+    env.meta.grantedScopes = [...scopes, 'pages_manage_metadata', 'pages_messaging', 'instagram_manage_messages'];
+    try {
+      const s = await signIn('meta');
+      const chosen = await env.call(env.users.admin, 'POST', brandUrl(`/connections/${pendingId(s.location)}/select`), { keys: ['facebook:777', 'instagram:888'] });
+      expect(chosen.status, JSON.stringify(chosen.body)).toBe(200);
+      const idOf = (n: string): string => chosen.body.find((a: any) => a.network === n).id;
+      const fbId = idOf('facebook');
+      const igId = idOf('instagram');
+      // One Page, two accounts: the Page's feed for Facebook, comments for Instagram, neither undoing the other.
+      expect(env.meta.subscriptions.get('777')).toEqual([{ id: 'app', name: 'Estudio', subscribed_fields: ['feed', 'comments'] }]);
+      expect((await accountRow(fbId)).provider_data.events).toMatchObject({ subscribed: true, fields: ['feed'] });
+      expect((await accountRow(igId)).provider_data.events).toMatchObject({ subscribed: true, fields: ['feed', 'comments'] });
+
+      // The account check says whether Meta pushes the comments.
+      const check = await env.call(env.users.admin, 'POST', brandUrl(`/accounts/${igId}/check`));
+      expect(check.body.results.find((r: any) => r.id === 'health').detail).toContain('subscribed to the Page\'s "comments" events');
+
+      // Disconnecting Instagram keeps the Page's feed for Facebook; disconnecting Facebook too takes the app off the Page.
+      expect((await env.call(env.users.admin, 'POST', brandUrl(`/accounts/${igId}/disconnect`))).status).toBe(200);
+      expect(env.meta.subscriptions.get('777')).toEqual([{ id: 'app', name: 'Estudio', subscribed_fields: ['feed'] }]);
+      expect((await env.call(env.users.admin, 'POST', brandUrl(`/accounts/${fbId}/disconnect`))).status).toBe(200);
+      expect(env.meta.subscriptions.get('777')).toEqual([]);
+    } finally {
+      env.meta.grantedScopes = scopes;
+      env.meta.pages = [{ id: '111', name: 'Lumen Coffee', token: 'page-token-111', ig: { id: '222', username: 'lumen.coffee' } }];
+    }
+  });
+
+  it('does not ask without the permission (prizes off), says so, and the check reports comments are read instead', async () => {
+    env.meta.pages = [{ id: '779', name: 'Quiet Page', token: 'page-token-779' }];
+    try {
+      const s = await signIn('meta');
+      const id = (await env.call(env.users.admin, 'POST', brandUrl(`/connections/${pendingId(s.location)}/select`), { keys: ['facebook:779'] })).body[0].id as string;
+      expect(env.meta.callsTo(/^779\/subscribed_apps$/, 'POST')).toHaveLength(0);
+      expect((await accountRow(id)).provider_data.events).toMatchObject({ subscribed: false, note: expect.stringContaining('pages_manage_metadata') });
+      const check = await env.call(env.users.admin, 'POST', brandUrl(`/accounts/${id}/check`));
+      expect(check.body.results.find((r: any) => r.id === 'health')).toMatchObject({ status: 'pass', detail: expect.stringContaining('pages_manage_metadata') });
+    } finally {
+      env.meta.pages = [{ id: '111', name: 'Lumen Coffee', token: 'page-token-111', ig: { id: '222', username: 'lumen.coffee' } }];
+    }
+  });
 });
 
 describe('disconnecting', () => {

@@ -134,6 +134,31 @@ describe('connecting Threads, X, LinkedIn, Pinterest and TikTok', () => {
     expect(ig.body.error.message).toContain('YouTube, TikTok and Pinterest');
   });
 
+  it('TikTok: asks TikTok what the account may do while a post is written, keeps it, and schedules against it', async () => {
+    const s = await signIn('tiktok');
+    const id = (await choose(s.pendingId, ['tiktok:open-1'])).body[0].id as string;
+    tiktok.privacyOptions = ['SELF_ONLY', 'FOLLOWER_OF_CREATOR'];
+    tiktok.creator = { commentDisabled: true, duetDisabled: false, stitchDisabled: false };
+    // Whoever may schedule may ask; a reader may not.
+    expect((await env.call(env.users.reader, 'GET', brandUrl(`/accounts/${id}/options`))).status).toBe(403);
+    const before = tiktok.callsTo('/v2/post/publish/creator_info/query/').length;
+    const r = await env.call(env.users.approver, 'GET', brandUrl(`/accounts/${id}/options`));
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.live).toBe(true);
+    expect(tiktok.callsTo('/v2/post/publish/creator_info/query/').length).toBe(before + 1);
+    const privacy = r.body.fields.find((f: any) => f.key === 'privacy');
+    expect(privacy.choices.map((c: any) => c.value)).toEqual(['SELF_ONLY']); // not audited: only "Only me"
+    expect(r.body.fields.find((f: any) => f.key === 'allowComment').disabled).toBe(true);
+    expect((await row(id)).provider_data.creatorInfo).toMatchObject({ privacyLevelOptions: ['SELF_ONLY', 'FOLLOWER_OF_CREATOR'], commentDisabled: true });
+    // An account TikTok has stopped answering for is reported as such, not as a broken page.
+    tiktok.fail((c) => c.path === '/v2/post/publish/creator_info/query/', { data: {}, error: { code: 'spam_risk_too_many_posts', message: 'Daily post limit reached' } }, 429);
+    const refused = await env.call(env.users.approver, 'GET', brandUrl(`/accounts/${id}/options`));
+    expect(refused.status).toBe(502);
+    expect(refused.body.error.message).toContain('Daily post limit reached');
+    tiktok.privacyOptions = ['SELF_ONLY', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'PUBLIC_TO_EVERYONE'];
+    tiktok.creator = { commentDisabled: false, duetDisabled: false, stitchDisabled: false };
+  });
+
   it('a refused code is reported on the settings page, with the network\'s reason', async () => {
     const s = await signIn('threads', 'bad');
     expect(s.pendingId).toBeNull();

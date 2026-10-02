@@ -21,7 +21,12 @@ export function classifyPinterest(r: Reply): ConnectorError | null {
   if (r.status === 401 || body.error === 'invalid_grant' || body.error === 'invalid_client') {
     return new ConnectorError('auth', `${message} (Pinterest no longer accepts this connection)`, opts);
   }
-  if (r.status === 403) return new ConnectorError('auth', `${message} (Pinterest says this app or account is not allowed to do that)`, opts);
+  // A token Pinterest no longer takes comes as 401 (code 2, "Authentication failed"). A 403 is about permission: the board is not
+  // this account's to pin to, or the app's access (Trial) does not allow the call. Connecting again does not change either.
+  if (r.status === 403) {
+    if (/token|authenticat|expired|revoked/i.test(message)) return new ConnectorError('auth', `${message} (Pinterest no longer accepts this connection)`, opts);
+    return new ConnectorError('unsupported', `Pinterest refused it for lack of a permission (${message}): the board may not be this account's to pin to, or the app's access level may not allow it. Connecting again will not change that.`, opts);
+  }
   if (r.status >= 500) return new ConnectorError('transient', message, opts);
   if (r.status === 400 || r.status === 404 || r.status === 409 || r.status === 413 || r.status === 422) return new ConnectorError('file_rejected', message, opts);
   return new ConnectorError('unknown', message, opts);

@@ -10,7 +10,7 @@ import { openCommentCount } from './comments.js';
 import { loadBrand, loadVersion, rulesOf } from './loaders.js';
 import { notifyUsers } from './notify.js';
 import { refreshPieceState } from './pieces.js';
-import { recomputeFingerprint } from './versions.js';
+import { recomputeFingerprint, storedFilesMatch, uploaderOf } from './versions.js';
 
 export const decisionInput = z.object({
   decision: z.enum(['approve', 'reject']),
@@ -102,7 +102,8 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
       throw forbidden('You cannot approve a version you uploaded yourself');
     }
     const fingerprint = await recomputeFingerprint(db, versionId);
-    if (fingerprint !== version.fingerprint) {
+    // Both the file records and the stored objects themselves: a file replaced in storage stops counting too.
+    if (fingerprint !== version.fingerprint || (input.decision === 'approve' && !(await storedFilesMatch(ctx, versionId, db)))) {
       ctx.log.error({ versionId }, 'stored files no longer match the version fingerprint');
       throw conflict('fingerprint_mismatch', 'The stored files do not match the version fingerprint; nothing can be approved');
     }
@@ -127,10 +128,13 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
       if (accounts.some((x) => x.status === 'reconnect_required')) throw badRequest('invalid_accounts', 'An account needs to be reconnected first');
     }
 
+    // What goes to a network besides the files is approved with them: the title and the AI label as the approver saw them.
+    const piece = (await db.one<{ title: string; ai_generated: boolean }>('select title, ai_generated from piece where id = $1', [version.piece_id]))!;
     await db.query(
-      `insert into approval (version_id, approver_user_id, decision, account_ids, approved_fingerprint, checklist, note)
-       values ($1,$2,$3,$4,$5,$6,$7)`,
-      [versionId, p.userId, input.decision, input.decision === 'approve' ? input.accountIds : [], fingerprint, JSON.stringify(input.checklist), input.note],
+      `insert into approval (version_id, approver_user_id, decision, account_ids, approved_fingerprint, checklist, note, piece_title, ai_generated)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [versionId, p.userId, input.decision, input.decision === 'approve' ? input.accountIds : [], fingerprint, JSON.stringify(input.checklist), input.note,
+        piece.title, piece.ai_generated],
     );
 
     let state = 'in_review';
@@ -152,8 +156,10 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
       }
     }
     await refreshPieceState(db, version.piece_id);
+    // Who uploaded what was decided on, a person or a token (and who made that token), is part of the record of the decision.
     await audit(db, p, version.brand_id, `version.${input.decision === 'approve' ? 'approved' : 'rejected'}`, 'version', versionId,
-      { review_state: 'in_review' }, { review_state: state, fingerprint, accounts: input.accountIds, note: input.note });
+      { review_state: 'in_review' },
+      { review_state: state, fingerprint, accounts: input.accountIds, note: input.note, uploaded_by: await uploaderOf(db, versionId), title: piece.title, ai_generated: piece.ai_generated });
     if (state !== 'in_review') await notifyAuthor(db, version, state === 'approved' ? 'version.approved' : 'version.changes_requested', p.userId);
     if (input.decision === 'reject') {
       await emit(ctx, db, version.brand_id, 'version.rejected', {
@@ -178,8 +184,18 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
  * the version is in the approved state, the files still hash to the approved fingerprint, and enough distinct
  * approvers approved exactly that fingerprint.
  */
-export async function effectiveApproval(db: Queryable, versionId: string): Promise<{ approved: boolean; accountIds: string[]; fingerprint: string | null }> {
-  const none = { approved: false, accountIds: [] as string[], fingerprint: null };
+export interface EffectiveApproval {
+  approved: boolean;
+  accountIds: string[];
+  fingerprint: string | null;
+  /** The title the approvers saw (the latest of them), or null for approvals older than the record of it. */
+  title: string | null;
+  /** Whether any approver saw the piece marked as made with AI. */
+  aiGenerated: boolean;
+}
+
+export async function effectiveApproval(db: Queryable, versionId: string): Promise<EffectiveApproval> {
+  const none = { approved: false, accountIds: [] as string[], fingerprint: null, title: null, aiGenerated: false };
   const version = await db.one<{ fingerprint: string; review_state: string; brand_id: string }>(
     `select ver.fingerprint, ver.review_state, p.brand_id from version ver
      join variant v on v.id = ver.variant_id join piece p on p.id = v.piece_id where ver.id = $1`,
@@ -188,11 +204,15 @@ export async function effectiveApproval(db: Queryable, versionId: string): Promi
   if (!version || version.review_state !== 'approved') return none;
   if ((await recomputeFingerprint(db, versionId)) !== version.fingerprint) return none;
   const rules = rulesOf(await loadBrand(db, version.brand_id));
-  const rows = await db.query<{ account_ids: string[] }>(
-    `select account_ids from approval where version_id = $1 and decision = 'approve' and approved_fingerprint = $2`,
+  const rows = await db.query<{ account_ids: string[]; piece_title: string | null; ai_generated: boolean | null }>(
+    `select account_ids, piece_title, ai_generated from approval where version_id = $1 and decision = 'approve' and approved_fingerprint = $2 order by created_at, id`,
     [versionId, version.fingerprint],
   );
   if (rows.length === 0 || rows.length < rules.required_approvals) return none;
   const common = rows.map((r) => r.account_ids).reduce((acc, ids) => acc.filter((x) => ids.includes(x)));
-  return { approved: common.length > 0, accountIds: common, fingerprint: version.fingerprint };
+  const titled = rows.filter((r) => r.piece_title !== null);
+  return {
+    approved: common.length > 0, accountIds: common, fingerprint: version.fingerprint,
+    title: titled.length ? titled[titled.length - 1]!.piece_title : null, aiGenerated: rows.some((r) => r.ai_generated === true),
+  };
 }

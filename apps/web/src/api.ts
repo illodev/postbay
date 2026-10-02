@@ -174,6 +174,8 @@ export interface VersionDetail {
   author: string | null;
   author_user_id: string | null;
   by_agent: boolean;
+  /** A person, or a producer token and the person who made it (who is not, for approval, its author). */
+  uploaded_by?: { kind: 'user'; id: string; name: string | null } | { kind: 'token'; id: string; name: string; created_by: { id: string; name: string | null } } | null;
   variant: { id: string; format: string; style: string; piece_id: string };
   piece: { id: string; title: string; kind: string; brief: string; ai_generated: boolean; review_state: PieceState };
   brand: { name: string; timezone: string; approval_rules: BrandSettings['rules']; paused: boolean };
@@ -252,16 +254,29 @@ export interface Capabilities {
 export interface OptionField {
   key: string;
   label: string;
-  type: 'text' | 'url' | 'select' | 'checkbox';
+  /** 'info' is a line to read (who the post goes out as, how long processing takes), with nothing to fill in. */
+  type: 'text' | 'url' | 'select' | 'checkbox' | 'info';
   required?: boolean;
   help?: string;
   maxLength?: number;
-  choices?: { value: string; label: string }[];
+  /** `disabledWhen`: the choice cannot be picked while that checkbox is ticked. */
+  choices?: { value: string; label: string; disabledWhen?: string }[];
   default?: string | boolean;
   placements?: string[];
   showWhen?: string;
+  /** Hidden while this other checkbox is ticked. */
+  hideWhen?: string;
+  /** Shown, but the network has switched it off for this account: it cannot be changed. */
+  disabled?: boolean;
   /** Text the network obliges the app to show next to the field, word for word. */
   notice?: string;
+}
+
+/** The settings to ask for when writing a post for one account (TikTok's are asked of TikTok at that moment). */
+export interface AccountOptionsReply {
+  fields: OptionField[];
+  /** True when the network was asked just now. */
+  live: boolean;
 }
 
 export interface CredentialField {

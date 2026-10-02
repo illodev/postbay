@@ -10,8 +10,9 @@ import { effectiveApproval } from './approvals.js';
 import { emitPublication } from './events.js';
 import { loadBrand, loadVersion, rulesOf } from './loaders.js';
 import { notifyRoles } from './notify.js';
-import { planPublication, type Plan } from './publisher.js';
+import { planPublication, wakeDependents, type Plan } from './publisher.js';
 import { loadVariant } from './loaders.js';
+import { storedFilesMatch } from './versions.js';
 
 const iso = z.iso.datetime({ offset: true });
 
@@ -34,6 +35,8 @@ export const patchInput = z.object({
   scheduledAt: iso.optional(),
   text: z.string().max(10_000).optional(),
   firstComment: z.string().max(5000).optional(),
+  /** The title that goes out with it (YouTube, LinkedIn, Pinterest, TikTok). Unset: the one the version was approved with. */
+  title: z.string().trim().min(1).max(200).optional(),
 });
 
 export const rescheduleInput = z.object({
@@ -85,6 +88,41 @@ async function assertSchedulable(db: Queryable, brand: Row, when: Date, now: Dat
 
 const isUniqueViolation = (err: unknown) => (err as { code?: string }).code === '23505';
 
+/**
+ * Takes the variant's lock for the rest of the transaction, the one closing a new version takes for update. A publication put on the
+ * calendar here and a new version closed at the same moment then happen one after the other: either the new version sees this
+ * publication and holds it, or this sees the version superseded and refuses.
+ */
+async function lockVariant(db: Queryable, variantId: string) {
+  await db.query('select 1 from variant where id = $1 for share', [variantId]);
+}
+
+/**
+ * Keeps an order between publications right: not before the one it depends on, and not after one that depends on it (unless that
+ * one is out already or no longer going out).
+ */
+async function assertOrder(db: Queryable, brandId: string, when: Date, dependsOn: string | null, selfId: string | null) {
+  if (dependsOn) {
+    const dep = await db.one(
+      `select pub.scheduled_at, pub.status from publication pub join variant v on v.id = pub.variant_id join piece p on p.id = v.piece_id
+       where pub.id = $1 and p.brand_id = $2 and pub.status <> 'cancelled'`,
+      [dependsOn, brandId],
+    );
+    if (!dep) throw badRequest('invalid_dependency', 'The publication it depends on does not exist in this brand');
+    if (dep.status !== 'published' && when < new Date(dep.scheduled_at)) throw badRequest('invalid_dependency', 'It cannot go out before the publication it depends on');
+  }
+  if (selfId) {
+    const early = await db.one(
+      `select id, scheduled_at from publication where depends_on = $1 and scheduled_at < $2
+         and status in ('scheduled','awaiting_reapproval','on_hold','preparing','ready') order by scheduled_at limit 1`,
+      [selfId, when],
+    );
+    if (early) {
+      throw badRequest('invalid_dependency', `Another publication that depends on this one goes out earlier (${new Date(early.scheduled_at).toISOString()}): move that one first`, { publicationId: early.id });
+    }
+  }
+}
+
 const errorsOf = (plan: Plan) => plan.issues.filter((i) => i.severity === 'error');
 
 /**
@@ -113,27 +151,24 @@ export async function schedule(ctx: Ctx, p: Principal, versionId: string, raw: u
     const version = await loadVersion(db, versionId);
     await authorize(db, p, version.brand_id, 'publication.schedule');
     const userId = requireUser(p);
+    await lockVariant(db, version.variant_id);
     const brand = await loadBrand(db, version.brand_id);
     await assertSchedulable(db, brand, when, ctx.now());
     const eff = await effectiveApproval(db, versionId);
     if (!eff.approved) throw conflict('not_approved', 'This version is not approved (or its approval no longer counts)');
     if (!eff.accountIds.includes(input.accountId)) throw conflict('account_not_approved', 'This version was not approved for that account');
-    if (input.dependsOn) {
-      const dep = await db.one(
-        `select pub.scheduled_at from publication pub join variant v on v.id = pub.variant_id join piece p on p.id = v.piece_id
-         where pub.id = $1 and p.brand_id = $2 and pub.status <> 'cancelled'`,
-        [input.dependsOn, version.brand_id],
-      );
-      if (!dep) throw badRequest('invalid_dependency', 'The publication it depends on does not exist in this brand');
-      if (when < new Date(dep.scheduled_at)) throw badRequest('invalid_dependency', 'It cannot go out before the publication it depends on');
-    }
+    if (!(await storedFilesMatch(ctx, versionId, db))) throw conflict('fingerprint_mismatch', 'The stored files no longer match the approved version');
+    await assertOrder(db, version.brand_id, when, input.dependsOn ?? null, null);
 
     // How will it go out? Automatic when the account is connected and the network can do this content; otherwise a person.
     const variant = await loadVariant(db, version.variant_id);
     const piece = (await db.one('select * from piece where id = $1', [version.piece_id]))!;
+    // The title and the AI label go out as they were approved; the label also if it has been added since.
+    const title = eff.title ?? piece.title;
+    const ai = eff.aiGenerated || !!piece.ai_generated;
     const plan = await planPublication(ctx, {
       brandId: version.brand_id, versionId, accountId: input.accountId, piece, variantFormat: variant.format, text: input.text,
-      firstComment: input.firstComment, options: input.options, scheduledAt: when, mode: input.mode, placement: input.placement,
+      firstComment: input.firstComment, options: input.options, scheduledAt: when, mode: input.mode, placement: input.placement, title, aiGenerated: ai,
     });
     if (input.mode === 'auto' && !plan.automated) throw conflict('cannot_automate', plan.manualReason ?? 'The app cannot publish this automatically');
     if (plan.automated && errorsOf(plan).length) {
@@ -145,13 +180,13 @@ export async function schedule(ctx: Ctx, p: Principal, versionId: string, raw: u
     try {
       const pub = (await db.one(
         `insert into publication (variant_id, social_account_id, version_id, text, first_comment, options, scheduled_at, depends_on, created_by,
-                                  manual, placement, prepare_at, next_run_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::timestamptz,$12::timestamptz) returning *`,
+                                  manual, placement, prepare_at, next_run_at, title, ai_generated)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::timestamptz,$12::timestamptz,$13,$14) returning *`,
         [version.variant_id, input.accountId, versionId, input.text, input.firstComment, JSON.stringify(input.options), when, input.dependsOn ?? null, userId,
-          manual, plan.placement, prepare],
+          manual, plan.placement, prepare, title, ai],
       ))!;
       await audit(db, p, version.brand_id, 'publication.scheduled', 'publication', pub.id, null,
-        { version_id: versionId, account_id: input.accountId, scheduled_at: when.toISOString(), fingerprint: eff.fingerprint, manual, placement: plan.placement });
+        { version_id: versionId, account_id: input.accountId, scheduled_at: when.toISOString(), fingerprint: eff.fingerprint, manual, placement: plan.placement, title, ai_generated: ai });
       return { ...pub, issues: plan.issues, manual_reason: plan.manualReason ?? null };
     } catch (err) {
       if (isUniqueViolation(err)) throw conflict('slot_taken', 'That variant is already scheduled on that account at that time');
@@ -181,13 +216,16 @@ export async function patchPublication(ctx: Ctx, p: Principal, pubId: string, ra
     if (when) await assertSchedulable(db, brand, when, ctx.now());
     else if (brand.paused) throw conflict('brand_paused', 'The brand is paused: nothing can be scheduled or moved');
 
+    const moved = when !== null && when.getTime() !== new Date(before.scheduled_at).getTime();
     const changed =
-      (when !== null && when.getTime() !== new Date(before.scheduled_at).getTime()) ||
+      moved ||
       (input.text !== undefined && input.text !== before.text) ||
-      (input.firstComment !== undefined && input.firstComment !== before.first_comment);
+      (input.firstComment !== undefined && input.firstComment !== before.first_comment) ||
+      (input.title !== undefined && input.title !== before.title);
     if (!changed) return before;
 
     const nextWhen = when ?? new Date(before.scheduled_at);
+    if (moved) await assertOrder(db, before.brand_id, nextWhen, before.depends_on, pubId);
     if (!before.manual) {
       // Re-check what the network would say to the new time or text.
       const version = await loadVersion(db, before.version_id);
@@ -196,7 +234,7 @@ export async function patchPublication(ctx: Ctx, p: Principal, pubId: string, ra
       const plan = await planPublication(ctx, {
         brandId: before.brand_id, versionId: before.version_id, accountId: before.social_account_id, piece, variantFormat: variant.format,
         text: input.text ?? before.text, firstComment: input.firstComment ?? before.first_comment, options: before.options ?? {}, scheduledAt: nextWhen,
-        mode: 'auto', placement: before.placement ?? undefined,
+        mode: 'auto', placement: before.placement ?? undefined, title: input.title ?? before.title ?? undefined, aiGenerated: !!before.ai_generated || !!piece.ai_generated,
       });
       if (errorsOf(plan).length) throw badRequest('validation_failed', errorsOf(plan).map((i) => i.message).join(' '), { issues: plan.issues });
     }
@@ -206,15 +244,15 @@ export async function patchPublication(ctx: Ctx, p: Principal, pubId: string, ra
     try {
       const after = (await db.one(
         `update publication set scheduled_at = coalesce($2, scheduled_at), text = coalesce($3, text),
-           first_comment = coalesce($4, first_comment), moved_by = $5, due_notified_at = null, updated_at = now(),
+           first_comment = coalesce($4, first_comment), title = coalesce($8, title), moved_by = $5, due_notified_at = null, updated_at = now(),
            prepare_at = $7::timestamptz, next_run_at = case when $6::boolean then null else $7::timestamptz end,
            status = case when $6::boolean then 'awaiting_reapproval' else status end
          where id = $1 returning *`,
-        [pubId, when, input.text ?? null, input.firstComment ?? null, userId, needsConfirm, prepare],
+        [pubId, when, input.text ?? null, input.firstComment ?? null, userId, needsConfirm, prepare, input.title ?? null],
       ))!;
       await audit(db, p, before.brand_id, 'publication.changed', 'publication', pubId,
-        { scheduled_at: before.scheduled_at, text: before.text, status: before.status },
-        { scheduled_at: after.scheduled_at, text: after.text, status: after.status });
+        { scheduled_at: before.scheduled_at, text: before.text, title: before.title, status: before.status },
+        { scheduled_at: after.scheduled_at, text: after.text, title: after.title, status: after.status });
       if (needsConfirm) {
         await notifyRoles(db, before.brand_id, ['approver', 'admin'], 'publication.reapproval',
           { publicationId: pubId, pieceId: before.piece_id }, userId);
@@ -260,7 +298,8 @@ export async function cancelPublication(ctx: Ctx, p: Principal, pubId: string) {
     if (pub.status === 'publishing') throw conflict('in_flight', 'This post is being published right now: wait a moment');
     if (!OPEN.includes(pub.status)) throw conflict('invalid_state', `A ${pub.status} publication cannot be cancelled`);
     const row = (await db.one(
-      `update publication set status = 'cancelled', updated_at = now(), next_run_at = case when native_scheduled then $2::timestamptz else null end where id = $1 returning *`,
+      `update publication set status = 'cancelled', updated_at = now(),
+         next_run_at = case when native_scheduled or held_on_network then $2::timestamptz else null end where id = $1 returning *`,
       [pubId, ctx.now()],
     ))!;
     await audit(db, p, pub.brand_id, 'publication.cancelled', 'publication', pubId, { status: pub.status }, { status: 'cancelled' });
@@ -276,22 +315,27 @@ export async function reschedulePublication(ctx: Ctx, p: Principal, pubId: strin
     await authorize(db, p, pub.brand_id, 'publication.schedule');
     requireUser(p);
     if (pub.status !== 'on_hold') throw conflict('invalid_state', 'Only a publication on hold can be rescheduled');
-    if (pub.native_scheduled) throw conflict('cleanup_pending', 'The held post is still being taken down from its network: try again in a minute');
+    if (pub.native_scheduled || pub.held_on_network) throw conflict('cleanup_pending', 'The held post is still being taken down from its network: try again in a minute');
+    await lockVariant(db, pub.variant_id);
     const version = await loadVersion(db, input.versionId);
     if (version.variant_id !== pub.variant_id) throw badRequest('invalid_version', 'That version belongs to a different variant');
     const eff = await effectiveApproval(db, input.versionId);
     if (!eff.approved) throw conflict('not_approved', 'That version is not approved');
     if (!eff.accountIds.includes(pub.social_account_id)) throw conflict('account_not_approved', 'That version was not approved for this account');
+    if (!(await storedFilesMatch(ctx, input.versionId, db))) throw conflict('fingerprint_mismatch', 'The stored files no longer match the approved version');
     const brand = await loadBrand(db, pub.brand_id);
     const when = input.scheduledAt ? new Date(input.scheduledAt) : new Date(pub.scheduled_at);
     await assertSchedulable(db, brand, when, ctx.now());
+    await assertOrder(db, pub.brand_id, when, pub.depends_on, pubId);
     const prepare = pub.manual ? null : prepareAt(brand, when);
+    const piece = (await db.one<{ title: string; ai_generated: boolean }>('select title, ai_generated from piece where id = $1', [pub.piece_id]))!;
     try {
       const row = (await db.one(
         `update publication set status = 'scheduled', version_id = $2, scheduled_at = $3, hold_reason = null, due_notified_at = null, updated_at = now(),
-           handle = '{}', attempts = 0, verify_attempts = 0, last_error = null, last_error_class = null, prepare_at = $4::timestamptz, next_run_at = $4::timestamptz
+           handle = '{}', attempts = 0, verify_attempts = 0, last_error = null, last_error_class = null, prepare_at = $4::timestamptz, next_run_at = $4::timestamptz,
+           publish_progress_at = null, frozen_at = null, title = $5, ai_generated = $6
          where id = $1 returning *`,
-        [pubId, input.versionId, when, prepare],
+        [pubId, input.versionId, when, prepare, eff.title ?? piece.title, eff.aiGenerated || piece.ai_generated],
       ))!;
       await audit(db, p, pub.brand_id, 'publication.rescheduled', 'publication', pubId,
         { version_id: pub.version_id, status: 'on_hold' }, { version_id: input.versionId, status: 'scheduled', fingerprint: eff.fingerprint });
@@ -307,7 +351,9 @@ export const retryInput = z.object({ scheduledAt: iso.optional() });
 
 /**
  * Tries a failed automatic publication again. Whatever the network was holding has been taken down by then, so it starts
- * clean. If its hour has passed it is moved a couple of minutes ahead, because the app never publishes late by itself.
+ * clean; unless publishing had begun and the network may already have the post: then what the connector recorded is kept and the
+ * retry finishes that send through the connector's recovery (which never posts twice), skipping preparation. If its hour has
+ * passed it is moved a couple of minutes ahead, because the app never publishes late by itself.
  */
 export async function retryPublication(ctx: Ctx, p: Principal, pubId: string, raw: unknown) {
   const input = retryInput.parse(raw ?? {});
@@ -316,22 +362,29 @@ export async function retryPublication(ctx: Ctx, p: Principal, pubId: string, ra
     await authorize(db, p, pub.brand_id, 'publication.schedule');
     requireUser(p);
     if (pub.manual || pub.status !== 'failed') throw conflict('invalid_state', 'Only a failed automatic publication can be retried');
-    if (pub.native_scheduled) throw conflict('cleanup_pending', 'The post is still being taken down from its network: try again in a minute');
+    if (pub.native_scheduled || pub.held_on_network) throw conflict('cleanup_pending', 'The post is still being taken down from its network: try again in a minute');
+    await lockVariant(db, pub.variant_id);
     const brand = await loadBrand(db, pub.brand_id);
     const eff = await effectiveApproval(db, pub.version_id);
     if (!eff.approved || !eff.accountIds.includes(pub.social_account_id)) throw conflict('not_approved', 'The approval behind this publication no longer counts');
+    if (!(await storedFilesMatch(ctx, pub.version_id, db))) throw conflict('fingerprint_mismatch', 'The stored files no longer match the approved version');
     const now = ctx.now();
     let when = input.scheduledAt ? new Date(input.scheduledAt) : new Date(pub.scheduled_at);
     if (when.getTime() < now.getTime() + 120_000) when = new Date(now.getTime() + 120_000);
     await assertSchedulable(db, brand, when, now);
+    await assertOrder(db, pub.brand_id, when, pub.depends_on, pubId);
+    // Publishing had begun: the network may have the post, and what the connector wrote down is how it is found again.
+    const resume = !!pub.publish_progress_at;
     try {
       const row = (await db.one(
-        `update publication set status = 'scheduled', scheduled_at = $2, handle = '{}', attempts = 0, verify_attempts = 0, failed_at = null,
-           last_error = null, last_error_class = null, external_id = null, url = null, visibility = null, prepare_at = $3::timestamptz, next_run_at = $3::timestamptz, updated_at = now()
+        `update publication set status = case when $4 then 'ready' else 'scheduled' end, scheduled_at = $2,
+           handle = case when $4 then handle else '{}'::jsonb end, attempts = 0, verify_attempts = 0, failed_at = null,
+           last_error = null, last_error_class = null, external_id = null, url = null, visibility = null, frozen_at = null,
+           prepare_at = $3::timestamptz, next_run_at = case when $4 then $2 else $3::timestamptz end, updated_at = now()
          where id = $1 returning *`,
-        [pubId, when, prepareAt(brand, when)],
+        [pubId, when, prepareAt(brand, when), resume],
       ))!;
-      await audit(db, p, pub.brand_id, 'publication.retried', 'publication', pubId, { status: 'failed' }, { status: 'scheduled', scheduled_at: when.toISOString() });
+      await audit(db, p, pub.brand_id, 'publication.retried', 'publication', pubId, { status: 'failed' }, { status: row.status, scheduled_at: when.toISOString(), resumed: resume });
       return row;
     } catch (err) {
       if (isUniqueViolation(err)) throw conflict('slot_taken', 'That variant is already scheduled on that account at that time');
@@ -347,11 +400,11 @@ export async function handOverPublication(ctx: Ctx, p: Principal, pubId: string)
     await authorize(db, p, pub.brand_id, 'publication.schedule');
     requireUser(p);
     if (pub.manual) throw conflict('invalid_state', 'This publication is already published by hand');
-    if (pub.native_scheduled || !['scheduled', 'failed'].includes(pub.status)) {
+    if (pub.native_scheduled || pub.held_on_network || !['scheduled', 'failed'].includes(pub.status)) {
       throw conflict('invalid_state', 'Only a publication that has not reached its network yet can be handed over. Cancel this one and schedule it as manual instead.');
     }
     const row = (await db.one(
-      `update publication set manual = true, status = 'scheduled', handle = '{}', next_run_at = null, prepare_at = null, attempts = 0,
+      `update publication set manual = true, status = 'scheduled', handle = '{}', next_run_at = null, prepare_at = null, attempts = 0, frozen_at = null,
          failed_at = null, last_error = null, last_error_class = null, due_notified_at = null, updated_at = now() where id = $1 returning *`,
       [pubId],
     ))!;
@@ -391,7 +444,7 @@ export async function markPublished(ctx: Ctx, p: Principal, pubId: string, raw: 
     if (!pub.manual) throw conflict('automatic', 'The app publishes this one itself. Hand it over to publish it by hand.');
     if (pub.status !== 'scheduled') throw conflict('invalid_state', `A ${pub.status} publication cannot be marked as published`);
     const eff = await effectiveApproval(db, pub.version_id);
-    if (!eff.approved || !eff.accountIds.includes(pub.social_account_id)) {
+    if (!eff.approved || !eff.accountIds.includes(pub.social_account_id) || !(await storedFilesMatch(ctx, pub.version_id, db))) {
       throw conflict('not_approved', 'The approval behind this publication no longer counts');
     }
     if (pub.depends_on) {
@@ -405,6 +458,7 @@ export async function markPublished(ctx: Ctx, p: Principal, pubId: string, raw: 
     ))!;
     await audit(db, p, pub.brand_id, 'publication.published', 'publication', pubId, { status: 'scheduled' }, { status: 'published', url: input.url ?? null });
     await emitPublication(ctx, db, pub.brand_id, pubId, 'publication.published');
+    await wakeDependents(db, pubId, ctx.now());
     return row;
   });
 }

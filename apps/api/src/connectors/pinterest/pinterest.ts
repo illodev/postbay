@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { call } from '../http.js';
 import { validateAgainst } from '../validate.js';
 import {
@@ -48,11 +50,25 @@ const titleOf = (input: PublishInput) => String(typeof input.options.title === '
 const linkOf = (input: PublishInput) => (typeof input.options.link === 'string' && input.options.link.trim() ? input.options.link.trim() : undefined);
 const today = (d: Date) => d.toISOString().slice(0, 10);
 
-async function readAll(env: ConnectorEnv, key: string): Promise<Buffer> {
-  const { stream } = await env.open(key, 0);
-  const chunks: Buffer[] = [];
-  for await (const c of stream) chunks.push(Buffer.from(c as Buffer));
-  return Buffer.concat(chunks);
+/**
+ * The video upload form, streamed: the fields Pinterest gave back first, then the file, read from storage as it is sent. A video can be
+ * gigabytes, so it is never held in memory. The length is known in advance (the upload address is S3's, which wants it).
+ */
+async function uploadForm(env: ConnectorEnv, fields: Record<string, string>, m: MediaItem): Promise<{ body: ReadableStream; length: number; type: string }> {
+  const boundary = `----estudio${randomBytes(12).toString('hex')}`;
+  const quote = (s: string) => s.replace(/["\r\n]/g, '_');
+  const head = Buffer.from(
+    Object.entries(fields).map(([k, v]) => `--${boundary}\r\nContent-Disposition: form-data; name="${quote(k)}"\r\n\r\n${v}\r\n`).join('')
+      + `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${quote(m.name)}"\r\nContent-Type: ${m.mime}\r\n\r\n`,
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const { stream, size } = await env.open(m.key, 0);
+  async function* parts() {
+    yield head;
+    for await (const c of stream) yield c as Buffer;
+    yield tail;
+  }
+  return { body: Readable.toWeb(Readable.from(parts())) as unknown as ReadableStream, length: head.length + size + tail.length, type: `multipart/form-data; boundary=${boundary}` };
 }
 
 export function createPinterest(client: PinterestClient): Connector {
@@ -104,11 +120,12 @@ export function createPinterest(client: PinterestClient): Connector {
         await env.persist(h);
       }
       if (!h.uploaded) {
-        // The video goes to the address Pinterest gave back, with the fields it asked for first and the file last.
-        const form = new FormData();
-        for (const [k, v] of Object.entries((h.uploadParameters ?? {}) as Record<string, string>)) form.set(k, v);
-        form.set('file', new Blob([new Uint8Array(await readAll(env, m.key))], { type: m.mime }), m.name);
-        const r = await call(h.uploadUrl as string, { method: 'POST', body: form, timeoutMs: 30 * 60_000 });
+        // The video goes to the address Pinterest gave back, with the fields it asked for first and the file last, streamed.
+        const form = await uploadForm(env, (h.uploadParameters ?? {}) as Record<string, string>, m);
+        const r = await call(h.uploadUrl as string, {
+          method: 'POST', body: form.body as unknown as BodyInit, duplex: 'half', timeoutMs: 60 * 60_000,
+          headers: { 'content-type': form.type, 'content-length': String(form.length) },
+        });
         if (r.status >= 500) throw new ConnectorError('transient', `The video upload answered ${r.status}`, { httpStatus: r.status });
         if (!r.ok) throw new ConnectorError('file_rejected', `Pinterest refused the video upload (${r.status})`, { httpStatus: r.status });
         h = { ...h, uploaded: true };

@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createConnectorSet } from '../src/connectors/registry.js';
 import { FakePinterest } from './fakes/pinterest.js';
@@ -25,6 +27,7 @@ beforeEach(() => {
   fake.videoPolls = 1;
   fake.failVideo = false;
   fake.loseNextPinAnswer = false;
+  fake.uploadedFiles.clear();
   fake.boards = [{ id: 'b1', name: 'Spring menu', privacy: 'PUBLIC' }, { id: 'b2', name: 'Behind the bar', privacy: 'PUBLIC' }];
 });
 
@@ -118,6 +121,34 @@ describe('Pinterest: publishing', () => {
     expect([...fake.media.values()][0]!.fieldsBeforeFile).toBe(true);
     const pub = await pin().publish(inp, acc(true), prep.handle, e);
     expect(fake.pins.get(pub.externalId)!.media_source).toMatchObject({ source_type: 'video_id', cover_image_url: 'https://media.test/cover.jpg?sig=1' });
+  });
+
+  it('streams the video from storage with its length, never reading the file into memory, and it arrives byte for byte', async () => {
+    const video = randomBytes(3 * 1024 * 1024 + 17);
+    const e = env('tok', { 'k/big.mp4': video });
+    // The file is handed over in small pieces, as storage streams it; holding it whole would show as one read of everything.
+    const reads: number[] = [];
+    e.open = async (key, start = 0) => {
+      const buf = key === 'k/big.mp4' ? video.subarray(start) : Buffer.alloc(0);
+      const pieces = Array.from({ length: Math.ceil(buf.length / 65_536) }, (_, i) => buf.subarray(i * 65_536, (i + 1) * 65_536));
+      return { stream: Readable.from((async function* () { for (const p of pieces) { reads.push(p.length); yield p; } })()), size: buf.length };
+    };
+    const inp = input({ placement: 'video_pin', media: [media({ bytes: video.length, key: 'k/big.mp4', name: 'big.mp4' }), cover()] });
+    await prepareUntilDone(pin(), inp, acc(true), e);
+    const sent = [...fake.uploadedFiles.values()][0]!;
+    expect(sent.equals(video)).toBe(true);
+    expect(Math.max(...reads)).toBeLessThanOrEqual(65_536);
+    const upload = fake.calls.find((c) => c.path.startsWith('/upload/'))!;
+    expect(Number(upload.headers['content-length'])).toBeGreaterThan(video.length);
+    expect(upload.headers['transfer-encoding']).toBeUndefined();
+  });
+
+  it("tells a refused permission from a lost connection: only a token Pinterest no longer takes asks for a reconnection", async () => {
+    fake.fail((c) => c.path === '/v5/pins', { code: 3, message: 'Not authorized to access board or pin.' }, 403);
+    const err = await expectError(pin().publish(input({ placement: 'image_pin', media: [image()] }), acc(true), {}, env('tok')), 'unsupported');
+    expect(err.message).toContain('Connecting again will not change that');
+    fake.fail((c) => c.path === '/v5/pins', { code: 2, message: 'Authentication failed. Access token expired.' }, 403);
+    await expectError(pin().publish(input({ placement: 'image_pin', media: [image()] }), acc(true), {}, env('tok')), 'auth');
   });
 
   it('turns a video Pinterest cannot process into a rejection', async () => {

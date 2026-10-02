@@ -2,11 +2,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { authorize, type Principal } from '../auth/principal.js';
 import { allCapabilities } from '../connectors/registry.js';
-import { ConnectorError, type Candidate, type ProviderId } from '../connectors/types.js';
+import { ConnectorError, type Candidate, type ProviderId, type TokenSet } from '../connectors/types.js';
 import type { Ctx } from '../context.js';
 import { sha256Hex } from '../crypto.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { audit } from './audit.js';
+import { connectorEnv, loadConnectorAccount, subscribeEvents, unsubscribeEvents } from './connectors.js';
 
 const STATE_TTL_MINUTES = 15;
 export const PROVIDER_INFO: Record<ProviderId, { label: string; networks: string[] }> = {
@@ -178,6 +179,13 @@ export const selectInput = z.object({ keys: z.array(z.string()).min(1).max(50) }
 export async function selectCandidates(ctx: Ctx, p: Principal, brandId: string, pendingId: string, raw: unknown) {
   const input = selectInput.parse(raw);
   if (p.kind !== 'user') throw forbidden();
+  const connected = await connectChosen(ctx, p, brandId, pendingId, input);
+  // The networks that push events only once asked (Meta) are asked now, so comments arrive by webhook. Best effort.
+  for (const a of connected) await subscribeEvents(ctx, a.id);
+  return connected;
+}
+
+async function connectChosen(ctx: Ctx, p: Principal & { kind: 'user' }, brandId: string, pendingId: string, input: z.infer<typeof selectInput>) {
   return ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.manage');
     const row = await db.one('select * from oauth_pending where id = $1 and brand_id = $2 for update', [pendingId, brandId]);
@@ -235,7 +243,7 @@ export async function selectCandidates(ctx: Ctx, p: Principal, brandId: string, 
 
 /** Disconnecting would strand anything still waiting to go out through it, so that has to be dealt with first. */
 export async function disconnectAccount(ctx: Ctx, p: Principal, brandId: string, accountId: string) {
-  return ctx.db.tx(async (db) => {
+  const out = await ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.manage');
     const acc = await db.one('select * from social_account where id = $1 and brand_id = $2 for update', [accountId, brandId]);
     if (!acc) throw notFound('Account');
@@ -247,15 +255,28 @@ export async function disconnectAccount(ctx: Ctx, p: Principal, brandId: string,
     if ((pending?.n ?? 0) > 0) {
       throw conflict('account_in_use', `${pending!.n} publication(s) are still waiting to go out through this account: cancel them first`, { count: pending!.n });
     }
+    // The last token, read before it is forgotten: taking the account's event subscription away needs it.
+    let token: TokenSet | null = null;
+    try {
+      token = acc.token_encrypted && ctx.vault ? ctx.vault.open<TokenSet>(acc.token_encrypted, `account:${accountId}`) : null;
+    } catch {
+      token = null;
+    }
     await db.query(`update social_account set token_encrypted = null, token_expires_at = null, status = 'manual', last_error = null where id = $1`, [accountId]);
     await audit(db, p, brandId, 'account.disconnected', 'social_account', accountId, { status: acc.status }, { status: 'manual' });
-    return { id: accountId };
+    return { id: accountId, token, acc };
   });
+  if (out.token) {
+    await unsubscribeEvents(ctx, { id: accountId, network: out.acc.network, externalId: out.acc.external_id, displayName: out.acc.display_name, providerData: out.acc.provider_data ?? {} }, out.token);
+  }
+  return { id: out.id };
 }
 
 export const accountSettings = z.object({
   /** Whether the network has approved the app (Google's audit for YouTube, TikTok's audit, Pinterest's Standard access), so posts can be public. Set by an admin once it has. */
   audited: z.boolean().optional(),
+  /** YouTube: the channel's made-for-kids declaration, which each new video starts from (null removes it, so each video is asked). */
+  madeForKids: z.boolean().nullable().optional(),
 });
 
 export async function updateAccountSettings(ctx: Ctx, p: Principal, brandId: string, accountId: string, raw: unknown) {
@@ -269,6 +290,44 @@ export async function updateAccountSettings(ctx: Ctx, p: Principal, brandId: str
       await db.query(`update social_account set provider_data = provider_data || jsonb_build_object('audited', $2::boolean) where id = $1`, [accountId, input.audited]);
       await audit(db, p, brandId, 'account.audit_status', 'social_account', accountId, { audited: acc.provider_data?.audited ?? false }, { audited: input.audited });
     }
+    if (input.madeForKids !== undefined) {
+      if (acc.network !== 'youtube') throw badRequest('not_applicable', 'Only YouTube channels have a made-for-kids declaration');
+      await db.query(
+        input.madeForKids === null
+          ? `update social_account set provider_data = provider_data - 'madeForKids' where id = $1`
+          : `update social_account set provider_data = provider_data || jsonb_build_object('madeForKids', $2::boolean) where id = $1`,
+        input.madeForKids === null ? [accountId] : [accountId, input.madeForKids],
+      );
+      await audit(db, p, brandId, 'account.made_for_kids', 'social_account', accountId, { madeForKids: acc.provider_data?.madeForKids ?? null }, { madeForKids: input.madeForKids });
+    }
     return { id: accountId };
   });
+}
+
+/**
+ * The settings to ask for when someone writes a post for this account. Most networks' settings are fixed (their capabilities); TikTok
+ * obliges the app to ask it, while the post is being written, what this creator may do right now (who can see the post, whether
+ * comments, duets and stitches are allowed at all) and to offer only that. What it says is also kept on the account, so scheduling can
+ * be checked against it, and publishing asks again.
+ */
+export async function accountOptions(ctx: Ctx, p: Principal, brandId: string, accountId: string) {
+  await authorize(ctx.db, p, brandId, 'publication.schedule');
+  const row = await ctx.db.one('select status, token_encrypted from social_account where id = $1 and brand_id = $2', [accountId, brandId]);
+  const account = row ? await loadConnectorAccount(ctx, accountId) : null;
+  if (!row || !account) throw notFound('Account');
+  const connector = ctx.connectors.connector(account.network);
+  if (!connector) return { fields: [], live: false };
+  if (!connector.accountOptions || row.status !== 'active' || !row.token_encrypted) return { fields: connector.capabilities(account).options ?? [], live: false };
+  try {
+    const r = await connector.accountOptions(account, connectorEnv(ctx, accountId));
+    if (r.remember) {
+      await ctx.db.query('update social_account set provider_data = provider_data || $2::jsonb where id = $1', [accountId, JSON.stringify(r.remember)]);
+    }
+    return { fields: r.fields, live: true };
+  } catch (err) {
+    if (err instanceof ConnectorError) {
+      throw new AppError(502, 'network_refused', `${PROVIDER_INFO[connector.provider].label} did not say what this account may post right now: ${err.message}`, { errorClass: err.errorClass });
+    }
+    throw err;
+  }
 }

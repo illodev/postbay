@@ -81,6 +81,13 @@ describe('the server', () => {
     const good = pick(await checkServer(withConfig({ MEDIA_URL: 'https://media.example.com' })), 'media_url');
     expect(good.status).toBe('pass');
     expect(good.detail).toMatch(/TikTok photo posts also need this domain verified/);
+    // With S3 the signed addresses the networks fetch are on the bucket's public address, so that is the domain to verify.
+    const s3 = pick(await checkServer(withConfig({ STORAGE_DRIVER: 's3', S3_BUCKET: 'b', S3_PUBLIC_ENDPOINT: 'https://files.example.net', MEDIA_URL: 'https://media.example.com' })), 'media_url');
+    expect(s3.status).toBe('pass');
+    expect(s3.detail).toContain('files.example.net');
+    expect(s3.detail).toContain('S3_PUBLIC_ENDPOINT');
+    expect(s3.detail).not.toContain('media.example.com');
+    expect(pick(await checkServer(withConfig({ STORAGE_DRIVER: 's3', S3_BUCKET: 'b', S3_PUBLIC_ENDPOINT: 'http://minio:9000', MEDIA_URL: 'https://media.example.com' })), 'media_url').status).toBe('warn');
   });
 
   it('warns about LinkedIn\'s API version before it is retired, and fails it after', async () => {

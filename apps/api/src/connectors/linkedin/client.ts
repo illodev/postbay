@@ -30,8 +30,13 @@ export function classifyLinkedIn(r: Reply): ConnectorError | null {
   if (r.status === 401 || body.error === 'invalid_grant' || body.error === 'invalid_client' || body.serviceErrorCode === 65601 || body.serviceErrorCode === 65600) {
     return new ConnectorError('auth', `${message} (LinkedIn no longer accepts this connection)`, opts);
   }
-  // 403 is a missing permission or product: nothing here will fix it by waiting.
-  if (r.status === 403) return new ConnectorError('auth', `${message} (LinkedIn says this app or account is not allowed to do that)`, opts);
+  // A token LinkedIn no longer takes comes as 401 (above). A 403 is a permission: the member is no longer an admin of the page, or
+  // the app lacks the product for this call (ACCESS_DENIED, "Not enough permissions to access: …"). Connecting again does not give
+  // either, so the post goes to a person with LinkedIn's words, and the account is left as it is.
+  if (r.status === 403) {
+    if (/token|expired|revoked/i.test(message) && !/permission/i.test(message)) return new ConnectorError('auth', `${message} (LinkedIn no longer accepts this connection)`, opts);
+    return new ConnectorError('unsupported', `LinkedIn refused it for lack of a permission (${message}). Check that the person who connected the page is still one of its admins, and that the app has the Community Management API product; connecting again only helps if a permission was not accepted.`, opts);
+  }
   if (r.status >= 500) return new ConnectorError('transient', message, opts);
   // A repeated post is refused with the address of the original in the message.
   const dup = /duplicate of (urn:li:\w+:\d+)/i.exec(message);

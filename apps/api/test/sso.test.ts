@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { OidcClient, OidcError } from '../src/auth/oidc.js';
+import { base32Decode, hotp, stepAt } from '../src/auth/totp.js';
 import { loadConfig } from '../src/config.js';
+import { startSession } from '../src/services/auth.js';
 import { FakeOidc } from './fakes/oidc.js';
 import { createEnv, type Env } from './helpers.js';
 
@@ -319,6 +321,42 @@ describe('together with the second factor', () => {
   });
 });
 
+describe('the emailed link, when the provider\'s second step is trusted', () => {
+  const as = (sid: string, method: 'GET' | 'POST', url: string, payload?: object) =>
+    env.app.inject({ method, url, payload, headers: { cookie: `sid=${sid}`, 'x-requested-by': 'studio', 'x-forwarded-for': ip() } });
+
+  it('does not get round it: a link session owes the app\'s own step, whatever the role, and cannot set one up', async () => {
+    (env.ctx.config.sso as { secondFactor: string }).secondFactor = 'idp';
+    const id = await makeUser('bea@example.com'); // a reviewer: the app asks nothing of her role
+    const link = await startSession(env.ctx, id, 'link');
+    const blocked = await me(link.token);
+    expect(blocked.statusCode).toBe(401);
+    expect(JSON.parse(blocked.body).error).toMatchObject({ code: 'second_factor_required', details: { step: 'enroll' } });
+    // Whoever holds the link cannot put their own phone on the account.
+    const enrol = await as(link.token, 'POST', '/api/auth/2fa/enroll');
+    expect(enrol.statusCode).toBe(403);
+    expect(JSON.parse(enrol.body).error.message).toContain('Acme Workspace');
+    expect(await env.db.one('select 1 from user_totp where user_id = $1', [id])).toBeNull();
+
+    // A single sign-on session (the provider's step done) sets one up; after that the link works, with a code.
+    const sso = await startSession(env.ctx, id, 'sso', true);
+    const started = await as(sso.token, 'POST', '/api/auth/2fa/enroll');
+    expect(started.statusCode).toBe(200);
+    const secret = JSON.parse(started.body).secret as string;
+    const code = (steps = 0) => hotp(base32Decode(secret), stepAt(new Date()) + steps);
+    expect((await as(sso.token, 'POST', '/api/auth/2fa/enroll/confirm', { code: code() })).statusCode).toBe(200);
+    expect(JSON.parse((await me(link.token)).body).error.details.step).toBe('verify');
+    expect((await as(link.token, 'POST', '/api/auth/2fa/verify', { code: code(1) })).statusCode).toBe(200);
+    expect((await me(link.token)).statusCode).toBe(200);
+  });
+
+  it('leaves a link session alone where the app asks for its own step anyway', async () => {
+    const id = await makeUser('cai@example.com');
+    const link = await startSession(env.ctx, id, 'link');
+    expect((await me(link.token)).statusCode).toBe(200); // OIDC_SECOND_FACTOR=app: a reviewer was never asked
+  });
+});
+
 describe('what the deployment has to say about it', () => {
   const base = { NODE_ENV: 'test', SECRET: 'x'.repeat(40) };
   const sso = { OIDC_ISSUER: 'https://accounts.google.com', OIDC_CLIENT_ID: 'id', OIDC_CLIENT_SECRET: 'secret', OIDC_ALLOWED_DOMAINS: 'example.com' };
@@ -338,6 +376,15 @@ describe('what the deployment has to say about it', () => {
     });
     expect(loadConfig({ ...base, ...sso, OIDC_ISSUER: 'https://accounts.google.com/' }).sso!.issuer).toBe('https://accounts.google.com');
     expect(loadConfig({ ...base, ...sso }).sso).toMatchObject({ label: 'single sign-on', secondFactor: 'app', trustEmail: false });
+  });
+
+  it('turns the emailed link off by default when the provider\'s second step is trusted, unless asked for', () => {
+    expect(loadConfig({ ...base, ...sso }).emailLinkLogin).toBe(true);
+    expect(loadConfig({ ...base, ...sso, OIDC_SECOND_FACTOR: 'idp' }).emailLinkLogin).toBe(false);
+    expect(loadConfig({ ...base, ...sso, OIDC_SECOND_FACTOR: 'idp', EMAIL_LINK_LOGIN: '' }).emailLinkLogin).toBe(false);
+    expect(loadConfig({ ...base, ...sso, OIDC_SECOND_FACTOR: 'idp', EMAIL_LINK_LOGIN: 'true' }).emailLinkLogin).toBe(true);
+    // In production it then needs no mail server for signing in.
+    expect(loadConfig({ ...base, ...sso, NODE_ENV: 'production', OIDC_SECOND_FACTOR: 'idp' }).emailLinkLogin).toBe(false);
   });
 
   it('refuses an http provider in production, and a sign-in with no way in', () => {

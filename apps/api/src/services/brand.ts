@@ -64,13 +64,26 @@ export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: 
   });
 }
 
-/** Crisis button: freezes everything scheduled without losing the dates. */
+/**
+ * Crisis button: freezes everything scheduled without losing the dates. The publisher holds back every automatic publication of a
+ * paused brand and takes down what a network already holds for one, so it is woken now for those already being prepared; on resuming,
+ * the ones it held back are woken to be prepared again (or handed to a person if their hour passed meanwhile).
+ */
 export async function setPaused(ctx: Ctx, p: Principal, brandId: string, paused: boolean) {
   return ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.pause');
     const before = await loadBrand(db, brandId);
     await db.query('update brand set paused = $2, paused_at = case when $2 then now() else null end where id = $1', [brandId, paused]);
-    await audit(db, p, brandId, paused ? 'brand.paused' : 'brand.resumed', 'brand', brandId, { paused: before.paused }, { paused });
+    const woken = await db.query(
+      `update publication pub set next_run_at = $3
+       from variant v join piece pc on pc.id = v.piece_id
+       where v.id = pub.variant_id and pc.brand_id = $1 and not pub.manual
+         and (case when $2 then pub.status in ('preparing','ready') and pub.scheduled_at > $3
+                   else pub.status in ('scheduled','preparing','ready') and pub.frozen_at is not null end)
+       returning pub.id`,
+      [brandId, paused, ctx.now()],
+    );
+    await audit(db, p, brandId, paused ? 'brand.paused' : 'brand.resumed', 'brand', brandId, { paused: before.paused }, { paused, publications: woken.length });
     return { paused };
   });
 }
@@ -83,33 +96,161 @@ export const memberInput = z.object({
   role: z.enum(ROLES),
 });
 
+/**
+ * The brand's people. `can_reset_second_factor` says whether the person asking may reset that member's authenticator: only an
+ * admin of every brand the member belongs to may, and nobody their own (see resetForMember in services/secondfactor.ts).
+ */
 export async function listMembers(ctx: Ctx, p: Principal, brandId: string) {
   await authorize(ctx.db, p, brandId, 'brand.manage');
   return ctx.db.query(
     `select m.id, m.role, u.id as user_id, u.email, u.name,
-            exists(select 1 from user_totp t where t.user_id = u.id and t.confirmed_at is not null) as second_factor
+            exists(select 1 from user_totp t where t.user_id = u.id and t.confirmed_at is not null) as second_factor,
+            (u.id <> $2 and not exists(select 1 from member o where o.user_id = u.id and not exists(
+              select 1 from member a where a.brand_id = o.brand_id and a.user_id = $2 and a.role = 'admin'))) as can_reset_second_factor
      from member m join app_user u on u.id = m.user_id
      where m.brand_id = $1 order by u.email`,
+    [brandId, p.kind === 'user' ? p.userId : null],
+  );
+}
+
+const INVITATION_DAYS = 14;
+
+/**
+ * Adds a person to the brand. Someone new gets an account, and someone already in this workspace is added straight away, as before.
+ * Someone who already belongs to **another workspace** is invited instead (202, `invited: true`): they are emailed, and become a
+ * member only when they accept, signed in as themselves. Otherwise an admin anywhere could make any user of the server a member of
+ * their brand, without their knowing, and act on their account from there.
+ */
+export async function addMember(ctx: Ctx, p: Principal, brandId: string, raw: unknown) {
+  const input = memberInput.parse(raw);
+  const out = await ctx.db.tx(async (db) => {
+    await authorize(db, p, brandId, 'brand.manage');
+    const existing = await db.one<{ id: string }>('select id from app_user where lower(email) = $1', [input.email]);
+    if (existing) {
+      const exists = await db.one('select 1 from member where user_id = $1 and brand_id = $2', [existing.id, brandId]);
+      if (exists) throw conflict('already_member', 'That person is already a member of this brand');
+      const elsewhere = await db.one(
+        `select 1 from member m join brand b on b.id = m.brand_id
+         where m.user_id = $1 and b.workspace_id <> (select workspace_id from brand where id = $2) limit 1`,
+        [existing.id, brandId],
+      );
+      if (elsewhere) return { invitation: await invite(db, p, brandId, existing.id, input) };
+    }
+    const user = existing ?? (await db.one('insert into app_user (email, name) values ($1,$2) returning id', [input.email, input.name ?? null]))!;
+    const m = (await db.one('insert into member (user_id, brand_id, role) values ($1,$2,$3) returning *', [user.id, brandId, input.role]))!;
+    await audit(db, p, brandId, 'member.added', 'member', m.id, null, { email: input.email, role: input.role });
+    return { member: m };
+  });
+  if ('member' in out) return { ...out.member, invited: false as const };
+  void sendInvitation(ctx, p, brandId, input.email, input.role).catch((err) => ctx.log.error({ err: String(err) }, 'could not email an invitation'));
+  return { invited: true as const, invitation: out.invitation };
+}
+
+async function invite(db: Tx, p: Principal, brandId: string, userId: string, input: { email: string; role: string }) {
+  // An invitation nobody answered in time no longer stands in the way of a new one.
+  await db.query(
+    `update member_invitation set answered_at = now(), answer = 'expired' where brand_id = $1 and user_id = $2 and answered_at is null and expires_at <= now()`,
+    [brandId, userId],
+  );
+  const open = await db.one('select 1 from member_invitation where brand_id = $1 and user_id = $2 and answered_at is null', [brandId, userId]);
+  if (open) throw conflict('already_invited', 'That person has been invited to this brand already and has not answered yet');
+  const row = (await db.one<{ id: string; role: string; expires_at: Date }>(
+    `insert into member_invitation (brand_id, user_id, role, invited_by, expires_at) values ($1,$2,$3,$4, now() + make_interval(days => $5))
+     returning id, role, expires_at`,
+    [brandId, userId, input.role, p.kind === 'user' ? p.userId : null, INVITATION_DAYS],
+  ))!;
+  await audit(db, p, brandId, 'member.invited', 'member_invitation', row.id, null, { email: input.email, role: input.role });
+  return { id: row.id, email: input.email, role: row.role, expires_at: row.expires_at };
+}
+
+async function sendInvitation(ctx: Ctx, p: Principal, brandId: string, email: string, role: string) {
+  const b = await ctx.db.one<{ brand: string; workspace: string }>(
+    'select b.name as brand, w.name as workspace from brand b join workspace w on w.id = b.workspace_id where b.id = $1',
+    [brandId],
+  );
+  const by = p.kind === 'user' ? p.email : 'An admin';
+  await ctx.mailer.send(
+    email,
+    `Invitation to ${b?.brand ?? 'a brand'}`,
+    `${by} invited you to ${b?.brand} (${b?.workspace}) as ${role}.\n\nNothing changes until you accept. Sign in to accept or decline it, under Your account (valid for ${INVITATION_DAYS} days):\n\n${ctx.config.APP_URL}/\n\nIf you do not know who this is, decline it.\n`,
+  );
+}
+
+/** Invitations of this brand that are still waiting for an answer. */
+export async function listInvitations(ctx: Ctx, p: Principal, brandId: string) {
+  await authorize(ctx.db, p, brandId, 'brand.manage');
+  return ctx.db.query(
+    `select i.id, i.role, i.created_at, i.expires_at, u.email, by_.email as invited_by
+     from member_invitation i join app_user u on u.id = i.user_id left join app_user by_ on by_.id = i.invited_by
+     where i.brand_id = $1 and i.answered_at is null and i.expires_at > now() order by i.created_at desc`,
     [brandId],
   );
 }
 
-export async function addMember(ctx: Ctx, p: Principal, brandId: string, raw: unknown) {
-  const input = memberInput.parse(raw);
+export async function cancelInvitation(ctx: Ctx, p: Principal, brandId: string, invitationId: string) {
   return ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.manage');
-    const user =
-      (await db.one('select id from app_user where lower(email) = $1', [input.email])) ??
-      (await db.one('insert into app_user (email, name) values ($1,$2) returning id', [input.email, input.name ?? null]))!;
-    const exists = await db.one('select 1 from member where user_id = $1 and brand_id = $2', [user.id, brandId]);
-    if (exists) throw conflict('already_member', 'That person is already a member of this brand');
-    const m = (await db.one('insert into member (user_id, brand_id, role) values ($1,$2,$3) returning *', [user.id, brandId, input.role]))!;
-    await audit(db, p, brandId, 'member.added', 'member', m.id, null, { email: input.email, role: input.role });
-    return m;
+    const row = await db.one(
+      `update member_invitation set answered_at = now(), answer = 'cancelled' where id = $1 and brand_id = $2 and answered_at is null returning id`,
+      [invitationId, brandId],
+    );
+    if (!row) throw notFound('Invitation');
+    await audit(db, p, brandId, 'member.invitation_cancelled', 'member_invitation', invitationId, null, null);
+    return { id: invitationId };
   });
 }
 
-async function assertNotLastAdmin(db: Parameters<Parameters<Ctx['db']['tx']>[0]>[0], brandId: string, memberId: string) {
+/** The invitations waiting for this person's answer. */
+export async function myInvitations(ctx: Ctx, userId: string) {
+  return ctx.db.query(
+    `select i.id, i.role, i.created_at, i.expires_at, b.id as brand_id, b.name as brand, w.name as workspace, by_.email as invited_by
+     from member_invitation i join brand b on b.id = i.brand_id join workspace w on w.id = b.workspace_id
+     left join app_user by_ on by_.id = i.invited_by
+     where i.user_id = $1 and i.answered_at is null and i.expires_at > now() order by i.created_at`,
+    [userId],
+  );
+}
+
+/** The invited person, signed in as themselves, accepts (and becomes a member with the role they were offered) or declines. */
+export async function answerInvitation(ctx: Ctx, p: Principal, invitationId: string, accept: boolean) {
+  if (p.kind !== 'user') throw forbidden('Only the person invited can answer an invitation');
+  return ctx.db.tx(async (db) => {
+    const inv = await db.one<{ id: string; brand_id: string; role: string }>(
+      `select id, brand_id, role from member_invitation where id = $1 and user_id = $2 and answered_at is null and expires_at > now() for update`,
+      [invitationId, p.userId],
+    );
+    if (!inv) throw notFound('Invitation');
+    const answer = accept ? 'accepted' : 'declined';
+    await db.query('update member_invitation set answered_at = now(), answer = $2 where id = $1', [inv.id, answer]);
+    if (accept) {
+      const m = await db.one<{ id: string }>(
+        'insert into member (user_id, brand_id, role) values ($1,$2,$3) on conflict (user_id, brand_id) do nothing returning id',
+        [p.userId, inv.brand_id, inv.role],
+      );
+      await audit(db, p, inv.brand_id, 'member.added', 'member', m?.id ?? null, null, { email: p.email, role: inv.role, via: 'invitation' });
+    } else {
+      await audit(db, p, inv.brand_id, 'member.invitation_declined', 'member_invitation', inv.id, null, null);
+    }
+    return { id: inv.id, answer, brandId: inv.brand_id, role: inv.role };
+  });
+}
+
+type Tx = Parameters<Parameters<Ctx['db']['tx']>[0]>[0];
+
+/**
+ * Revokes the producer tokens a person made for a brand, when they stop being able to make them (they leave the brand, or are no
+ * longer its admin). An agent running on one of them stops at its next call; the brand's admins make it a new one.
+ */
+async function revokeTokensOf(db: Tx, p: Principal, brandId: string, userId: string, reason: 'member_removed' | 'no_longer_admin') {
+  const rows = await db.query<{ id: string; name: string }>(
+    'update api_token set revoked_at = now() where brand_id = $1 and created_by = $2 and revoked_at is null returning id, name',
+    [brandId, userId],
+  );
+  for (const t of rows) await audit(db, p, brandId, 'token.revoked', 'api_token', t.id, null, { name: t.name, reason });
+  return rows.length;
+}
+
+async function assertNotLastAdmin(db: Tx, brandId: string, memberId: string) {
   const other = await db.one(`select 1 from member where brand_id = $1 and role = 'admin' and id <> $2`, [brandId, memberId]);
   if (!other) throw conflict('last_admin', 'A brand needs at least one admin');
 }
@@ -123,7 +264,8 @@ export async function changeMemberRole(ctx: Ctx, p: Principal, brandId: string, 
     if (m.role === 'admin' && next !== 'admin') await assertNotLastAdmin(db, brandId, memberId);
     await db.query('update member set role = $2 where id = $1', [memberId, next]);
     await audit(db, p, brandId, 'member.role_changed', 'member', memberId, { role: m.role }, { role: next });
-    return { id: memberId, role: next };
+    const tokensRevoked = m.role === 'admin' && next !== 'admin' ? await revokeTokensOf(db, p, brandId, m.user_id, 'no_longer_admin') : 0;
+    return { id: memberId, role: next, tokensRevoked };
   });
 }
 
@@ -135,7 +277,8 @@ export async function removeMember(ctx: Ctx, p: Principal, brandId: string, memb
     if (m.role === 'admin') await assertNotLastAdmin(db, brandId, memberId);
     await db.query('delete from member where id = $1', [memberId]);
     await audit(db, p, brandId, 'member.removed', 'member', memberId, { role: m.role }, null);
-    return { id: memberId };
+    const tokensRevoked = await revokeTokensOf(db, p, brandId, m.user_id, 'member_removed');
+    return { id: memberId, tokensRevoked };
   });
 }
 
@@ -206,8 +349,10 @@ export const hashToken = (token: string) => createHash('sha256').update(token).d
 
 export async function listTokens(ctx: Ctx, p: Principal, brandId: string) {
   await authorize(ctx.db, p, brandId, 'brand.manage');
+  // Who made each one matters: a token stops working when its maker leaves the brand or stops being its admin.
   return ctx.db.query(
-    'select id, name, created_at, expires_at, revoked_at, last_used_at from api_token where brand_id = $1 order by created_at desc',
+    `select t.id, t.name, t.created_at, t.expires_at, t.revoked_at, t.last_used_at, u.email as created_by_email
+     from api_token t join app_user u on u.id = t.created_by where t.brand_id = $1 order by t.created_at desc`,
     [brandId],
   );
 }

@@ -30,11 +30,11 @@ This follows the delivery plan in the technical specification ("Estudio de conte
 | | How it signs in | What it posts | Its token | Can it publish the same post twice? |
 | --- | --- | --- | --- | --- |
 | **Threads** | Sign-in page | Text with a picture, a video, or a carousel (a post is always a file: there are no text-only posts in this studio) | Lasts 60 days, renewed up to a week before it ends | No: a post is made in two calls, and the second is only made once |
-| **Bluesky** | A handle and an **app password**, typed in *Settings → Accounts* (no sign-in page exists for apps) | Pictures (up to 4) or a video; the hashtag, link and mention in the text become links. The 300-character limit counts what a person sees as one character | The session lasts about two hours; renewed ten minutes ahead, and made again from the stored app password if its renewal fails | No: the post's record name is made from the publication's id, so a repeat overwrites itself |
-| **X** | Sign-in page with PKCE | Pictures (up to 4) or a video, with alt text. A link in the text is a warning, because X charges 13 times more for a post with one | Renewed five minutes before it ends | X has no key for this. A post whose answer was lost is found again by listing the account's own posts after the attempt, before another is made |
+| **Bluesky** | A handle and an **app password**, typed in *Settings → Accounts* (no sign-in page exists for apps) | Pictures (up to 4) or a video; the hashtag, link and mention in the text become links. The 300-character limit counts what a person sees as one character | The session lasts about two hours; renewed ten minutes ahead, and made again from the stored app password if its renewal fails | No: the post's record key is a TID made from the publication and its time and kept before the write, so a repeat overwrites itself |
+| **X** | Sign-in page with PKCE | Pictures (up to 4) or a video, with alt text. A link in the text, or in the first comment, is a warning, because X charges 13 times more for any post with one, replies included (and it makes a link of a bare domain too) | Renewed five minutes before it ends | X has no key for this. A post whose answer was lost is found again among the account's own posts since the attempt, by the media it carries (X rewrites the text's links), before another is made |
 | **LinkedIn** | Sign-in page; you choose the company page | A picture, several pictures, a video, or a document (PDF) | No renewal for most apps: the token is kept and the account warns a week before it ends | No key either; a repeat is refused by LinkedIn with the original's name, which is how it is found |
-| **Pinterest** | Sign-in page; **the account is a board** | A pin (one picture), a carousel pin, or a video pin; title, destination link and alt text | Renewed three days before it ends | No key; the board is searched before a second pin is made |
-| **TikTok** | Sign-in page | A video or photos | Renewed an hour before it ends | The upload is made in `publish` and TikTok's processing is watched in `verify`. A photo post is not safe to repeat, and the app does not repeat it |
+| **Pinterest** | Sign-in page; **the account is a board** | A pin (one picture), a carousel pin, or a video pin (the video streamed from storage, never held in memory); title, destination link and alt text | Renewed three days before it ends | No key; the board is searched before a second pin is made |
+| **TikTok** | Sign-in page (it reads only what `user.info.basic` gives: open_id, display name, avatar) | A video or photos | Renewed an hour before it ends; a renewal token that changes is kept | The upload is made in `publish` and TikTok's processing is watched in `verify`. A photo post is not safe to repeat, and the app does not repeat it |
 
 Until the network approves the app, **TikTok** (always), **Pinterest** and **YouTube** accept the post but only the account can see it.
 The studio says so on the post, in each network's own words, marks the post *Private*, and an admin flips the account's approval flag
@@ -43,19 +43,34 @@ readings**.
 
 ### What the dialog asks for
 
-A connector declares the settings it needs; the schedule dialog draws them, with only the ones that apply to the kind of post, and the API
-checks them. Nothing hidden is saved. TikTok's are the strictest, because TikTok obliges an app that posts for people to show them:
+A connector declares the settings it needs; when an account is chosen, the schedule dialog asks the server for that account's settings
+(`GET /api/brands/:brandId/accounts/:accountId/options`) and draws them, with only the ones that apply to the kind of post, and the API
+checks them. Nothing hidden is saved. TikTok's are the strictest, because TikTok obliges an app that posts for people to ask TikTok, **while
+the post is being written**, what this creator may do (`creator_info`), and to show:
 
-- **Who can see this post**: nothing is chosen for the person, and it cannot be scheduled until they choose.
-- Comments, duets and stitches: all unticked.
-- *This post promotes a brand, product or service*: if ticked, say whether it is your own brand, branded content, or both. Branded content cannot be private.
-- TikTok's consent sentences, shown **word for word**, each needing a tick (the branded-content one only for branded content).
+- Who the post goes out as: *Posting to TikTok as* the creator's nickname (and @username).
+- **Who can see this post**: only the choices TikTok returns for this creator, nothing chosen, and it cannot be scheduled until they choose.
+  Until TikTok audits the app only *Only me* is offered, and TikTok also requires the TikTok account itself to be set to private.
+- Comments, duets and stitches: all unticked, and shown switched off (not tickable) where the creator has switched them off in TikTok.
+- *This post promotes a brand, product or service*: if ticked, say whether it is your own brand (labelled *Promotional content*), branded
+  content (labelled *Paid partnership*; it cannot be private, so *Only me* cannot be picked with it), or both.
+- TikTok's consent sentence, shown **word for word** and needing a tick: "By posting, you agree to TikTok's Music Usage Confirmation.",
+  replaced by "By posting, you agree to TikTok's Branded Content Policy and Music Usage Confirmation." for branded content.
+- The longest video this creator may post, and that TikTok can take a few minutes to process the post before it shows on the profile.
+
+What TikTok said is kept on the account, so scheduling is checked against it (the privacy chosen is on offer, nothing is allowed that the
+creator switched off, the video is not too long), and publishing asks TikTok again just before sending: a privacy no longer offered stops
+the post, and what the creator has switched off since goes out switched off. A YouTube channel's settings start from its made-for-kids
+default, when one is set (see [phase 2](phase-2.md#corrections-after-the-connector-review-october-2026)).
 
 ### Settings of each network that the studio does not control
 
 The studio cannot make a network publish something it refuses. Each connector turns what the network says into one of six kinds of
 failure (no longer allowed to sign in, rate limit, file refused, transient, not supported, unknown) and the same engine as phase 2
 handles it: a transient failure is retried five times with growing waits; one that needs a person hands the post over, never silently.
+Only a token the network no longer takes asks for the account to be connected again. A 403 is read for what it says: X's refusal of the
+app's set-up (a project, an access level) or of the content, LinkedIn's or Pinterest's missing permission, or a refusal from Bluesky's
+video service, hands the post to a person with the network's words and leaves the account as it is.
 
 ## Results
 
@@ -86,6 +101,11 @@ them, and the prize dialog says so when a post's account lacks them.
    note at the end ("This is an automatic message." unless you change it), which cannot be removed.
 3. **A comment arrives**: Meta pushes it to `/api/meta/webhook` (signed with the app secret; the handshake uses `META_WEBHOOK_VERIFY_TOKEN`), or the
    worker finds it while reading the comments of posts with a running rule every few minutes. Only top-level comments that contain the keyword and are not the account's own count.
+   Meta only pushes a Page's events once the app is **subscribed to that Page** (`POST /{page-id}/subscribed_apps`, which needs
+   `pages_manage_metadata`, one of the permissions asked for with prizes on). The studio subscribes when a Facebook Page (field `feed`) or an
+   Instagram account (field `comments`, through its Page) is connected with that permission, and again when a rule that answers by message
+   starts; it keeps the other account's fields when both share a Page, and takes its own away when the account is disconnected. The
+   account check (*Check* on the account) says whether Meta pushes its comments.
 4. **The private reply**: sent by the app to the comment, within Meta's rules: one message per comment, within 7 days of it, and no more than 700 an hour
    per account (Meta's own cap is 750). The same person gets the same prize once, whichever post they commented on, even if two comments arrive at once
    (the database enforces it). If it cannot go yet it is retried with growing waits, never past the seven days.
@@ -107,15 +127,21 @@ Bluesky needs only `TOKEN_KEY`. For each, the redirect address is `$APP_URL/api/
 
 - **Threads**: a Meta developer app with the Threads use case; `THREADS_APP_ID`, `THREADS_APP_SECRET`. The studio asks for `threads_basic`, `threads_content_publish`, `threads_manage_insights` and `threads_manage_replies`.
 - **TikTok**: a developer app with Login Kit and the Content Posting API; `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`. For photo posts TikTok downloads
-  the pictures itself, only from a **domain you verified in its portal**, so `MEDIA_URL` must be that domain. Until the audit passes, posts are private.
+  the pictures itself, only from a **domain you verified in its portal**: the domain of the signed addresses the app hands out. With the local storage
+  driver that is `MEDIA_URL`; with `STORAGE_DRIVER=s3` the addresses are signed for the bucket, so it is the host of `S3_PUBLIC_ENDPOINT` (or of
+  `S3_ENDPOINT` when that is not set), not `MEDIA_URL`. The server check (*Settings → Server*, `npm run check:networks`) names the domain to verify.
+  Until the audit passes, posts are private, and TikTok only takes them from a TikTok account that is itself set to private.
 - **LinkedIn**: an app with the Community Management API product (the studio asks for `w_organization_social`, `r_organization_social` and `rw_organization_admin`), and an admin of the company page; `LINKEDIN_CLIENT_ID`,
   `LINKEDIN_CLIENT_SECRET`. The API is versioned by month and each version is retired after about a year: **raise `LINKEDIN_VERSION`** (`YYYYMM`) when
   a post's history says the version is retired. The studio says so in those words.
 - **X**: an OAuth 2.0 app (scopes `tweet.read`, `tweet.write`, `users.read`, `offline.access`, `media.write`); `X_CLIENT_ID`, `X_CLIENT_SECRET`. Posting is billed per post by X.
 - **Pinterest**: an app (Trial access shows pins only to you; ask for Standard); `PINTEREST_APP_ID`, `PINTEREST_APP_SECRET`.
 - **Bluesky**: *Settings → Accounts → Connect Bluesky*, with the handle and an **app password** made in Bluesky (*Settings → Privacy and security → App passwords*), not
-  the account password. A different server: `BLUESKY_PDS_URL`.
-- **Meta, for prizes**: register `$APP_URL/api/meta/webhook` (objects *Instagram* and *Page*, comments) with the verify token you put in `META_WEBHOOK_VERIFY_TOKEN`, and
+  the account password. A different server: `BLUESKY_PDS_URL`. A server a person types in the form instead is held to the webhooks' rules: only the
+  https address of a server (http only to a private address where `WEBHOOK_ALLOW_PRIVATE_NETWORKS` allows it), checked when connecting, with no
+  redirects followed. Videos go to `BLUESKY_VIDEO_URL` with two service tokens: one for the video service itself (the allowance), one for the server the
+  account's repository is on (the upload), which is read from the account's DID document (bsky.social only fronts it).
+- **Meta, for prizes**: register `$APP_URL/api/meta/webhook` (objects *Instagram* and *Page*, comments; the studio subscribes the app to each Page itself, above) with the verify token you put in `META_WEBHOOK_VERIFY_TOKEN`, and
   `$APP_URL/api/meta/data-deletion` and `$APP_URL/data-deletion` as the data-deletion callback and instructions. *Settings → Prizes* shows these addresses.
   Meta needs to review the app before it pushes comments from, or lets private messages go to, accounts outside your team. Until then the worker reads the comments itself.
 
@@ -173,6 +199,25 @@ Bluesky needs only `TOKEN_KEY`. For each, the redirect address is `$APP_URL/api/
 - **Not verified**: anything against a real network (above); the Docker image (no daemon here); S3; browsers other than Chromium; the web app has no
   unit tests of its own: its behaviour is exercised only through the browser run. Phone screens were checked for sideways scroll and by eye in screenshots,
   not on a device.
+
+## Corrections after the connector review (October 2026)
+
+A review against the networks' current documentation (read 2026-10-01 and 02, **still no real network**) found these, fixed with a test
+each and the stand-ins changed to behave as documented, since they had shared the code's misunderstandings:
+
+- **TikTok could not be connected at all**: sign-in asked `/v2/user/info/` for `username`, which needs `user.info.profile`; TikTok refuses
+  the whole call (`scope_not_authorized`). It asks only for what `user.info.basic` gives. The compose-time rules are above.
+- **Bluesky video** used the wrong audiences for its service tokens (the server signed in to, for both), so the video service refused
+  them, and that refusal marked the whole account for reconnection. Post record keys are TIDs, as Bluesky expects, instead of the
+  publication's id. The *Server* field is held to the webhooks' address rules.
+- **X** never found a post whose answer was lost (it compared the exact text, which X gives back rewritten), and advised moving a link to
+  the first comment, which costs the same. Details in the table above.
+- **LinkedIn**'s first comment lacked `object`, the post it is on. **Pinterest** read a whole video into memory to upload it.
+- **A 403** from X, LinkedIn or Pinterest marked the account for reconnection whatever it meant (see above).
+- **`check --capture`** wrote Bluesky's session tokens and most of each signed address into the transcript; secrets are now removed by their
+  shape (any JWT, any key that names a credential, every query value of a signed address).
+- The browser run (`e2e/phase4.sh`) was **not** run again after these changes: the TikTok settings now come from the account (with one consent
+  sentence at a time), so its TikTok steps need the stand-in it starts to answer `creator_info`, and may need their expectations brought up to date.
 
 ## Known limits
 

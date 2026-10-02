@@ -1,9 +1,11 @@
-import { mkdir, readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { chmod, chown, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Comment, Requirements, Studio, VersionDetail } from './api.js';
 import type { Logger } from './log.js';
 
 export interface Dirs {
+  /** Everything of one brand: nobody else's agent may look in here. */
+  brand: string;
   /** Everything about this piece (or slot). `sources` lives here and is kept between rounds. */
   piece: string;
   sources: string;
@@ -17,13 +19,59 @@ export interface Dirs {
 const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80);
 
 export function dirsFor(root: string, brandKey: string, scope: string, runId: string): Dirs {
-  const piece = path.join(root, safe(brandKey), safe(scope));
+  const brand = path.join(root, safe(brandKey));
+  const piece = path.join(brand, safe(scope));
   const run = path.join(piece, 'runs', safe(runId));
-  return { piece, sources: path.join(piece, 'sources'), run, input: path.join(run, 'input'), output: path.join(run, 'output'), frames: path.join(run, 'input', 'frames'), previous: path.join(run, 'input', 'previous') };
+  return { brand, piece, sources: path.join(piece, 'sources'), run, input: path.join(run, 'input'), output: path.join(run, 'output'), frames: path.join(run, 'input', 'frames'), previous: path.join(run, 'input', 'previous') };
 }
 
-export async function ensureDirs(d: Dirs) {
-  for (const dir of [d.sources, d.input, d.output, d.frames, d.previous]) await mkdir(dir, { recursive: true });
+/** Whom the agent runs as, when not as the runner (agent.runAs). */
+export interface Access {
+  runAs?: { uid: number; gid: number };
+}
+
+/**
+ * Lays the directories out with permissions that keep brands apart. Without runAs everything is the runner's, readable by the
+ * runner's user only (0700). With runAs, what the runner writes (the run directory, its input, the logs) stays the runner's and
+ * is readable by the agent's group only (0750), so the agent can read its instructions but cannot plant anything there; only
+ * `output/` and `sources/` are the agent's own. Directories made by an older runner are brought into line on the way.
+ */
+export async function ensureDirs(d: Dirs, access: Access = {}) {
+  const ours = access.runAs ? 0o750 : 0o700;
+  for (const dir of [d.brand, d.piece, path.join(d.piece, 'runs'), d.run, d.input, d.frames, d.previous]) {
+    await mkdir(dir, { recursive: true, mode: ours });
+    await chmod(dir, ours);
+    if (access.runAs) await chown(dir, process.getuid!(), access.runAs.gid);
+  }
+  for (const dir of [d.sources, d.output]) await agentDir(dir, access);
+}
+
+/** A directory the agent writes in: its own when it runs as another user. */
+export async function agentDir(dir: string, access: Access = {}) {
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  if (access.runAs) await chown(dir, access.runAs.uid, access.runAs.gid);
+  await chmod(dir, 0o700);
+}
+
+const MAX_RESULT = 1024 * 1024;
+
+/**
+ * Reads result.json, if the agent left one: only a file inside the output directory (not a link to somewhere else, which the
+ * runner would otherwise read for it and quote in an error), and not an absurd size.
+ */
+export async function readResult(outDir: string): Promise<{ text: string } | { missing: true } | { problem: string }> {
+  const file = path.join(outDir, 'result.json');
+  try {
+    await stat(file);
+  } catch {
+    return { missing: true };
+  }
+  const real = await inside(outDir, 'result.json');
+  if (!real) return { problem: 'result.json leads somewhere outside the output directory' };
+  const st = await stat(real);
+  if (!st.isFile()) return { problem: 'result.json is not a file' };
+  if (st.size > MAX_RESULT) return { problem: `result.json is ${st.size} bytes, more than the ${MAX_RESULT} allowed` };
+  return { text: await readFile(real, 'utf8') };
 }
 
 const clock = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
@@ -99,9 +147,9 @@ export interface Prepared {
 
 /** Lays out the input directory for a request for changes: the comments, their frames, the last version, what the networks accept. */
 export async function prepareChanges(
-  studio: Studio, log: Logger, dirs: Dirs, brandId: string, versionId: string, event: unknown,
+  studio: Studio, log: Logger, dirs: Dirs, brandId: string, versionId: string, event: unknown, access: Access = {},
 ): Promise<Prepared> {
-  await ensureDirs(dirs);
+  await ensureDirs(dirs, access);
   const [version, comments, requirements] = await Promise.all([studio.version(versionId), studio.comments(versionId), studio.requirements(brandId)]);
   const eligible = comments.filter((c) => !c.people_only);
   const peopleOnly = comments.filter((c) => c.people_only);

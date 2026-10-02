@@ -93,13 +93,17 @@ export async function checkServer(ctx: Ctx): Promise<CheckResult[]> {
     out.push(result('app_url', 'pass', 'Public address', `Register this redirect address with every network: ${redirect}`));
   }
 
-  const media = new URL(c.MEDIA_URL);
+  // The address the networks download files from: this app's own media route, or, with S3, the bucket's (signed) public address.
+  const s3Media = c.STORAGE_DRIVER === 's3' ? (c.S3_PUBLIC_ENDPOINT || c.S3_ENDPOINT || `https://${c.S3_BUCKET}.s3.${c.S3_REGION === 'auto' ? 'us-east-1' : c.S3_REGION}.amazonaws.com`) : null;
+  const mediaName = s3Media ? (c.S3_PUBLIC_ENDPOINT ? 'S3_PUBLIC_ENDPOINT' : c.S3_ENDPOINT ? 'S3_ENDPOINT' : 'the S3 bucket address') : 'MEDIA_URL';
+  const mediaUrl = s3Media ?? c.MEDIA_URL;
+  const media = new URL(mediaUrl);
   if (isPrivateHost(media.hostname)) {
-    out.push(result('media_url', 'fail', 'Media address', `MEDIA_URL is ${c.MEDIA_URL}: the networks cannot reach it, and Instagram, Threads, Pinterest and TikTok photos download the files from it.`, 'Point MEDIA_URL at a public https domain that serves the signed media addresses.'));
+    out.push(result('media_url', 'fail', 'Media address', `${mediaName} is ${mediaUrl}: the networks cannot reach it, and Instagram, Threads, Pinterest and TikTok photos download the files from it.`, `Point ${s3Media ? 'S3_PUBLIC_ENDPOINT' : 'MEDIA_URL'} at a public https domain that serves the signed media addresses.`));
   } else if (media.protocol !== 'https:') {
-    out.push(result('media_url', 'warn', 'Media address', `MEDIA_URL is ${c.MEDIA_URL}, which is not https.`, 'Some networks refuse to download from an http address.'));
+    out.push(result('media_url', 'warn', 'Media address', `${mediaName} is ${mediaUrl}, which is not https.`, 'Some networks refuse to download from an http address.'));
   } else {
-    out.push(result('media_url', 'pass', 'Media address', `Networks will download files from ${c.MEDIA_URL}. TikTok photo posts also need this domain verified in TikTok's developer portal.`));
+    out.push(result('media_url', 'pass', 'Media address', `Networks will download files from ${media.host}${s3Media ? ` (${mediaName}, where the signed S3 addresses point)` : ''}. TikTok photo posts also need this domain verified in TikTok's developer portal: ${media.host}.`));
   }
 
   out.push(c.STORAGE_DRIVER === 'local' && c.NODE_ENV === 'production'
@@ -265,7 +269,7 @@ export async function checkAccount(ctx: Ctx, accountId: string): Promise<Account
     try {
       const h = await connector.health(account, connectorEnv(ctx, accountId));
       results.push(h.valid
-        ? result('health', 'pass', 'Network accepts the connection', `Answered in ${fmtMs(Date.now() - t0)}${h.expiresAt ? `; access ends ${h.expiresAt.slice(0, 10)}` : ''}.`)
+        ? result('health', 'pass', 'Network accepts the connection', `Answered in ${fmtMs(Date.now() - t0)}${h.expiresAt ? `; access ends ${h.expiresAt.slice(0, 10)}` : ''}.${h.note ? ` ${h.note}` : ''}`)
         : result('health', 'fail', 'Network accepts the connection', h.note ?? 'The network says this connection is no longer valid.', 'Connect the account again.'));
     } catch (err) {
       results.push({ id: 'health', title: 'Network accepts the connection', ...describe(err) });

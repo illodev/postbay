@@ -20,6 +20,8 @@ export class FakePinterest extends FakeServer {
   failVideo = false;
   pins = new Map<string, any>();
   loseNextPinAnswer = false;
+  /** The bytes each video upload delivered as its file. */
+  uploadedFiles = new Map<string, Buffer>();
   lifetime: Record<string, number> = { IMPRESSION: 800, PIN_CLICK: 20, SAVE: 33, OUTBOUND_CLICK: 9, VIDEO_MRC_VIEW: 300, VIDEO_AVG_WATCH_TIME: 12500 };
   private n = 0;
 
@@ -48,13 +50,25 @@ export class FakePinterest extends FakeServer {
     // The video upload address takes no bearer token: its parameters are the credential.
     let m = /^\/upload\/(.+)$/.exec(c.path);
     if (m && c.method === 'POST') {
-      const raw = (await readAll(req)).toString('latin1');
+      // The upload address is S3's form upload: it wants the length up front (no chunked body), the fields first and the file last.
+      if (!c.headers['content-length'] || /chunked/i.test(String(c.headers['transfer-encoding'] ?? ''))) {
+        await readAll(req);
+        return reply.code(411).send('<Error><Code>MissingContentLength</Code><Message>You must provide the Content-Length HTTP header.</Message></Error>');
+      }
+      const buf = await readAll(req);
+      if (buf.length !== Number(c.headers['content-length'])) return err(400, 'The body did not match its Content-Length');
+      const raw = buf.toString('latin1');
       const mm = this.media.get(m[1]!);
       if (!mm) return err(404, 'No such upload');
       const fileAt = raw.indexOf('name="file"');
       const keyAt = raw.indexOf('name="key"');
       mm.fieldsBeforeFile = keyAt >= 0 && fileAt > keyAt;
       if (!mm.fieldsBeforeFile) return err(400, 'The file has to be the last field of the form');
+      // What arrived as the file, for the tests to compare with what was sent.
+      const boundary = /boundary=(.+)$/.exec(String(c.headers['content-type']))?.[1] ?? '';
+      const start = buf.indexOf('\r\n\r\n', fileAt) + 4;
+      const end = buf.lastIndexOf(Buffer.from(`\r\n--${boundary}--`));
+      this.uploadedFiles.set(m[1]!, buf.subarray(start, end));
       mm.uploaded = true;
       return reply.code(204).send();
     }

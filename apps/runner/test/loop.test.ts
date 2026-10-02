@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -479,6 +479,101 @@ describe('what the agent is and is not given', () => {
     const v3 = (await versions(variantId))[2]!;
     expect(v3.notes).toMatch(/sources seen: round-\d+\.txt/);
     expect(v3.notes).toContain('Agent round 2');
+  });
+});
+
+describe('the runner\'s secrets', () => {
+  it('posts nothing of a result that holds one, wherever the agent put it', async () => {
+    // The agent has got hold of the studio token (here it is simply handed to it) and writes it where the runner posts from.
+    for (const mode of ['leak', 'leak-in-file']) {
+      await rig({ mode, agentExtra: { env: { FAKE_AGENT_MODE: mode, FAKE_LEAK: token } } });
+      const { pieceId, variantId, versionId } = await piece();
+      const a = await comment(versionId, 'Brighter');
+      await requestChanges(versionId);
+      const run = await finishedRun(pieceId);
+      expect(run.outcome, mode).toBe('failed');
+      expect(run.notes, mode).toContain('held a secret of this runner');
+      expect((await versions(variantId)).length, mode).toBe(1); // nothing uploaded
+      const t = await thread(versionId, a);
+      expect(t.replies, mode).toEqual([expect.objectContaining({ reply_kind: 'needs_human', by_agent: true })]);
+      const posted = JSON.stringify([await env.db.query('select * from agent_run where piece_id = $1', [pieceId]), t, await versions(variantId)]);
+      expect(posted, mode).not.toContain(token);
+      await rigs.pop()!.stop();
+    }
+  });
+
+  it('takes one out of whatever else it posts, such as the error output of an agent that crashed', async () => {
+    await rig({ mode: 'leak-crash', agentExtra: { env: { FAKE_AGENT_MODE: 'leak-crash', FAKE_LEAK: token } } });
+    const { pieceId, versionId } = await piece();
+    await comment(versionId, 'Brighter');
+    await requestChanges(versionId);
+    const run = await finishedRun(pieceId);
+    expect(run.outcome).toBe('failed');
+    expect(run.notes).toContain('exited with 3');
+    expect(run.notes).toContain('token=[secret removed]');
+    expect(run.notes).not.toContain(token);
+  });
+
+  // bwrap (bubblewrap) as the sandbox, where it is installed and allowed to make namespaces.
+  const bwrap = (() => {
+    try {
+      execFileSync('bwrap', ['--ro-bind', '/', '/', '--unshare-all', 'true'], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  it.skipIf(!bwrap)('lets a sandboxed agent see its piece and nothing else: not the runner\'s secret files, its environment, or other brands', async () => {
+    // What the agent must not reach: a secret file of the runner's, another brand's workspace, the runner's environment.
+    const secretFile = path.join(work, 'lumen.token');
+    writeFileSync(secretFile, token);
+    chmodSync(secretFile, 0o600);
+    const snoop = (r: Rig) => {
+      const other = path.join(r.config.workspaceRoot, 'otherbrand', 'piece');
+      mkdirSync(other, { recursive: true });
+      writeFileSync(path.join(other, 'brief.md'), 'another brand\'s plans');
+      return [secretFile, path.join(other, 'brief.md'), `/proc/${process.pid}/environ`].join(',');
+    };
+    const readable = async (r: Rig) => {
+      const { pieceId, variantId, versionId } = await piece();
+      await comment(versionId, 'Brighter');
+      await requestChanges(versionId);
+      const run = await finishedRun(pieceId);
+      expect(run.outcome, run.notes).toBe('uploaded');
+      return /readable: ([^;]*)/.exec((await versions(variantId))[1]!.notes as string)![1]!;
+    };
+
+    // Without a sandbox, an agent of the runner's own user reads all three: what the finding was about.
+    const plain = await rig({ mode: 'snoop' });
+    plain.config.brands.lumen!.agent.env.FAKE_SNOOP = snoop(plain);
+    expect((await readable(plain)).split(',')).toHaveLength(3);
+    await rigs.pop()!.stop();
+
+    const node = path.dirname(path.dirname(process.execPath));
+    const boxed = await rig({
+      mode: 'snoop',
+      agentExtra: {
+        sandbox: {
+          command: [
+            'bwrap', '--die-with-parent', '--new-session', '--unshare-all',
+            '--ro-bind', '/usr', '/usr', '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
+            '--ro-bind-try', '/etc/alternatives', '/etc/alternatives', '--ro-bind-try', '/etc/ld.so.cache', '/etc/ld.so.cache',
+            '--ro-bind', node, node, '--ro-bind', here, here,
+            '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp',
+            '--bind', '{{pieceDir}}', '/work', '--chdir', '{{agentRunDir}}', '--',
+          ],
+          pieceDir: '/work',
+        },
+      },
+    });
+    boxed.config.brands.lumen!.agent.env.FAKE_SNOOP = snoop(boxed);
+    expect(await readable(boxed)).toBe('none');
+    // The brand's directory and the runner's state are closed to other users too.
+    const modeOf = (p: string) => (statSync(p).mode & 0o777).toString(8);
+    expect(modeOf(path.join(boxed.config.workspaceRoot, 'lumen'))).toBe('700');
+    expect(modeOf(boxed.config.stateDir)).toBe('700');
+    expect(modeOf(boxed.config.workspaceRoot)).toBe('700');
   });
 });
 

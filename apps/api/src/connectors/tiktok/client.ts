@@ -29,7 +29,7 @@ export function classifyTikTok(r: Reply): ConnectorError | null {
   if (RATE.has(code) || r.status === 429) return new ConnectorError('rate_limit', message, { ...opts, retryAfterSec: retryAfterSeconds(r.headers) ?? 3600 });
   if (AUTH.has(code) || r.status === 401) return new ConnectorError('auth', `${message} (TikTok no longer accepts this connection)`, opts);
   if (code === 'unaudited_client_can_only_post_to_private_accounts') {
-    return new ConnectorError('unsupported', `TikTok has not audited this app yet, so it only accepts private posts: ${message}`, opts);
+    return new ConnectorError('unsupported', `TikTok has not audited this app yet, so it only takes posts that only the account can see, and only from a TikTok account that is itself set to private: switch the account to private in TikTok's settings, or post this one by hand (${message})`, opts);
   }
   if (code === 'url_ownership_unverified') {
     return new ConnectorError('unsupported', `TikTok only downloads pictures from a domain verified in its developer portal, and the media domain is not: ${message}`, opts);

@@ -20,6 +20,12 @@ import { ANALYTICS_SCOPE } from './oauth.js';
  * A Short is not a separate kind of upload: YouTube decides from the shape (vertical or square) and the length (up to 3
  * minutes). The "short" placement exists so the review screen can show where YouTube's own interface covers the frame.
  */
+/** YouTube's declaration that a video is, or is not, made for children (COPPA). Required of every channel; nobody is chosen for. */
+const MADE_FOR_KIDS = [
+  { value: 'no', label: "No, it's not made for kids" },
+  { value: 'yes', label: "Yes, it's made for kids" },
+];
+
 const CAPS: Capabilities = {
   network: 'youtube',
   placements: [
@@ -31,10 +37,53 @@ const CAPS: Capabilities = {
       profiles: { video: 'yt-video' }, nativeScheduling: true,
     },
   ],
+  // YouTube counts the description in bytes (5,000 of UTF-8), which validate() checks: an accent takes two, an emoji four.
   text: { maxChars: 5000, maxHashtags: 60, previewCutoff: 100, firstComment: false },
   aiLabel: true,
   nativeScheduling: { minLeadMinutes: 1, maxLeadDays: 3650 },
+  options: [
+    {
+      key: 'madeForKids', label: 'Is this video made for kids?', type: 'select', required: true, choices: MADE_FOR_KIDS,
+      help: "YouTube requires this declaration for every video (children's privacy law, COPPA). The channel's default is filled in when one is set in Settings → Accounts.",
+    },
+  ],
 };
+
+/**
+ * How long after its publishAt a video may still be private before that counts as YouTube holding it back: the switch is not instant.
+ * Under the publisher's hour of looks at a post that is still processing, so it is this that concludes, with the right words.
+ */
+const PUBLISH_GRACE_MS = 45 * 60_000;
+const DESCRIPTION_MAX_BYTES = 5000;
+const utf8 = new TextEncoder();
+const bytesOf = (s: string) => utf8.encode(s).length;
+
+/** YouTube refuses < and > in a description; each becomes the nearest look-alike, so "a > b" still reads the same. */
+export const cleanDescription = (s: string) => s.replace(/</g, '‹').replace(/>/g, '›');
+
+/** The description as it is sent: cleaned, then cut to whole characters within YouTube's 5,000 bytes. */
+export function descriptionOf(text: string): string {
+  const clean = cleanDescription(text);
+  if (bytesOf(clean) <= DESCRIPTION_MAX_BYTES) return clean;
+  let out = '';
+  let n = 0;
+  for (const seg of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(clean)) {
+    const b = bytesOf(seg.segment);
+    if (n + b > DESCRIPTION_MAX_BYTES) break;
+    out += seg.segment;
+    n += b;
+  }
+  return out;
+}
+
+/** The made-for-kids declaration for this video: the publication's own, or the channel's default. Undefined when nobody made one. */
+function madeForKidsOf(input: PublishInput, account?: Account): boolean | undefined {
+  const v = input.options.madeForKids;
+  if (v === 'yes' || v === true) return true;
+  if (v === 'no' || v === false) return false;
+  const d = account?.providerData.madeForKids;
+  return typeof d === 'boolean' ? d : undefined;
+}
 
 /** What the YouTube Analytics API answers: the names of the columns, then a row of numbers for each video asked about. */
 interface AnalyticsReport {
@@ -48,13 +97,15 @@ const titleOf = (input: PublishInput) => String(typeof input.options.title === '
 
 export function createYouTube(client: GoogleClient, uploadUrl: (path: string) => string): Connector {
   /** Opens an upload session. YouTube answers with the address to send the bytes to, in the Location header. */
-  async function openSession(input: PublishInput, token: string, size: number, mime: string, now: Date): Promise<{ url: string; status: Record<string, unknown> }> {
+  async function openSession(input: PublishInput, account: Account, token: string, size: number, mime: string, now: Date): Promise<{ url: string; status: Record<string, unknown> }> {
     const lead = input.scheduledAt.getTime() - now.getTime();
-    // Held for the scheduled time, unless there is no time left to hold it for.
+    const kids = madeForKidsOf(input, account);
+    // Held for the scheduled time, unless there is no time left to hold it for. The made-for-kids declaration is sent only when a
+    // person made one; otherwise YouTube applies the channel's own setting (the app never declares it for them).
     const status: Record<string, unknown> = {
       privacyStatus: lead > 120_000 ? 'private' : 'public',
       ...(lead > 120_000 ? { publishAt: input.scheduledAt.toISOString() } : {}),
-      selfDeclaredMadeForKids: input.options.madeForKids === true,
+      ...(kids === undefined ? {} : { selfDeclaredMadeForKids: kids }),
       ...(input.aiGenerated ? { containsSyntheticMedia: true } : {}),
     };
     const tags = Array.isArray(input.options.tags) ? input.options.tags.filter((t): t is string => typeof t === 'string').slice(0, 30) : undefined;
@@ -65,7 +116,7 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
       json: {
         snippet: {
           title: titleOf(input).slice(0, TITLE_MAX),
-          description: input.text,
+          description: descriptionOf(input.text),
           ...(tags ? { tags } : {}),
           categoryId: typeof input.options.categoryId === 'string' ? input.options.categoryId : '22',
         },
@@ -130,7 +181,12 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
     network: 'youtube',
     provider: 'google',
 
-    capabilities: () => CAPS,
+    /** The channel's made-for-kids default, when one was set, is what the declaration starts from. */
+    capabilities(account) {
+      const d = account?.providerData.madeForKids;
+      if (typeof d !== 'boolean') return CAPS;
+      return { ...CAPS, options: CAPS.options!.map((o) => (o.key === 'madeForKids' ? { ...o, default: d ? 'yes' : 'no' } : o)) };
+    },
 
     defaultPlacement({ pieceKind, format, media }) {
       if (pieceKind === 'story' || !media.some((m) => m.kind === 'video')) return null;
@@ -142,6 +198,22 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
       if (titleOf(input).length > TITLE_MAX) {
         issues.push({ severity: 'error', code: 'title.length', field: 'text', message: `The title has ${titleOf(input).length} characters; YouTube allows ${TITLE_MAX}. Shorten the piece title.` });
       }
+      const bytes = bytesOf(cleanDescription(input.text));
+      if (bytes > DESCRIPTION_MAX_BYTES) {
+        issues.push({
+          severity: 'error', code: 'text.bytes', field: 'text',
+          message: `YouTube counts the description in bytes: this one takes ${bytes} of ${DESCRIPTION_MAX_BYTES} (accented letters take two, emoji four, and each < or > is sent as ‹ or ›, three). Shorten it.`,
+        });
+      }
+      if (/[<>]/.test(input.text)) {
+        issues.push({ severity: 'warning', code: 'text.angle', field: 'text', message: 'YouTube does not allow < or > in a description: they will be sent as ‹ and ›.' });
+      }
+      if (madeForKidsOf(input, account) === undefined) {
+        issues.push({
+          severity: 'warning', code: 'youtube.made_for_kids', field: 'placement',
+          message: "Nobody has said whether this video is made for kids. YouTube requires that declaration: choose it here (or set the channel's default in Settings → Accounts); otherwise YouTube applies the channel's own setting, and asks for it in YouTube Studio if there is none.",
+        });
+      }
       if (account.providerData.audited !== true) {
         issues.push({
           severity: 'warning', code: 'youtube.unaudited', field: 'schedule',
@@ -151,7 +223,7 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
       return issues;
     },
 
-    async prepare(input, _account, handle: Handle, env: ConnectorEnv): Promise<PrepareResult> {
+    async prepare(input, account, handle: Handle, env: ConnectorEnv): Promise<PrepareResult> {
       const video = mainVideo(input);
       if (!video) throw new ConnectorError('unsupported', 'There is no video to upload');
       let h: Handle = { ...handle };
@@ -159,7 +231,7 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
       const token = (await env.token()).accessToken;
 
       if (!h.sessionUrl) {
-        const s = await openSession(input, token, video.bytes, video.mime, env.now());
+        const s = await openSession(input, account, token, video.bytes, video.mime, env.now());
         h = { ...h, sessionUrl: s.url, immediate: s.status.privacyStatus === 'public', status: s.status };
         await env.persist(h);
       }
@@ -203,7 +275,7 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
       return { externalId: handle.videoId as string, url: `https://www.youtube.com/watch?v=${handle.videoId}` };
     },
 
-    async verify(_account, externalId, _handle, env): Promise<VerifyResult> {
+    async verify(account, externalId, _handle, env): Promise<VerifyResult> {
       const token = (await env.token()).accessToken;
       const r = await client.get<{ items?: { status?: { uploadStatus?: string; privacyStatus?: string; publishAt?: string; rejectionReason?: string; failureReason?: string } }[] }>(
         '/youtube/v3/videos', token, { part: 'status,processingDetails', id: externalId });
@@ -215,9 +287,18 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
       }
       if (s.privacyStatus === 'public' || s.privacyStatus === 'unlisted') return { visibility: 'public', url };
       if (s.uploadStatus === 'uploaded') return { visibility: 'processing', url };
-      // Private. With a publish time still ahead that is the plan; past it, YouTube is holding the video back.
-      if (s.publishAt && new Date(s.publishAt).getTime() > env.now().getTime()) return { visibility: 'scheduled', url };
-      return { visibility: 'private', url, note: 'The video is private on YouTube: a person has to make it public in YouTube Studio' };
+      // Private. With a publish time still ahead that is the plan.
+      const publishAt = s.publishAt ? new Date(s.publishAt).getTime() : null;
+      if (publishAt !== null && publishAt > env.now().getTime()) return { visibility: 'scheduled', url };
+      // Past it, YouTube flips the video to public by itself, but not at the second: an audited project's video is given 45 minutes
+      // (looked at again every minute) before "still private" is taken as YouTube holding it back.
+      const audited = account.providerData.audited === true;
+      if (audited && publishAt !== null && env.now().getTime() - publishAt < PUBLISH_GRACE_MS) {
+        return { visibility: 'processing', url, note: 'Its time has come and YouTube has not made it public yet; it usually does within minutes' };
+      }
+      if (!audited) return { visibility: 'private', url, note: 'The video is private on YouTube, because the project has not passed its audit: a person has to make it public in YouTube Studio' };
+      if (publishAt === null) return { visibility: 'private', url, note: 'The video is private on YouTube: a person has to make it public in YouTube Studio' };
+      return { visibility: 'private', url, note: 'The video is still private on YouTube 45 minutes after its time: a person has to make it public in YouTube Studio' };
     },
 
     async discard(_account, handle, env): Promise<void> {

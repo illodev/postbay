@@ -58,19 +58,32 @@ export interface Issue {
 export interface OptionField {
   key: string;
   label: string;
-  type: 'text' | 'url' | 'select' | 'checkbox';
+  /** 'info' is a line to read (who the post goes out as, how long processing takes), with nothing to fill in. */
+  type: 'text' | 'url' | 'select' | 'checkbox' | 'info';
   /** A required field with no default has to be chosen by a person: nothing is filled in for them. */
   required?: boolean;
   help?: string;
   maxLength?: number;
-  choices?: { value: string; label: string }[];
+  /** `disabledWhen`: this choice cannot be picked while that checkbox is ticked (TikTok: branded content cannot be "Only me"). */
+  choices?: { value: string; label: string; disabledWhen?: string }[];
   default?: string | boolean;
   /** Only for these placements; absent means all. */
   placements?: string[];
   /** Only shown while this other checkbox is ticked. */
   showWhen?: string;
+  /** Hidden while this other checkbox is ticked (a notice that another one replaces). */
+  hideWhen?: string;
+  /** Shown but cannot be changed: the network has switched it off for this account (TikTok's comments, duets, stitches). Its value is false. */
+  disabled?: boolean;
   /** Text the network obliges the app to show next to the field, word for word. */
   notice?: string;
+}
+
+/** The settings to ask for when a post for this account is being written, as the network says right now (TikTok's creator info). */
+export interface AccountOptions {
+  fields: OptionField[];
+  /** What the network said that the account should remember, so scheduling can be checked against it later without asking again. */
+  remember?: Record<string, unknown>;
 }
 
 /** One way of posting on a network: a Reel, a feed photo, a Short… */
@@ -183,6 +196,15 @@ export interface HealthResult {
   valid: boolean;
   /** When the credentials stop working, if known. */
   expiresAt?: string;
+  /** Why it is not valid; or, when it is, something worth knowing about the account (whether the network pushes its comments). */
+  note?: string;
+}
+
+/** Whether the network pushes this account's events (comments) to the app: Meta only does once the app is subscribed to the Page. */
+export interface EventSubscription {
+  subscribed: boolean;
+  /** The fields the app is subscribed to on the Page now. */
+  fields: string[];
   note?: string;
 }
 
@@ -241,6 +263,12 @@ export interface Connector {
   defaultPlacement(input: { pieceKind: string; format: string; media: Pick<MediaItem, 'kind'>[] }): string | null;
   /** Checks a publication against what the network allows, before anything is sent. */
   validate(input: PublishInput, account: Account): Issue[];
+  /**
+   * The settings for a post on this account, asked of the network while the post is being written. Only where the network obliges an
+   * app to (TikTok's creator info: the privacy choices it offers this account, what it has switched off). Without it, the
+   * account's capabilities(account).options are the settings.
+   */
+  accountOptions?(account: Account, env: ConnectorEnv): Promise<AccountOptions>;
   prepare(input: PublishInput, account: Account, handle: Handle, env: ConnectorEnv): Promise<PrepareResult>;
   publish(input: PublishInput, account: Account, handle: Handle, env: ConnectorEnv): Promise<Published>;
   verify(account: Account, externalId: string, handle: Handle, env: ConnectorEnv): Promise<VerifyResult>;
@@ -250,6 +278,15 @@ export interface Connector {
    * replaced or failed. Only needed where the network itself would otherwise still publish it at the scheduled time.
    */
   discard?(account: Account, handle: Handle, env: ConnectorEnv): Promise<void>;
+  /**
+   * Asks the network to push this account's events to the app's webhook, where it has to be asked (Meta: POST
+   * /{page-id}/subscribed_apps). Done on connecting and when a prize starts relying on it.
+   */
+  subscribeEvents?(account: Account, env: ConnectorEnv): Promise<EventSubscription>;
+  /** The opposite, when the account is disconnected. `keep`: fields that another connected account on the same Page still needs. */
+  unsubscribeEvents?(account: Account, env: ConnectorEnv, keep: string[]): Promise<void>;
+  /** The webhook fields this account's events need (Meta: a Page's `feed`, an Instagram account's `comments`). */
+  eventFields?: string[];
   /** The numbers for a published post. Not every network gives every number (see CommonMetrics). */
   fetchMetrics?(account: Account, externalId: string, handle: Handle, env: ConnectorEnv, post: { publishedAt: Date; placement: string }): Promise<MetricsResult>;
   /** The comments on a post since a moment, oldest first. Only where the network lets the app read them. */

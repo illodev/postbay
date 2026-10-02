@@ -5,11 +5,13 @@ import { classifyMeta, type MetaConfig } from './client.js';
 /**
  * What publishing and reading the numbers need on a Page and its Instagram account. A brand only grants what is in use:
  * the permissions to message people and to read the comments on a Page's posts are asked for only if the brand has prizes on.
+ * pages_manage_engagement is what commenting as the Page (the first comment) needs.
  */
 export const META_SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
   'pages_manage_posts',
+  'pages_manage_engagement',
   'instagram_basic',
   'instagram_content_publish',
   'instagram_manage_comments',
@@ -18,7 +20,10 @@ export const META_SCOPES = [
   'business_management',
 ];
 
-/** What sending the prize as a private reply, and hearing about the comments, need. These are the permissions Meta reviews the app for. */
+/**
+ * What sending the prize as a private reply, and hearing about the comments, need. These are the permissions Meta reviews the app for.
+ * pages_manage_metadata is also what subscribing the app to a Page's webhooks needs (see webhooks.ts).
+ */
 export const META_PRIZE_SCOPES = ['instagram_manage_messages', 'pages_messaging', 'pages_manage_metadata', 'pages_read_user_content'];
 
 export function createMetaOAuth(cfg: MetaConfig): OAuthProvider {
@@ -35,7 +40,11 @@ export function createMetaOAuth(cfg: MetaConfig): OAuthProvider {
       u.searchParams.set('redirect_uri', redirectUri);
       u.searchParams.set('state', state);
       u.searchParams.set('response_type', 'code');
-      u.searchParams.set('scope', [...META_SCOPES, ...(features?.prizes ? META_PRIZE_SCOPES : [])].join(','));
+      // Facebook Login for Business signs in with a configuration (which holds the permissions and the kind of token); plain
+      // Facebook Login with the list of permissions.
+      const configId = features?.prizes ? (cfg.loginConfigIdPrizes || cfg.loginConfigId) : cfg.loginConfigId;
+      if (configId) u.searchParams.set('config_id', configId);
+      else u.searchParams.set('scope', [...META_SCOPES, ...(features?.prizes ? META_PRIZE_SCOPES : [])].join(','));
       return u.toString();
     },
 
@@ -77,7 +86,7 @@ export function createMetaOAuth(cfg: MetaConfig): OAuthProvider {
         const body = ok(await call(next));
         for (const p of body.data ?? []) {
           if (!p.access_token) continue; // no publishing rights on this Page
-          const missing = ['pages_manage_posts', 'pages_read_engagement'].filter((s) => granted.length && !granted.includes(s));
+          const missing = ['pages_manage_posts', 'pages_read_engagement', 'pages_manage_engagement'].filter((s) => granted.length && !granted.includes(s));
           out.push({
             key: `facebook:${p.id}`,
             network: 'facebook',
@@ -102,7 +111,7 @@ export function createMetaOAuth(cfg: MetaConfig): OAuthProvider {
         next = body.paging?.next;
       }
       if (out.length === 0) {
-        throw new ConnectorError('auth', 'Meta did not share any Page this person can publish for. Check that they have a role on the Page and tick it in the permission dialog.', { detail: redact({ granted }) });
+        throw new ConnectorError('auth', `Meta did not share any Page this person can publish for. Check that they have a role on the Page and tick it in the permission dialog${cfg.loginConfigId ? '' : ". If the app uses Facebook Login for Business, set META_LOGIN_CONFIG_ID to its login configuration: without it the dialog may not offer the Pages at all"}.`, { detail: redact({ granted }) });
       }
       return out;
     },

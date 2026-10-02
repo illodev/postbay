@@ -35,6 +35,14 @@ describe('database guarantees', () => {
     await expect(env.db.query(`delete from approval where version_id = $1`, [id])).rejects.toThrow(/append-only/);
   });
 
+  it('refuses TRUNCATE on versions, their files, approvals and the attempt log, as on the audit log', async () => {
+    await approvedVersion();
+    for (const table of ['version', 'asset', 'approval', 'publication_attempt']) {
+      await expect(env.db.query(`truncate ${table} cascade`), table).rejects.toThrow(/append-only/);
+    }
+    expect((await env.db.query('select 1 from version')).length).toBeGreaterThan(0);
+  });
+
   it('keeps the audit log append-only', async () => {
     await approvedVersion();
     await expect(env.db.query(`update audit_event set action = 'x'`)).rejects.toThrow(/append-only/);
@@ -157,8 +165,13 @@ describe('producer tokens', () => {
     expect(JSON.stringify((await call(users.admin, 'GET', `/api/brands/${brandId}/tokens`)).body)).not.toContain(token);
 
     const agent = { id: created.body.id as string, email: 'agent', bearer: token };
-    // A token produces…
+    // A token produces… inside a run it started on the piece, so the agent's limits apply to everything it uploads.
     const { variantId, pieceId } = await makePiece(agent);
+    const outside = await newVersion(agent, variantId);
+    expect(outside.status).toBe(409);
+    expect(outside.body.error.code).toBe('no_run');
+    await call(users.admin, 'PATCH', `/api/brands/${brandId}`, { agent: { max_cost_per_piece: 5, max_cost_per_month: 50 } });
+    expect((await call(agent, 'POST', `/api/pieces/${pieceId}/agent-runs`, { trigger: 'manual' })).status).toBe(201);
     const v = await newVersion(agent, variantId);
     expect(v.status).toBe(201);
     expect(v.body.author_token_id).toBe(agent.id);
@@ -181,5 +194,45 @@ describe('producer tokens', () => {
     const second = await call(users.admin, 'POST', `/api/brands/${brandId}/tokens`, { name: 'short' });
     await db.query(`update api_token set expires_at = now() - interval '1 second' where id = $1`, [second.body.id]);
     expect((await call({ id: '', email: '', bearer: second.body.token }, 'GET', `/api/pieces/${pieceId}`)).status).toBe(401);
+  });
+
+  it('stops working when whoever made it leaves the brand or stops being its admin, however that happens', async () => {
+    const { call, users, brandId, db } = env;
+    const memberOf = async (userId: string) => (await db.one<{ id: string }>('select id from member where user_id = $1 and brand_id = $2', [userId, brandId]))!.id;
+    const tokenBy = async (who: typeof users.admin) => {
+      await db.query(`update member set role = 'admin' where user_id = $1 and brand_id = $2`, [who.id, brandId]);
+      const t = await call(who, 'POST', `/api/brands/${brandId}/tokens`, { name: `made by ${who.email}` });
+      expect(t.status).toBe(201);
+      const bearer = { id: t.body.id as string, email: 'agent', bearer: t.body.token as string };
+      expect((await call(bearer, 'GET', '/api/token')).status).toBe(200);
+      return bearer;
+    };
+
+    // Made a reviewer by another admin: the token is revoked, and the audit log says why.
+    const demoted = await tokenBy(users.approver);
+    expect((await call(users.admin, 'PATCH', `/api/brands/${brandId}/members/${await memberOf(users.approver.id)}`, { role: 'approver' })).body.tokensRevoked).toBe(1);
+    expect((await call(demoted, 'GET', '/api/token')).status).toBe(401);
+    expect((await db.one(`select after from audit_event where action = 'token.revoked' and entity_id = $1`, [demoted.id]))!.after).toMatchObject({ reason: 'no_longer_admin' });
+
+    // Removed from the brand.
+    const removed = await tokenBy(users.approver2);
+    expect((await call(users.admin, 'DELETE', `/api/brands/${brandId}/members/${await memberOf(users.approver2.id)}`)).status).toBe(200);
+    expect((await call(removed, 'GET', '/api/token')).status).toBe(401);
+    expect((await db.one('select revoked_at from api_token where id = $1', [removed.id]))!.revoked_at).not.toBeNull();
+    await db.query(`insert into member (user_id, brand_id, role) values ($1,$2,'approver')`, [users.approver2.id, brandId]);
+
+    // Changed behind the API's back: checked every time the token is used, so it stops anyway.
+    const bypassed = await tokenBy(users.reviewer);
+    await db.query(`update member set role = 'reviewer' where user_id = $1 and brand_id = $2`, [users.reviewer.id, brandId]);
+    expect((await call(bypassed, 'GET', '/api/token')).status).toBe(401);
+    await db.query(`update member set role = 'admin' where user_id = $1 and brand_id = $2`, [users.reviewer.id, brandId]);
+    expect((await call(bypassed, 'GET', '/api/token')).status).toBe(200); // still the same token, not revoked: its maker is an admin again
+    await db.query(`update member set role = 'reviewer' where user_id = $1 and brand_id = $2`, [users.reviewer.id, brandId]);
+
+    // An admin who stays an admin keeps theirs, and the list says who made each one.
+    const kept = await tokenBy(users.admin);
+    expect((await call(kept, 'GET', '/api/token')).status).toBe(200);
+    const list = (await call(users.admin, 'GET', `/api/brands/${brandId}/tokens`)).body as { id: string; created_by_email: string }[];
+    expect(list.find((t) => t.id === kept.id)!.created_by_email).toBe('admin@example.com');
   });
 });
