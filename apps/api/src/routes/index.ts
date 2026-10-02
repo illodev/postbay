@@ -228,6 +228,11 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
     const { brandId, accountId } = params(req, 'brandId', 'accountId');
     return connections.updateAccountSettings(ctx, P(req), brandId, accountId, req.body);
   });
+  // The settings to ask for while a post for this account is written. For TikTok this asks TikTok (creator info), as it requires.
+  app.get('/api/brands/:brandId/accounts/:accountId/options', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => {
+    const { brandId, accountId } = params(req, 'brandId', 'accountId');
+    return connections.accountOptions(ctx, P(req), brandId, accountId);
+  });
 
   // The network sends the browser here after the person has signed in there. The session cookie identifies who is back.
   app.get('/api/oauth/callback', async (req, reply) => {

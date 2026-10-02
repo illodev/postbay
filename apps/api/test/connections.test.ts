@@ -199,6 +199,17 @@ describe('connecting YouTube', () => {
     const list = await env.call(env.users.reader, 'GET', brandUrl('/accounts'));
     expect(list.body.find((a: any) => a.id === id).details.audited).toBe(true);
   });
+
+  it("keeps a YouTube channel's made-for-kids default, which each video's declaration starts from", async () => {
+    const id = (await env.db.one(`select id from social_account where network = 'youtube' and external_id = 'UC-lumen' and token_encrypted is not null`))!.id;
+    expect((await env.call(env.users.admin, 'PATCH', brandUrl(`/accounts/${env.accounts.instagram}`), { madeForKids: false })).status).toBe(400);
+    expect((await env.call(env.users.admin, 'PATCH', brandUrl(`/accounts/${id}`), { madeForKids: false })).status).toBe(200);
+    expect((await accountRow(id)).provider_data.madeForKids).toBe(false);
+    const field = (await env.call(env.users.admin, 'GET', brandUrl(`/accounts/${id}/options`))).body.fields.find((f: any) => f.key === 'madeForKids');
+    expect(field).toMatchObject({ type: 'select', required: true, default: 'no' });
+    expect((await env.call(env.users.admin, 'PATCH', brandUrl(`/accounts/${id}`), { madeForKids: null })).status).toBe(200);
+    expect((await accountRow(id)).provider_data).not.toHaveProperty('madeForKids');
+  });
 });
 
 describe('disconnecting', () => {

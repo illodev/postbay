@@ -7,6 +7,7 @@ import type { Ctx } from '../context.js';
 import { sha256Hex } from '../crypto.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { audit } from './audit.js';
+import { connectorEnv, loadConnectorAccount } from './connectors.js';
 
 const STATE_TTL_MINUTES = 15;
 export const PROVIDER_INFO: Record<ProviderId, { label: string; networks: string[] }> = {
@@ -256,6 +257,8 @@ export async function disconnectAccount(ctx: Ctx, p: Principal, brandId: string,
 export const accountSettings = z.object({
   /** Whether the network has approved the app (Google's audit for YouTube, TikTok's audit, Pinterest's Standard access), so posts can be public. Set by an admin once it has. */
   audited: z.boolean().optional(),
+  /** YouTube: the channel's made-for-kids declaration, which each new video starts from (null removes it, so each video is asked). */
+  madeForKids: z.boolean().nullable().optional(),
 });
 
 export async function updateAccountSettings(ctx: Ctx, p: Principal, brandId: string, accountId: string, raw: unknown) {
@@ -269,6 +272,44 @@ export async function updateAccountSettings(ctx: Ctx, p: Principal, brandId: str
       await db.query(`update social_account set provider_data = provider_data || jsonb_build_object('audited', $2::boolean) where id = $1`, [accountId, input.audited]);
       await audit(db, p, brandId, 'account.audit_status', 'social_account', accountId, { audited: acc.provider_data?.audited ?? false }, { audited: input.audited });
     }
+    if (input.madeForKids !== undefined) {
+      if (acc.network !== 'youtube') throw badRequest('not_applicable', 'Only YouTube channels have a made-for-kids declaration');
+      await db.query(
+        input.madeForKids === null
+          ? `update social_account set provider_data = provider_data - 'madeForKids' where id = $1`
+          : `update social_account set provider_data = provider_data || jsonb_build_object('madeForKids', $2::boolean) where id = $1`,
+        input.madeForKids === null ? [accountId] : [accountId, input.madeForKids],
+      );
+      await audit(db, p, brandId, 'account.made_for_kids', 'social_account', accountId, { madeForKids: acc.provider_data?.madeForKids ?? null }, { madeForKids: input.madeForKids });
+    }
     return { id: accountId };
   });
+}
+
+/**
+ * The settings to ask for when someone writes a post for this account. Most networks' settings are fixed (their capabilities); TikTok
+ * obliges the app to ask it, while the post is being written, what this creator may do right now (who can see the post, whether
+ * comments, duets and stitches are allowed at all) and to offer only that. What it says is also kept on the account, so scheduling can
+ * be checked against it, and publishing asks again.
+ */
+export async function accountOptions(ctx: Ctx, p: Principal, brandId: string, accountId: string) {
+  await authorize(ctx.db, p, brandId, 'publication.schedule');
+  const row = await ctx.db.one('select status, token_encrypted from social_account where id = $1 and brand_id = $2', [accountId, brandId]);
+  const account = row ? await loadConnectorAccount(ctx, accountId) : null;
+  if (!row || !account) throw notFound('Account');
+  const connector = ctx.connectors.connector(account.network);
+  if (!connector) return { fields: [], live: false };
+  if (!connector.accountOptions || row.status !== 'active' || !row.token_encrypted) return { fields: connector.capabilities(account).options ?? [], live: false };
+  try {
+    const r = await connector.accountOptions(account, connectorEnv(ctx, accountId));
+    if (r.remember) {
+      await ctx.db.query('update social_account set provider_data = provider_data || $2::jsonb where id = $1', [accountId, JSON.stringify(r.remember)]);
+    }
+    return { fields: r.fields, live: true };
+  } catch (err) {
+    if (err instanceof ConnectorError) {
+      throw new AppError(502, 'network_refused', `${PROVIDER_INFO[connector.provider].label} did not say what this account may post right now: ${err.message}`, { errorClass: err.errorClass });
+    }
+    throw err;
+  }
 }

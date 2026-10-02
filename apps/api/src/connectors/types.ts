@@ -58,19 +58,32 @@ export interface Issue {
 export interface OptionField {
   key: string;
   label: string;
-  type: 'text' | 'url' | 'select' | 'checkbox';
+  /** 'info' is a line to read (who the post goes out as, how long processing takes), with nothing to fill in. */
+  type: 'text' | 'url' | 'select' | 'checkbox' | 'info';
   /** A required field with no default has to be chosen by a person: nothing is filled in for them. */
   required?: boolean;
   help?: string;
   maxLength?: number;
-  choices?: { value: string; label: string }[];
+  /** `disabledWhen`: this choice cannot be picked while that checkbox is ticked (TikTok: branded content cannot be "Only me"). */
+  choices?: { value: string; label: string; disabledWhen?: string }[];
   default?: string | boolean;
   /** Only for these placements; absent means all. */
   placements?: string[];
   /** Only shown while this other checkbox is ticked. */
   showWhen?: string;
+  /** Hidden while this other checkbox is ticked (a notice that another one replaces). */
+  hideWhen?: string;
+  /** Shown but cannot be changed: the network has switched it off for this account (TikTok's comments, duets, stitches). Its value is false. */
+  disabled?: boolean;
   /** Text the network obliges the app to show next to the field, word for word. */
   notice?: string;
+}
+
+/** The settings to ask for when a post for this account is being written, as the network says right now (TikTok's creator info). */
+export interface AccountOptions {
+  fields: OptionField[];
+  /** What the network said that the account should remember, so scheduling can be checked against it later without asking again. */
+  remember?: Record<string, unknown>;
 }
 
 /** One way of posting on a network: a Reel, a feed photo, a Short… */
@@ -241,6 +254,12 @@ export interface Connector {
   defaultPlacement(input: { pieceKind: string; format: string; media: Pick<MediaItem, 'kind'>[] }): string | null;
   /** Checks a publication against what the network allows, before anything is sent. */
   validate(input: PublishInput, account: Account): Issue[];
+  /**
+   * The settings for a post on this account, asked of the network while the post is being written. Only where the network obliges an
+   * app to (TikTok's creator info: the privacy choices it offers this account, what it has switched off). Without it, the
+   * account's capabilities(account).options are the settings.
+   */
+  accountOptions?(account: Account, env: ConnectorEnv): Promise<AccountOptions>;
   prepare(input: PublishInput, account: Account, handle: Handle, env: ConnectorEnv): Promise<PrepareResult>;
   publish(input: PublishInput, account: Account, handle: Handle, env: ConnectorEnv): Promise<Published>;
   verify(account: Account, externalId: string, handle: Handle, env: ConnectorEnv): Promise<VerifyResult>;

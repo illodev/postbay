@@ -32,6 +32,8 @@ beforeEach(() => {
   fake.failWith = null;
   fake.uploadUrlExpired = false;
   fake.videos = {};
+  fake.creator = { commentDisabled: false, duetDisabled: false, stitchDisabled: false };
+  fake.grantedScopes = ['user.info.basic', 'video.publish', 'video.upload', 'video.list'];
 });
 
 describe('TikTok: signing in', () => {
@@ -45,9 +47,19 @@ describe('TikTok: signing in', () => {
   it('finds the account and starts it as not audited, so every post is private', async () => {
     const found = await set.provider('tiktok')!.exchange!('good', redirect, 's');
     expect(found).toHaveLength(1);
-    expect(found[0]).toMatchObject({ network: 'tiktok', externalId: 'open-1', displayName: '@lumencoffee', providerData: { username: 'lumencoffee', audited: false } });
+    expect(found[0]).toMatchObject({ network: 'tiktok', externalId: 'open-1', displayName: '@lumencoffee', providerData: { username: 'lumencoffee', displayName: 'Lumen Coffee', audited: false } });
     expect(found[0]!.token.refreshToken).toBeTruthy();
     expect(JSON.stringify(found[0]!.providerData)).not.toContain(found[0]!.token.accessToken);
+  });
+
+  it('asks for the account only with the fields user.info.basic grants, so sign-in is not refused with scope_not_authorized', async () => {
+    await set.provider('tiktok')!.exchange!('good', redirect, 's');
+    expect(fake.callsTo('/v2/user/info/')[0]!.query.fields).toBe('open_id,union_id,avatar_url,display_name');
+    // The @username comes from creator_info; without it (no video.publish), the account still connects, under its display name.
+    fake.grantedScopes = ['user.info.basic'];
+    const found = await set.provider('tiktok')!.exchange!('good', redirect, 's');
+    expect(found[0]).toMatchObject({ externalId: 'open-1', displayName: 'Lumen Coffee' });
+    expect(found[0]!.providerData.username).toBeUndefined();
   });
 
   it('says so when TikTok refuses the code', async () => {
@@ -75,14 +87,49 @@ describe('TikTok: the controls it obliges the app to show', () => {
     expect(byKey.consent!.notice).toBe("By posting, you agree to TikTok's Music Usage Confirmation.");
     expect(byKey.consentBranded!.notice).toBe("By posting, you agree to TikTok's Branded Content Policy and Music Usage Confirmation.");
     expect(byKey.consentBranded!.showWhen).toBe('brandedContent');
+    expect(byKey.consent!.hideWhen).toBe('brandedContent'); // one agreement at a time
     expect(byKey.yourBrand!.showWhen).toBe('commercial');
+    expect(byKey.yourBrand!.help).toContain("'Promotional content'");
+    expect(byKey.brandedContent!.help).toContain("'Paid partnership'");
+    expect(byKey.processing).toMatchObject({ type: 'info', label: expect.stringContaining('few minutes') });
+  });
+
+  it("builds them, while the post is written, from what TikTok says this creator may do", async () => {
+    fake.privacyOptions = ['FOLLOWER_OF_CREATOR', 'SELF_ONLY'];
+    fake.creator = { commentDisabled: true, duetDisabled: false, stitchDisabled: true };
+    fake.maxDurationSec = 180;
+    const r = await tt().accountOptions!(acc(true), env('tok'));
+    const byKey = Object.fromEntries(r.fields.map((o) => [o.key, o]));
+    expect(byKey.creator).toMatchObject({ type: 'info', label: 'Posting to TikTok as Lumen Coffee (@lumencoffee)' });
+    // Only what TikTok offers, nothing chosen, and "Only me" not available for branded content.
+    expect(byKey.privacy!.choices).toEqual([{ value: 'SELF_ONLY', label: 'Only me', disabledWhen: 'brandedContent' }, { value: 'FOLLOWER_OF_CREATOR', label: 'Followers' }]);
+    expect(byKey.privacy!.default).toBeUndefined();
+    expect(byKey.allowComment).toMatchObject({ disabled: true, default: false });
+    expect(byKey.allowDuet!.disabled).toBeUndefined();
+    expect(byKey.allowStitch!.disabled).toBe(true);
+    expect(byKey.maxDuration!.label).toContain('180 seconds');
+    expect(r.remember).toMatchObject({ username: 'lumencoffee', creatorInfo: { privacyLevelOptions: ['FOLLOWER_OF_CREATOR', 'SELF_ONLY'], commentDisabled: true, stitchDisabled: true, maxVideoPostDurationSec: 180, nickname: 'Lumen Coffee' } });
+    // Until TikTok audits the app, only "Only me" is offered, and it says the TikTok account itself must be private.
+    const unaudited = (await tt().accountOptions!(acc(false), env('tok'))).fields.find((f) => f.key === 'privacy')!;
+    expect(unaudited.choices!.map((c) => c.value)).toEqual(['SELF_ONLY']);
+    expect(unaudited.help).toContain('set to private');
+  });
+
+  it('checks a post against what TikTok said when it was written', () => {
+    const known = (info: Record<string, unknown>) => account('tiktok', { externalId: 'open-1', providerData: { username: 'lumencoffee', audited: true, creatorInfo: { privacyLevelOptions: ['SELF_ONLY', 'FOLLOWER_OF_CREATOR'], ...info } } });
+    const codes = (o: Record<string, unknown>, info: Record<string, unknown> = {}, m = media()) => tt().validate(input({ placement: 'video', media: [m], options: filled(o) }), known(info)).filter((i) => i.severity === 'error').map((i) => i.code);
+    expect(codes({ privacy: 'PUBLIC_TO_EVERYONE' })).toEqual(['tiktok.privacy.unavailable']);
+    expect(codes({ privacy: 'FOLLOWER_OF_CREATOR' })).toEqual([]);
+    expect(codes({ privacy: 'FOLLOWER_OF_CREATOR', allowComment: true }, { commentDisabled: true })).toEqual(['tiktok.allowComment.disabled']);
+    expect(codes({ privacy: 'FOLLOWER_OF_CREATOR', allowDuet: true, allowStitch: true }, { duetDisabled: true, stitchDisabled: true })).toEqual(['tiktok.allowDuet.disabled', 'tiktok.allowStitch.disabled']);
+    expect(codes({ privacy: 'FOLLOWER_OF_CREATOR' }, { maxVideoPostDurationSec: 15 })).toEqual(['tiktok.duration']);
   });
 
   it('will not post until who can see it is chosen, and the agreement is ticked', () => {
     const none = tt().validate(input({ placement: 'video', options: {} }), acc(true));
     expect(none.map((i) => i.code)).toEqual(expect.arrayContaining(['tiktok.privacy', 'tiktok.consent']));
     expect(errors(tt().validate(input({ placement: 'video', options: filled() }), acc(true)))).toEqual([]);
-    expect(tt().validate(input({ placement: 'video', options: filled({ privacy: 'EVERYONE' }) }), acc(true))).toContainEqual(expect.objectContaining({ code: 'tiktok.privacy' }));
+    expect(tt().validate(input({ placement: 'video', options: filled({ privacy: 'EVERYONE' }) }), acc(true))).toContainEqual(expect.objectContaining({ code: 'tiktok.privacy.unavailable' }));
   });
 
   it('wants to know which kind of commercial content it is, and the stronger agreement for branded content', () => {
@@ -92,6 +139,9 @@ describe('TikTok: the controls it obliges the app to show', () => {
     expect(branded).toContainEqual(expect.objectContaining({ code: 'tiktok.consent.branded' }));
     const full = tt().validate(input({ placement: 'video', options: filled({ commercial: true, brandedContent: true, consentBranded: true }) }), acc(true));
     expect(errors(full)).toEqual([]);
+    // The branded agreement replaces the plain one: it is the only one shown, and the only one needed.
+    const onlyBranded = tt().validate(input({ placement: 'video', options: { privacy: 'PUBLIC_TO_EVERYONE', commercial: true, brandedContent: true, consentBranded: true } }), acc(true));
+    expect(errors(onlyBranded)).toEqual([]);
     const own = tt().validate(input({ placement: 'video', options: filled({ commercial: true, yourBrand: true }) }), acc(true));
     expect(errors(own)).toEqual([]);
   });
@@ -102,7 +152,7 @@ describe('TikTok: the controls it obliges the app to show', () => {
   });
 
   it('warns that every post is private until TikTok audits the app, and that photos need a verified domain', () => {
-    expect(tt().validate(input({ placement: 'video', options: filled() }), acc(false))).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'tiktok.unaudited' }));
+    expect(tt().validate(input({ placement: 'video', options: filled() }), acc(false))).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'tiktok.unaudited', message: expect.stringContaining('TikTok account itself is set to private') }));
     expect(tt().validate(input({ placement: 'video', options: filled() }), acc(true)).some((i) => i.code === 'tiktok.unaudited')).toBe(false);
     expect(tt().validate(input({ placement: 'photo', media: [image()], options: filled() }), acc(true))).toContainEqual(expect.objectContaining({ code: 'tiktok.photo.domain' }));
   });
@@ -116,25 +166,35 @@ describe('TikTok: the controls it obliges the app to show', () => {
 });
 
 describe('TikTok: before sending anything', () => {
-  it('asks what the creator may do, once, and refuses a setting TikTok does not offer them', async () => {
+  it('asks nothing ahead of the hour, and asks TikTok again right before sending, refusing a setting it no longer offers', async () => {
+    fake.audited = true;
     const e = env('tok', files);
     const inp = input({ placement: 'video', options: filled() });
-    fake.privacyOptions = ['SELF_ONLY', 'PUBLIC_TO_EVERYONE'];
     const prep = await tt().prepare(inp, acc(true), {}, e);
     expect(prep.done).toBe(true);
-    await tt().prepare(inp, acc(true), prep.handle, e);
-    expect(fake.callsTo('/v2/post/publish/creator_info/query/')).toHaveLength(1);
+    expect(fake.calls).toHaveLength(0);
     fake.privacyOptions = ['SELF_ONLY'];
-    const err = await expectError(tt().prepare(inp, acc(true), {}, env('tok', files)), 'file_rejected');
+    const err = await expectError(tt().publish(inp, acc(true), prep.handle, env('tok', files)), 'file_rejected');
     expect(err.message).toContain('Everyone');
+    expect(fake.callsTo('/v2/post/publish/creator_info/query/')).toHaveLength(1);
+    expect(fake.callsTo('/v2/post/publish/video/init/')).toHaveLength(0);
+  });
+
+  it('keeps off what the creator has switched off since the post was written', async () => {
+    fake.audited = true;
+    fake.creator = { commentDisabled: true, duetDisabled: true, stitchDisabled: false };
+    const e = env('tok', files);
+    const inp = input({ placement: 'video', media: [media({ bytes: 10_000 })], options: filled({ allowComment: true, allowDuet: true, allowStitch: true }) });
+    const pub = await tt().publish(inp, acc(true), {}, e);
+    expect(fake.posts.get(pub.externalId)!.info).toMatchObject({ disable_comment: true, disable_duet: true, disable_stitch: false });
   });
 
   it("refuses a video longer than this account may post, and waits when TikTok says it has posted too much", async () => {
     fake.maxDurationSec = 15;
-    await expectError(tt().prepare(input({ placement: 'video', options: filled() }), acc(true), {}, env('tok', files)), 'file_rejected');
+    await expectError(tt().publish(input({ placement: 'video', options: filled() }), acc(true), {}, env('tok', files)), 'file_rejected');
     fake.maxDurationSec = 600;
     fake.fail((c) => c.path === '/v2/post/publish/creator_info/query/', { data: {}, error: { code: 'spam_risk_too_many_posts', message: 'Daily post limit reached' } }, 429);
-    const err = await expectError(tt().prepare(input({ placement: 'video', options: filled() }), acc(true), {}, env('tok', files)), 'rate_limit');
+    const err = await expectError(tt().publish(input({ placement: 'video', options: filled() }), acc(true), {}, env('tok', files)), 'rate_limit');
     expect(err.retryAfterSec).toBeGreaterThanOrEqual(3600);
   });
 });
@@ -218,6 +278,7 @@ describe('TikTok: publishing a video', () => {
     const prep = await prepareUntilDone(tt(), inp, acc(true), e);
     const err = await expectError(tt().publish(inp, acc(true), prep.handle, e), 'unsupported');
     expect(err.message).toContain('audited');
+    expect(err.message).toContain('set to private');
   });
 });
 
