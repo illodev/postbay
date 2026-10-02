@@ -28,39 +28,35 @@ export function Thumb({ piece, width = 480 }: { piece: PieceSummary; width?: 240
   return <img src={`/api/pieces/${piece.id}/thumb?w=${width}&v=${v.id}`} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} />;
 }
 
-/** Who made the latest version: the agent's tag, or the person's avatar and short name. */
-function Byline({ p }: { p: PieceSummary }) {
+export const STAGE_COLOUR: Record<Stage, string> = {
+  draft: 'var(--muted)', in_review: 'var(--warn)', changes_requested: 'var(--bad)', approved: 'var(--good)', scheduled: 'var(--info)', published: 'var(--live)', discarded: 'var(--faint)',
+};
+
+/**
+ * The one grey line under a card's name. What a person wants to know first: for a piece that is going out, when and where;
+ * otherwise who made the latest version (the agent's own mark, or the person's avatar) and when.
+ */
+function MetaLine({ p, zone }: { p: PieceSummary; zone: string }) {
   const v = p.latest_version;
+  const next = p.next_publication;
+  if (stageOf(p) === 'scheduled' && next) {
+    const at = when(next.scheduled_at, zone);
+    return (
+      <span className="pz-by" title={t('pieces.card.nextTitle', { when: at, network: netName(next.network) })}>
+        <NetMark network={next.network} size="xs" />
+        <span className="pz-by-name">{at}</span>
+        {p.networks.length > 1 && <span className="pz-by-more">+{p.networks.length - 1}</span>}
+      </span>
+    );
+  }
+  if (!v) return <span className="pz-by"><span className="pz-by-name">{t('pieces.card.created', { when: ago(p.created_at) })}</span></span>;
   return (
     <span className="pz-by">
-      {!v ? (
-        <span className="pz-by-name">{t('pieces.card.created', { when: ago(p.created_at) })}</span>
-      ) : v.by_agent ? (
-        <span className="tag-agent pz-agent"><Icon name="bot" />{t('common.agent')}</span>
-      ) : (
-        <>
-          <Avatar name={v.author} size={16} />
-          <span className="pz-by-name">{v.author ?? '?'}</span>
-        </>
-      )}
-      {v && <><span className="pz-dot" aria-hidden="true">·</span><time dateTime={v.created_at} className="pz-by-when">{ago(v.created_at)}</time></>}
+      {v.by_agent ? <Avatar agent size={16} /> : <Avatar name={v.author} size={16} />}
+      <span className="pz-by-name">{v.by_agent ? t('common.agent') : v.author ?? '?'}</span>
+      <span className="pz-dot" aria-hidden="true">·</span>
+      <time dateTime={v.created_at} className="pz-by-when">{ago(v.created_at)}</time>
     </span>
-  );
-}
-
-/** When it goes out next, and every network it is scheduled or published on. */
-function NextLine({ p, zone }: { p: PieceSummary; zone: string }) {
-  if (!p.next_publication && !p.networks.length) return null;
-  const nets = p.networks.map(netName).join(', ');
-  return (
-    <div
-      className="pz-next"
-      title={p.next_publication ? t('pieces.card.nextTitle', { when: when(p.next_publication.scheduled_at, zone), network: netName(p.next_publication.network) }) : t('pieces.card.onNetworks', { networks: nets })}
-    >
-      <Icon name={p.next_publication ? 'calendar' : 'send'} />
-      <span className="pz-next-when">{p.next_publication ? when(p.next_publication.scheduled_at, zone) : t('pieces.card.published')}</span>
-      <span className="nets pz-nets" aria-label={nets}>{p.networks.slice(0, 4).map((n) => <NetMark key={n} network={n} size="sm" />)}</span>
-    </div>
   );
 }
 
@@ -174,27 +170,26 @@ function PieceCard({ p, look, selected, selecting, onToggle, actions, zone }: {
           }}
         />
         <Check checked={selected} label={t('pieces.card.select', { title: p.title })} onToggle={(range) => onToggle(p.id, range)} />
+        <span className="pz-ov pz-ov-state"><i style={{ background: STAGE_COLOUR[stage] }} aria-hidden="true" />{STATE_LABEL[stage]}</span>
         {v && <span className="pz-ov pz-ov-tr" title={t('pieces.card.version', { number: v.number })}>V{v.number}</span>}
         {p.open_comments > 0 && (
           <span className="pz-ov pz-ov-bl" title={t('pieces.card.comments', { count: p.open_comments })}>
             <Icon name="bubble" />{p.open_comments}
           </span>
         )}
-        {media && <span className="pz-ov pz-ov-br">{media}</span>}
+        <span className="pz-ov-br">
+          {p.variant_count > 1 && <span className="pz-ov" title={t('common.variants', { count: p.variant_count })}><Icon name="copy" />{p.variant_count}</span>}
+          {media && <span className="pz-ov">{media}</span>}
+        </span>
         {!look.info && <span className="pz-ov-title">{p.title}</span>}
       </div>
       {look.info && (
         <div className="pz-meta">
           <h3 className="pz-title"><Link to={`/pieces/${p.id}`} title={p.title}>{p.title}</Link></h3>
           <div className="pz-line">
-            <Byline p={p} />
+            <MetaLine p={p} zone={zone} />
             <CardMenu p={p} actions={actions} />
           </div>
-          <div className="pz-line pz-line-state">
-            <Chip state={stage} />
-            {p.campaign_name && look.size !== 'S' && <span className="pz-camp" title={p.campaign_name}><Icon name="folder" />{p.campaign_name}</span>}
-          </div>
-          <NextLine p={p} zone={zone} />
         </div>
       )}
     </article>
@@ -239,10 +234,6 @@ export function GridSkeleton({ look }: { look: Look }) {
 
 // ───────────────────────────── board ─────────────────────────────
 
-const STAGE_COLOUR: Record<Stage, string> = {
-  draft: 'var(--muted)', in_review: 'var(--warn)', changes_requested: 'var(--bad)', approved: 'var(--good)', scheduled: 'var(--info)', published: 'var(--live)', discarded: 'var(--faint)',
-};
-
 function BoardCard({ p, zone, onDragStart, onDragEnd }: { p: PieceSummary; zone: string; onDragStart: (p: PieceSummary) => void; onDragEnd: () => void }) {
   const v = p.latest_version;
   const stage = stageOf(p);
@@ -265,7 +256,7 @@ function BoardCard({ p, zone, onDragStart, onDragEnd }: { p: PieceSummary; zone:
         <div className="pz-bmeta">
           {v && <span className="pz-vtag">V{v.number}</span>}
           {p.open_comments > 0 && <span className="pz-bcount" title={t('pieces.card.comments', { count: p.open_comments })}><Icon name="bubble" />{p.open_comments}</span>}
-          {p.latest_by_agent && <span className="pz-agent-dot" title={t('pieces.card.byAgent')}>{t('pieces.card.agentShort')}</span>}
+          {p.latest_by_agent && <span className="pz-bagent" title={t('pieces.card.byAgent')}><Avatar agent size={14} /></span>}
         </div>
         <div
           className="pz-bmeta pz-bdate"
@@ -322,7 +313,7 @@ export function BoardView({ pieces, zone, dragging, onDragStart, onDragEnd, onDr
               onDrop(s);
             }}
           >
-            <header className="pz-colh">
+            <header className="pz-colh" title={s === 'scheduled' ? t('pieces.board.hint') : undefined}>
               <span className="pz-sdot" style={{ background: STAGE_COLOUR[s] }} aria-hidden="true" />
               <span className="pz-colname" style={{ color: STAGE_COLOUR[s] }}>{STATE_LABEL[s]}</span>
               <span className="pz-colcount">{items.length}</span>
@@ -415,8 +406,9 @@ export function ListView({ pieces, sort, onSort, selected, onToggle, onToggleAll
   return (
     <div className="pz-table-wrap">
       <table className="pz-table">
+        <caption className="sr-only">{t('pieces.list.keys')}</caption>
         <thead>
-          <tr>
+          <tr title={t('pieces.list.keys')}>
             <th className="pz-c-check">
               <button type="button" role="checkbox" aria-checked={all ? 'true' : some ? 'mixed' : 'false'} aria-label={t('pieces.list.selectAll')} title={t('pieces.list.selectAllHint')} className={`pz-check pz-check-inline ${some ? 'is-mixed' : ''}`} onClick={onToggleAll}>
                 {all && <Icon name="check" />}
@@ -460,7 +452,7 @@ export function ListView({ pieces, sort, onSort, selected, onToggle, onToggleAll
                 <td className="pz-c-state"><Chip state={stageOf(p)} /></td>
                 <td className="pz-c-ver">{v ? <span className="pz-vtag">V{v.number}</span> : <span className="pz-none">—</span>}</td>
                 <td className="pz-c-author">
-                  {!v ? <span className="pz-none">—</span> : v.by_agent ? <span className="tag-agent pz-agent"><Icon name="bot" />{t('common.agent')}</span> : <span className="pz-by"><Avatar name={v.author} size={18} /><span className="pz-by-name">{v.author}</span></span>}
+                  {!v ? <span className="pz-none">—</span> : <span className="pz-by">{v.by_agent ? <Avatar agent size={18} /> : <Avatar name={v.author} size={18} />}<span className="pz-by-name">{v.by_agent ? t('common.agent') : v.author}</span></span>}
                 </td>
                 <td className="pz-c-num">{p.open_comments ? <span className="pz-lcount"><Icon name="bubble" />{p.open_comments}</span> : <span className="pz-none">—</span>}</td>
                 <td className="pz-c-next">
@@ -501,13 +493,11 @@ export function ListSkeleton() {
 
 // ───────────────────────────── empty ─────────────────────────────
 
-export function EmptyState({ icon, title, children, action }: { icon: IconName; title: string; children?: ReactNode; action?: ReactNode }) {
+export function EmptyState({ title, action }: { title: string; action?: ReactNode }) {
   return (
     <div className="pz-empty" role="status">
-      <span className="pz-empty-icon"><Icon name={icon} /></span>
-      <h2>{title}</h2>
-      {children && <p>{children}</p>}
-      {action && <div className="pz-empty-actions">{action}</div>}
+      <p>{title}</p>
+      {action}
     </div>
   );
 }

@@ -6,7 +6,7 @@ import type { Campaign } from '../components/Layout';
 import { Icon, type IconName } from '../components/icons';
 import { PageBar } from '../components/PageBar';
 import { ScheduleDialog } from '../components/publications';
-import { ConfirmDialog, Dialog, ErrorBox, Field, NetMark, Skeleton, errorMessage, useToast } from '../components/ui';
+import { ConfirmDialog, Dialog, ErrorBox, Field, NetMark, Segmented, Skeleton, Switch, errorMessage, useToast } from '../components/ui';
 import { t, type Key } from '../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -79,30 +79,27 @@ function NewPiece({ campaigns, campaignId, onClose }: { campaigns: Campaign[]; c
             </select>
           </Field>
         </div>
-        <Field label={t('pieces.field.brief')} hint={t('pieces.field.briefHint')}>
+        <Field label={t('pieces.field.brief')}>
           <textarea value={form.brief} onChange={(e) => setForm({ ...form, brief: e.target.value })} />
         </Field>
         <div className="pz-form-row">
           <Field label={t('pieces.field.target')}>
             <input type="date" value={form.targetDate} onChange={(e) => setForm({ ...form, targetDate: e.target.value })} />
           </Field>
-          <label className="check">
-            <input type="checkbox" checked={form.aiGenerated} onChange={(e) => setForm({ ...form, aiGenerated: e.target.checked })} />
-            <span>{t('pieces.field.ai')}<br /><span className="muted small">{t('pieces.field.aiHint')}</span></span>
-          </label>
+          <Field label={t('pieces.field.source')} hint={t('pieces.field.sourceHint')}>
+            <input
+              type="text"
+              className="pz-mono-input"
+              maxLength={500}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder={t('pieces.field.sourcePlaceholder')}
+              value={form.source}
+              onChange={(e) => setForm({ ...form, source: e.target.value.replace(/[\r\n\t]/g, '') })}
+            />
+          </Field>
         </div>
-        <Field label={t('pieces.field.source')} hint={t('pieces.field.sourceHint')}>
-          <input
-            type="text"
-            className="pz-mono-input"
-            maxLength={500}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder={t('pieces.field.sourcePlaceholder')}
-            value={form.source}
-            onChange={(e) => setForm({ ...form, source: e.target.value.replace(/[\r\n\t]/g, '') })}
-          />
-        </Field>
+        <Switch label={t('pieces.field.ai')} hint={t('pieces.field.aiHint')} checked={form.aiGenerated} onChange={(aiGenerated) => setForm({ ...form, aiGenerated })} />
         {create.error && <ErrorBox error={create.error} />}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
@@ -135,9 +132,9 @@ function MoveDialog({ pieces, campaigns, onClose, onDone }: { pieces: PieceSumma
     const current = same !== undefined && (c?.id ?? null) === same;
     return (
       <button key={c?.id ?? 'none'} type="button" className={`pz-option ${current ? 'is-current' : ''}`} disabled={move.isPending} onClick={() => move.mutate(c)}>
-        <Icon name={c ? 'folder' : 'x'} />
+        <Icon name={c ? 'folder' : 'ban'} />
         <span className="pz-option-name">{c ? c.name : t('pieces.move.none')}</span>
-        {current && <span className="pz-option-note">{t('pieces.move.current')}</span>}
+        {current && <span className="pz-option-note"><Icon name="check" />{t('pieces.move.current')}</span>}
       </button>
     );
   };
@@ -269,18 +266,17 @@ function SelectionBar({ pieces, actions, onClear, onDownload, downloading }: {
     <div className="pz-selbar" role="region" aria-label={t('pieces.sel.label')}>
       <button type="button" className="pz-selbar-x" onClick={onClear} aria-label={t('pieces.sel.clear')} title={t('pieces.sel.clear')}><Icon name="x" /></button>
       <span className="pz-selbar-count">{t('pieces.sel.count', { count: pieces.length })}</span>
-      <span className="pz-selbar-sep" aria-hidden="true" />
-      <button type="button" className="pz-sbtn" onClick={onDownload} disabled={downloading || !pieces.some((p) => p.latest_version)} title={t('pieces.sel.downloadHint')}>
-        <Icon name="download" /><span>{t('pieces.sel.download')}</span>
+      <button type="button" className="btn" onClick={onDownload} disabled={downloading || !pieces.some((p) => p.latest_version)} title={t('pieces.sel.downloadHint')}>
+        <Icon name="download" /><span className="pz-sbtn-label">{t('pieces.sel.download')}</span>
       </button>
       {actions.canEdit && live.length > 0 && (
         <>
-          <button type="button" className="pz-sbtn" onClick={() => actions.onMove(live.map((p) => p.id))}><Icon name="folder" /><span>{t('pieces.sel.move')}</span></button>
-          <button type="button" className="pz-sbtn pz-sbtn-danger" onClick={() => actions.onDiscard(live.map((p) => p.id))}><Icon name="trash" /><span>{t('pieces.sel.discard')}</span></button>
+          <button type="button" className="btn" onClick={() => actions.onMove(live.map((p) => p.id))}><Icon name="folder" /><span className="pz-sbtn-label">{t('pieces.sel.move')}</span></button>
+          <button type="button" className="btn btn-danger" onClick={() => actions.onDiscard(live.map((p) => p.id))}><Icon name="trash" /><span className="pz-sbtn-label">{t('pieces.sel.discard')}</span></button>
         </>
       )}
       {single && actions.canSchedule && single.review_state === 'approved' && (
-        <button type="button" className="pz-sbtn pz-sbtn-primary" onClick={() => actions.onSchedule(single.id)}><Icon name="calendar" /><span>{t('pieces.sel.schedule')}</span></button>
+        <button type="button" className="btn btn-primary" onClick={() => actions.onSchedule(single.id)}><Icon name="calendar" /><span className="pz-sbtn-label">{t('pieces.sel.schedule')}</span></button>
       )}
     </div>
   );
@@ -288,44 +284,34 @@ function SelectionBar({ pieces, actions, onClear, onDownload, downloading }: {
 
 // ───────────────────────────── toolbar ─────────────────────────────
 
-function Seg<T extends string>({ value, options, onChange, label, render }: { value: T; options: readonly T[]; onChange: (v: T) => void; label: string; render: (v: T) => string }) {
-  return (
-    <div className="pz-seg pz-seg-sm" role="radiogroup" aria-label={label}>
-      {options.map((o) => (
-        <button key={o} type="button" role="radio" aria-checked={value === o} className={value === o ? 'is-on' : ''} onClick={() => onChange(o)}>{render(o)}</button>
-      ))}
-    </div>
-  );
-}
-
 const ASPECT_ICON: Record<Look['aspect'], string> = { '4:5': 'pz-ar pz-ar-45', '1:1': 'pz-ar pz-ar-11', '16:9': 'pz-ar pz-ar-169' };
 
 function AppearancePanel({ look, onChange }: { look: Look; onChange: (l: Look) => void }) {
   return (
     <div className="pz-look">
-      <p className="pz-look-note"><Icon name="user" />{t('pieces.look.note')}</p>
+      <p className="pz-look-note">{t('pieces.look.note')}</p>
       <div className="pz-look-row">
         <span>{t('pieces.look.size')}</span>
-        <Seg value={look.size} options={['S', 'M', 'L'] as const} onChange={(size) => onChange({ ...look, size })} label={t('pieces.look.size')} render={(v) => v} />
+        <Segmented label={t('pieces.look.size')} value={look.size} onChange={(size) => onChange({ ...look, size })} options={(['S', 'M', 'L'] as const).map((v) => ({ value: v, label: v }))} />
       </div>
       <div className="pz-look-row">
         <span>{t('pieces.look.aspect')}</span>
-        <div className="pz-seg pz-seg-sm" role="radiogroup" aria-label={t('pieces.look.aspect')}>
-          {(['16:9', '1:1', '4:5'] as const).map((a) => (
-            <button key={a} type="button" role="radio" aria-checked={look.aspect === a} className={look.aspect === a ? 'is-on' : ''} onClick={() => onChange({ ...look, aspect: a })} title={a} aria-label={t(`pieces.look.aspect.${a.replace(':', '')}` as Key)}>
-              <span className={ASPECT_ICON[a]} aria-hidden="true" />
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label={t('pieces.look.aspect')}
+          value={look.aspect}
+          onChange={(aspect) => onChange({ ...look, aspect })}
+          options={(['16:9', '1:1', '4:5'] as const).map((a) => ({
+            value: a,
+            title: t(`pieces.look.aspect.${a.replace(':', '')}` as Key),
+            label: <><span className={ASPECT_ICON[a]} aria-hidden="true" /><span className="sr-only">{t(`pieces.look.aspect.${a.replace(':', '')}` as Key)}</span></>,
+          }))}
+        />
       </div>
       <div className="pz-look-row">
         <span>{t('pieces.look.thumb')}</span>
-        <Seg value={look.fit} options={['fit', 'fill'] as const} onChange={(fit) => onChange({ ...look, fit })} label={t('pieces.look.thumb')} render={(v) => t(`pieces.look.${v}` as Key)} />
+        <Segmented label={t('pieces.look.thumb')} value={look.fit} onChange={(fit) => onChange({ ...look, fit })} options={(['fit', 'fill'] as const).map((v) => ({ value: v, label: t(`pieces.look.${v}` as Key) }))} />
       </div>
-      <label className="pz-look-row pz-switch-row">
-        <span>{t('pieces.look.info')}</span>
-        <input type="checkbox" role="switch" className="pz-switch" checked={look.info} onChange={(e) => onChange({ ...look, info: e.target.checked })} />
-      </label>
+      <Switch label={t('pieces.look.info')} checked={look.info} onChange={(info) => onChange({ ...look, info })} />
     </div>
   );
 }
@@ -500,14 +486,15 @@ export function PiecesPage() {
 
   const empty = () => {
     const create = can('createPiece') && (
-      <button type="button" className="btn btn-primary btn-small" onClick={() => setParam('new', '1')}><Icon name="plus" />{t('pieces.new')}</button>
+      <button type="button" className="btn btn-primary" onClick={() => setParam('new', '1')}><Icon name="plus" />{t('pieces.new')}</button>
     );
-    if (q.trim()) return <EmptyState icon="search" title={t('pieces.empty.search.title', { q: q.trim() })} action={<button className="btn btn-small" onClick={clearFilters}>{t('pieces.empty.clear')}</button>}>{t('pieces.empty.search.body')}</EmptyState>;
-    if (net) return <EmptyState icon="filter" title={t('pieces.empty.network.title', { network: NETWORK_LABEL[net] ?? net })} action={<button className="btn btn-small" onClick={clearFilters}>{t('pieces.empty.clear')}</button>}>{t('pieces.empty.network.body')}</EmptyState>;
-    if (byAgent) return <EmptyState icon="bot" title={t('pieces.empty.agent.title')}>{t('pieces.empty.agent.body')}</EmptyState>;
-    if (state) return <EmptyState icon="filter" title={t(`pieces.empty.${state}.title` as Key)} action={<button className="btn btn-small" onClick={() => setParam('state', null)}>{t('pieces.empty.seeAll')}</button>}>{t(`pieces.empty.${state}.body` as Key)}</EmptyState>;
-    if (campaign) return <EmptyState icon="folder" title={t('pieces.empty.campaign.title')} action={create}>{can('createPiece') ? t('pieces.empty.campaign.body', { campaign: campaignName ?? '' }) : t('pieces.empty.wait')}</EmptyState>;
-    return <EmptyState icon="pieces" title={t('pieces.empty.all.title')} action={create}>{can('createPiece') ? t('pieces.empty.all.body') : t('pieces.empty.wait')}</EmptyState>;
+    const clear = <button type="button" className="btn" onClick={clearFilters}>{t('pieces.empty.clear')}</button>;
+    if (q.trim()) return <EmptyState title={t('pieces.empty.search', { q: q.trim() })} action={clear} />;
+    if (net) return <EmptyState title={t('pieces.empty.network', { network: NETWORK_LABEL[net] ?? net })} action={clear} />;
+    if (byAgent) return <EmptyState title={t('pieces.empty.agent')} />;
+    if (state) return <EmptyState title={t(`pieces.empty.${state}` as Key)} action={<button type="button" className="btn" onClick={() => setParam('state', null)}>{t('pieces.empty.seeAll')}</button>} />;
+    if (campaign) return <EmptyState title={t('pieces.empty.campaign')} action={create} />;
+    return <EmptyState title={t('pieces.empty.all')} action={create} />;
   };
 
   const sortLabel = MENU_SORTS.includes(sort.key) ? t(`pieces.sort.${sort.key}` as Key) : t(`pieces.list.${sort.key}` as Key);
@@ -561,7 +548,7 @@ export function PiecesPage() {
               </>
             )}
           </Dropdown>
-          <Dropdown label={t('pieces.sort.label')} button={(props) => <MenuButton icon="sort" label={t('pieces.sort.label')} value={sortLabel} props={props} className="pz-tb-sort" />}>
+          <Dropdown label={t('pieces.sort.label')} button={(props) => <MenuButton icon="sort" label={t('pieces.sort.short')} value={sortLabel} props={props} className="pz-tb-sort" />}>
             {(close) => (
               <>
                 {MENU_SORTS.map((k) => (
@@ -597,12 +584,13 @@ export function PiecesPage() {
           />
           {!q && <kbd className="pz-kbd" aria-hidden="true">/</kbd>}
         </label>
-        <div className="pz-seg pz-views" role="radiogroup" aria-label={t('pieces.view.label')}>
-          {VIEWS.map((v) => (
-            <button key={v} type="button" role="radio" aria-checked={view === v} className={view === v ? 'is-on' : ''} onClick={() => setView(v)} title={t(`pieces.view.${v}` as Key)}>
-              <Icon name={VIEW_ICON[v]} /><span className="pz-views-label">{t(`pieces.view.${v}` as Key)}</span>
-            </button>
-          ))}
+        <div className="pz-views">
+          <Segmented
+            label={t('pieces.view.label')}
+            value={view}
+            onChange={setView}
+            options={VIEWS.map((v) => ({ value: v, title: t(`pieces.view.${v}` as Key), label: <><Icon name={VIEW_ICON[v]} /><span className="pz-views-label">{t(`pieces.view.${v}` as Key)}</span></> }))}
+          />
         </div>
       </div>
 
@@ -611,8 +599,6 @@ export function PiecesPage() {
           <span>{filtersOn || state ? t('pieces.summaryOf', { count: shown.length, total: scoped.filter((p) => p.review_state !== 'discarded').length }) : t('pieces.summary', { count: shown.length })}</span>
           {waiting > 0 && state !== 'in_review' && <><span className="pz-dot" aria-hidden="true">·</span><button type="button" className="pz-linkish" onClick={() => setParam('state', 'in_review')}>{t('pieces.summaryWaiting', { count: waiting })}</button></>}
           {filtersOn && <><span className="pz-dot" aria-hidden="true">·</span><button type="button" className="pz-linkish" onClick={clearFilters}>{t('pieces.empty.clear')}</button></>}
-          {view === 'board' && can('schedule') && <span className="pz-summary-hint">{t('pieces.board.hint')}</span>}
-          {view === 'list' && shown.length > 0 && <span className="pz-summary-hint">{t('pieces.list.keys')}</span>}
         </p>
       )}
 
