@@ -12,7 +12,8 @@ function hash(s: string): number {
 
 /** "Lucía Martín" → LM, "ana@x.es" → AN. */
 export function initials(name: string): string {
-  const words = name.split(/[\s@._-]+/).filter(Boolean);
+  // Each word without its punctuation: "Lucía (Marketing)" → LM, never "L(".
+  const words = name.split(/[\s@._-]+/).map((w) => w.replace(/[^\p{L}\p{N}]/gu, '')).filter(Boolean);
   if (words.length >= 2 && !name.includes('@')) return (words[0]![0]! + words[1]![0]!).toUpperCase();
   return name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '?';
 }
