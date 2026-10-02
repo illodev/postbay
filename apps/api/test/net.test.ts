@@ -21,6 +21,29 @@ describe('address classes', () => {
     for (const [ip, cls] of cases) expect(classifyAddress(ip), ip).toBe(cls);
   });
 
+  it('never allows the metadata services clouds put outside link-local, nor IPv4 smuggled inside IPv6', () => {
+    const cases: [string, string][] = [
+      // AWS over IPv6, Alibaba, Oracle, Azure's platform endpoint, Google over IPv6: private or public ranges otherwise.
+      ['fd00:ec2::254', 'never'], ['[fd00:ec2::254]', 'never'], ['fd00:ec2:0:0:0:0:0:254', 'never'], ['100.100.100.200', 'never'],
+      ['192.0.0.192', 'never'], ['168.63.129.16', 'never'], ['fd20:ce::254', 'never'],
+      // Their neighbours keep the class they had.
+      ['fd00:ec2::1', 'private'], ['100.100.100.199', 'private'], ['168.63.129.17', 'public'], ['192.0.1.1', 'public'],
+      // NAT64 (well-known and local-use), written in hex or with an IPv4 tail.
+      ['64:ff9b::a9fe:a9fe', 'never'], ['64:ff9b::169.254.169.254', 'never'], ['64:ff9b:1::a9fe:a9fe', 'never'],
+      ['64:ff9b::10.0.0.1', 'private'], ['64:ff9b::8.8.8.8', 'public'],
+      // 6to4 and Teredo (whose client address is stored inverted).
+      ['2002:a9fe:a9fe::1', 'never'], ['2002:0a00:0001::1', 'private'], ['2002:0808:0808::1', 'public'],
+      ['2001:0:808:808:0:0:5601:5601', 'never'], ['2001:0:808:808::f5ff:fffe', 'private'], ['2001:0:808:808::f7f7:f7f7', 'public'],
+      // The old IPv4-compatible and the translated forms; a zone id does not change where an address is.
+      ['::169.254.169.254', 'never'], ['::ffff:0:a9fe:a9fe', 'never'], ['fe80::1%eth0', 'never'],
+      // Not an address at all.
+      ['not-an-address', 'never'],
+    ];
+    for (const [ip, cls] of cases) expect(classifyAddress(ip), ip).toBe(cls);
+    expect('error' in checkUrl('http://[64:ff9b::a9fe:a9fe]/latest/meta-data', { allowPrivate: true, httpsForPublic: false })).toBe(true);
+    expect('error' in checkUrl('http://100.100.100.200/latest/meta-data', { allowPrivate: true, httpsForPublic: false })).toBe(true);
+  });
+
   it('applies the policy: private only when allowed, plain http to a public address only outside production', () => {
     const open = { allowPrivate: true, httpsForPublic: false };
     const prod = { allowPrivate: false, httpsForPublic: true };

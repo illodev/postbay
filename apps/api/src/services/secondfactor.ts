@@ -2,6 +2,7 @@ import { createHash, hkdfSync } from 'node:crypto';
 import { newRecoveryCode, looksLikeRecoveryCode, newSecret, normalizeRecoveryCode, otpauthUrl, verifyCode } from '../auth/totp.js';
 import { authorize, type Principal } from '../auth/principal.js';
 import type { Ctx } from '../context.js';
+import type { Queryable } from '../db.js';
 import { TokenVault } from '../crypto.js';
 import { AppError, conflict, forbidden, notFound, unauthorized } from '../errors.js';
 import { audit } from './audit.js';
@@ -166,31 +167,84 @@ export async function regenerateRecoveryCodes(ctx: Ctx, userId: string, code: st
   return { recoveryCodes };
 }
 
-/** What a reset does to a person: the authenticator and the recovery codes go, and every session of theirs has to do the second step again. */
-async function wipe(ctx: Ctx, userId: string) {
-  await ctx.db.tx(async (db) => {
-    await db.query('delete from user_totp where user_id = $1', [userId]);
-    await db.query('delete from recovery_code where user_id = $1', [userId]);
-    await db.query('update session set second_factor_at = null where user_id = $1', [userId]);
-  });
+/**
+ * What a reset does to a person: the authenticator and the recovery codes go, every session of theirs ends and any sign-in link
+ * not used yet stops working. Setting a new authenticator up then takes a fresh sign-in: a session or a link that someone else
+ * holds (a stolen cookie, a phished link) cannot be used to put their own phone on the account.
+ */
+async function wipe(db: Queryable, userId: string) {
+  await db.query('delete from user_totp where user_id = $1', [userId]);
+  await db.query('delete from recovery_code where user_id = $1', [userId]);
+  await db.query('delete from session where user_id = $1', [userId]);
+  await db.query(
+    'update login_token set used_at = now() where used_at is null and lower(email) = (select lower(email) from app_user where id = $1)',
+    [userId],
+  );
 }
 
-/** An admin resets a member's authenticator (a lost phone with no recovery codes). They enrol again at their next sign-in. */
+/** Tells the person their authenticator was reset, so one they did not ask for does not go unnoticed. */
+function tellThem(ctx: Ctx, email: string, by: string) {
+  void ctx.mailer
+    .send(
+      email,
+      'Your authenticator was reset',
+      `${by} reset the authenticator app of your account, and signed you out everywhere. You will set up a new one the next time you sign in.\n\nIf you did not ask for this, tell the admins of your brands now.\n`,
+    )
+    .catch((err) => ctx.log.error({ err: String(err) }, 'could not email about an authenticator reset'));
+}
+
+/**
+ * An admin resets a member's authenticator (a lost phone with no recovery codes). The authenticator guards the person's whole
+ * account, not their place in one brand, so only someone who is an admin of **every** brand the person belongs to may reset it;
+ * anyone else is refused, and whoever runs the server can do it from the command line. It is recorded in each of those brands.
+ */
 export async function resetForMember(ctx: Ctx, p: Principal, brandId: string, memberId: string) {
   await authorize(ctx.db, p, brandId, 'brand.manage');
-  const m = await ctx.db.one<{ user_id: string }>('select user_id from member where id = $1 and brand_id = $2', [memberId, brandId]);
-  if (!m) throw notFound('Member');
-  await wipe(ctx, m.user_id);
-  await audit(ctx.db, p, brandId, 'user.second_factor_reset', 'app_user', m.user_id, { enrolled: true }, { enrolled: false });
+  if (p.kind !== 'user') throw forbidden();
+  const out = await ctx.db.tx(async (db) => {
+    const m = await db.one<{ user_id: string; email: string }>(
+      'select m.user_id, u.email from member m join app_user u on u.id = m.user_id where m.id = $1 and m.brand_id = $2',
+      [memberId, brandId],
+    );
+    if (!m) throw notFound('Member');
+    if (m.user_id === p.userId) {
+      throw new AppError(403, 'own_second_factor', 'You cannot reset your own authenticator here. Sign in with a recovery code, or ask whoever runs the server to reset it from the command line.');
+    }
+    // Locks the person's memberships, so none is added or changed while this is decided.
+    const brands = await db.query<{ brand_id: string; manages: boolean }>(
+      `select m.brand_id, exists(select 1 from member a where a.brand_id = m.brand_id and a.user_id = $2 and a.role = 'admin') as manages
+       from member m where m.user_id = $1 for update of m`,
+      [m.user_id, p.userId],
+    );
+    if (brands.some((b) => !b.manages)) {
+      throw new AppError(
+        403,
+        'not_admin_of_all_brands',
+        `${m.email} also belongs to brands you are not an admin of, and their authenticator protects their access to all of them. An admin of every brand they belong to can reset it, or whoever runs the server, from the command line (npm run reset-2fa).`,
+      );
+    }
+    await wipe(db, m.user_id);
+    for (const b of brands) {
+      await audit(db, p, b.brand_id, 'user.second_factor_reset', 'app_user', m.user_id, { enrolled: true }, { enrolled: false, sessions_ended: true, from_brand: brandId });
+    }
+    return m;
+  });
+  tellThem(ctx, out.email, p.email);
   return { ok: true };
 }
 
 /** The same, from the command line, for an admin who has lost both their phone and their recovery codes. */
 export async function resetByEmail(ctx: Ctx, email: string): Promise<boolean> {
-  const u = await ctx.db.one<{ id: string }>('select id from app_user where lower(email) = $1', [email.trim().toLowerCase()]);
+  const u = await ctx.db.one<{ id: string; email: string }>('select id, email from app_user where lower(email) = $1', [email.trim().toLowerCase()]);
   if (!u) return false;
-  await wipe(ctx, u.id);
-  await audit(ctx.db, null, null, 'user.second_factor_reset', 'app_user', u.id, { enrolled: true }, { enrolled: false, by: 'command line' });
+  await ctx.db.tx(async (db) => {
+    await wipe(db, u.id);
+    const brands = await db.query<{ brand_id: string }>('select brand_id from member where user_id = $1', [u.id]);
+    // In each of the person's brands, so their admins see it; and once with no brand, for a person who has none.
+    for (const b of [...brands, ...(brands.length ? [] : [{ brand_id: null }])]) {
+      await audit(db, null, b.brand_id, 'user.second_factor_reset', 'app_user', u.id, { enrolled: true }, { enrolled: false, sessions_ended: true, by: 'command line' });
+    }
+  });
+  tellThem(ctx, u.email, 'Whoever runs the server');
   return true;
 }
-

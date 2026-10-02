@@ -113,8 +113,8 @@ npm run dev:api                           # http://localhost:3000, applies migra
 npm run dev:web                           # http://localhost:5173, proxies /api and /media to the API
 ```
 
-Set `AUTH_DEV_LOGIN=true` to sign in with just an email while developing; otherwise sign-in links are emailed (or
-written to the server log when `SMTP_URL` is not set). Dev sign-in is ignored when `NODE_ENV=production`.
+Set `AUTH_DEV_LOGIN=true` to sign in with just an email while developing; otherwise sign-in links are emailed (or, outside
+production, written to the server log when `SMTP_URL` is not set). Dev sign-in is ignored when `NODE_ENV=production`.
 
 For a single-origin run, the way production works:
 
@@ -157,11 +157,13 @@ declared.
 | A new version voids the previous approval and puts anything scheduled on hold | `services/versions.ts` |
 | Only what is approved, for the accounts approved, can be scheduled | `services/publications.ts` |
 | A producer token never approves, schedules or manages anything | role resolution in `auth/principal.ts` |
+| A producer token stops working when the admin who made it leaves the brand or stops being its admin | `services/auth.ts`, `services/brand.ts` |
 | Times are stored in UTC with the brand's IANA zone, so 19:00 stays 19:00 after a clock change | `domain/time.ts`, tested across both clock changes |
 | The approval is re-checked from the stored files right before anything is sent to a network | `services/publisher.ts` |
 | A post that would go out after its hour plus the tolerance is not sent late | `services/publisher.ts` |
 | Network tokens are sealed, bound to their account, and never returned, logged or stored in the attempt history | `crypto.ts`, `connectors/http.ts` |
 | An event is written in the same transaction as the change it describes | `services/events.ts` |
+| The request log never holds a secret from a URL: query values (sign-in links, OAuth and sign-on codes and states, signed media) and prize links are redacted | `app.ts` |
 | A webhook never reaches cloud metadata or link-local addresses, and in production only public ones over https (unless allowed) | `net.ts` |
 | The agent cannot start without both budgets, past its rounds, over a budget, or on a piece that already has a run | `services/agent.ts`, a unique index |
 | An agent token cannot answer, resolve or claim to fix a comment marked for people only | `services/comments.ts`, `services/versions.ts` |
@@ -170,7 +172,7 @@ declared.
 
 | Role | Can | Cannot |
 | --- | --- | --- |
-| Admin | Everything an approver can, plus manage accounts, people, rules and API tokens | Approve what they uploaded |
+| Admin | Everything an approver can, plus manage accounts, people, rules and API tokens. Someone from another workspace is invited and joins only on accepting | Approve what they uploaded; reset the authenticator of someone who also belongs to a brand they do not manage |
 | Approver | Everything a reviewer can, plus upload, approve or reject, schedule, move dates, pause the brand | Approve what they uploaded |
 | Reviewer | View, comment, request changes, resolve comments | Approve or schedule |
 | Producer | Create pieces, upload versions, reply to and resolve comments (a person or an API token) | Approve, schedule or touch accounts |
@@ -213,13 +215,13 @@ See [`.env.example`](.env.example). The ones that matter:
 | `SECRET` | At least 32 characters; signs local media URLs |
 | `APP_URL`, `MEDIA_URL` | Public address of the app, and of the media domain (a separate one in production) |
 | `STORAGE_DRIVER` | `local` for development, `s3` for MinIO, S3 or R2 (`S3_*` variables, and `S3_PUBLIC_ENDPOINT` when browsers reach the bucket on a different address than the app does) |
-| `SMTP_URL`, `MAIL_FROM` | Email; without it, messages go to the log |
+| `SMTP_URL`, `MAIL_FROM` | Email; without it, messages go to the log in development. In production it is required while email-link sign-in is on, and without it no email text is logged |
 | `WEB_DIST` | Folder with the built web app, so the API serves it |
 | `TOKEN_KEY` | 32 bytes in base64 (`openssl rand -base64 32`). Seals network tokens and webhook secrets; required once Meta or Google is set, and for any webhook. **Keep a copy: losing it means connecting every account and replacing every webhook secret** |
 | `WEBHOOK_ALLOW_PRIVATE_NETWORKS` | Whether webhooks may point at loopback and private addresses. Default: yes in development, no in production |
 | `META_APP_ID`, `META_APP_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | The developer apps ([setup in docs/phase-2.md](docs/phase-2.md#setting-up-the-networks)). Without them accounts stay manual |
 | `THREADS_*`, `TIKTOK_*`, `LINKEDIN_*` (and `LINKEDIN_VERSION`), `X_*`, `PINTEREST_*` | The other networks' apps ([setup in docs/phase-4.md](docs/phase-4.md#setting-up-the-networks)). Each switches on with its credentials; Bluesky needs only `TOKEN_KEY` |
-| `SECOND_FACTOR_REQUIRED`, `EMAIL_LINK_LOGIN` | Whether admins and approvers must give an authenticator code (default: yes in production), and whether the emailed link still signs people in ([docs/phase-5.md](docs/phase-5.md#signing-in)) |
+| `SECOND_FACTOR_REQUIRED`, `EMAIL_LINK_LOGIN` | Whether admins and approvers must give an authenticator code (default: yes in production), and whether the emailed link still signs people in (default: yes, except with `OIDC_SECOND_FACTOR=idp`; [docs/phase-5.md](docs/phase-5.md#signing-in)) |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_ALLOWED_DOMAINS` (and `OIDC_LABEL`, `OIDC_SECOND_FACTOR`, `OIDC_TRUST_EMAIL`) | Single sign-on. The allowed domains are required |
 | `GOOGLE_ANALYTICS` | Also ask YouTube for its Analytics permission, so watch time can be read. Off by default: Google treats it as sensitive |
 | `STAGING_DIR` | Where big uploads wait while they arrive in pieces (a volume in the compose file) |

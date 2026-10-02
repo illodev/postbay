@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Studio, StudioError } from './api.js';
 import type { Config } from './config.js';
@@ -53,11 +53,15 @@ export function startRunner(config: Config, queue: Queue, log: Logger, o: { now?
       let s = studios.get(key);
       if (!s) {
         const b = config.brands[key]!;
-        s = new Studio(b.api, b.token);
+        s = new Studio(b.api, b.token, fetch, config.secrets);
         studios.set(key, s);
       }
       return s;
     });
+  // The workspace is the runner's: other users may pass through it (to their own brand's directory, with runAs) but not list it.
+  const anyRunAs = Object.values(config.brands).some((b) => b.agent.runAs);
+  mkdirSync(config.workspaceRoot, { recursive: true, mode: 0o700 });
+  chmodSync(config.workspaceRoot, anyRunAs ? 0o711 : 0o700);
   const abort = new AbortController();
   const deps: PipelineDeps = { config, studioFor, templates: loadTemplates(config), queue, log, now, signal: abort.signal };
   const running = new Set<Promise<void>>();

@@ -129,10 +129,13 @@ def verify(secret: str, headers: dict, raw_body: bytes) -> bool:
 A webhook is the studio making an HTTP request to an address someone typed, so the address is checked **after DNS resolution** (so
 a name that resolves to a private address does not get through) and again on connection:
 
-- Link-local (cloud metadata at `169.254.169.254` included), unspecified, multicast and reserved addresses are **always** refused.
+- Link-local (cloud metadata at `169.254.169.254` included), unspecified, multicast and reserved addresses are **always** refused,
+  and so are the metadata addresses clouds put elsewhere: AWS's `fd00:ec2::254`, Google's `fd20:ce::254`, Alibaba's `100.100.100.200`,
+  Oracle's `192.0.0.192` (all of `192.0.0.0/24`) and Azure's platform endpoint `168.63.129.16`. A private-network setting does not change that.
 - Loopback and private ranges are allowed in development and **refused in production**, unless `WEBHOOK_ALLOW_PRIVATE_NETWORKS=true`
   (a runner on the same private network, for instance). Plain `http` to a public address is refused in production.
-- IPv4-mapped IPv6 addresses are unwrapped before the check.
+- An IPv6 address that carries an IPv4 one is judged by both, and the stricter answer wins: IPv4-mapped and -compatible addresses,
+  NAT64 (`64:ff9b::/96` and `64:ff9b:1::/48`), 6to4 (`2002::/16`) and Teredo (`2001:0::/32`, server and client).
 
 A refusal is final: it is recorded on the delivery with the reason and is not retried.
 
@@ -144,6 +147,7 @@ or a bug would meet the same refusals.
 | Safeguard | How it works |
 | --- | --- |
 | **The agent cannot approve, schedule or manage anything** | Its token is a producer token, and phase 1's role rules (tested) never let one approve, schedule or manage |
+| **A token lives no longer than its maker's say** | A producer token works only while the admin who made it is still an admin of the brand. Removing them, or making them anything less than admin, revokes their tokens (in the audit log, with the reason); a change made any other way is caught when the token is next used. *Settings → API tokens* says who made each one. Make the runner's token with an account that stays |
 | **Round cap per piece** | 3 by default (*Settings → Agent*). A run counts as a round; refusals and runs closed before they did anything do not. After the cap the piece goes to a person: the studio refuses the next run, notifies approvers and admins once per request, and the piece page says so |
 | **Budget per piece and per month** | Both must be set or **the agent does not start** (a missing limit is not "unlimited"). Spending is what the runner reports per run; the month is the calendar month **in the brand's time zone**. The runner also passes what is left for the piece to the agent as a hard stop (`--max-budget-usd` for Claude Code) |
 | **Longest run** | 30 minutes by default, per brand. The runner stops the agent (SIGTERM, then SIGKILL to its whole process group) and answers every comment with "a person needs to look". The studio also closes a run whose lease expired |
@@ -235,9 +239,12 @@ a version with `resolves`, comments, replies, slots) are unchanged. Added in thi
 - **Nothing was run against real Meta or Google** (see phase 2). Phase 3's loop does not need them, but publication events for real
   posts have only been seen with the fakes.
 - **The agent executes commands.** `--allowedTools` is Claude Code's permission list, not a sandbox: `ffmpeg` can still be given any
-  arguments. Run the runner as an unprivileged user, ideally in a container with nothing else in it, and give the agent only the
-  credentials it needs. The comments an agent reads are text written by your reviewers; "only people" is a rule about who acts,
-  **not a defence against instructions hidden in a comment**.
+  arguments. The comments an agent reads are text written by your reviewers; "only people" is a rule about who acts, **not a defence
+  against instructions hidden in a comment**. So the runner keeps its secrets in files (never in its environment, which an agent of the
+  same user reads through `/proc`), runs the agent in a sandbox (`agent.sandbox`: bubblewrap, a container) or as another user
+  (`agent.runAs`), closes each brand's directory to everyone else, and refuses to post an agent's result that holds any secret it knows.
+  An agent that is neither sandboxed nor another user can still read everything the runner can, and the runner says so when it starts.
+  See [Keeping the agent apart](../apps/runner/README.md#keeping-the-agent-apart-from-the-runner).
 - **The runner is one process with a queue in files.** Several runners can work for one studio (the studio allows one run per piece),
   but each has its own queue, and a webhook address points to one.
 - **Cost is trusted.** A runner that under-reports its spending would be believed; the in-agent budget flag and the run time limit are
@@ -254,7 +261,8 @@ a version with `resolves`, comments, replies, slots) are unchanged. Added in thi
 1. Set `TOKEN_KEY` (webhooks need it) and start the studio. In *Settings → API tokens* make a producer token; in *Settings → Agent*
    set both budgets, small at first.
 2. Copy `apps/runner/config.example.json`, edit the template to say how your brand speaks and what the agent must never invent, put the
-   token and the secret in the environment, and start the runner (see its README).
+   token and the secret in files only the runner's user can read (`tokenFile`, `webhookSecretFile`), check the sandbox, and start the
+   runner (see its README). Read its warnings on start.
 3. In *Settings → Webhooks* add the runner's address and use *Send a test*.
 4. Upload a short video, and as a reviewer comment on a frame and request changes. Watch the piece page: the Agent card shows the run
    as it happens.

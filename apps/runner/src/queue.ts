@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export type Stage = 'queued' | 'started' | 'agent_done' | 'uploaded';
@@ -43,8 +43,11 @@ export class Queue {
   constructor(stateDir: string) {
     this.dir = path.join(stateDir, 'queue');
     this.seenDir = path.join(stateDir, 'seen');
-    mkdirSync(this.dir, { recursive: true });
-    mkdirSync(this.seenDir, { recursive: true });
+    // The runner's own: no agent has any business reading the events or what the runner made of them.
+    mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    chmodSync(stateDir, 0o700);
+    mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    mkdirSync(this.seenDir, { recursive: true, mode: 0o700 });
   }
 
   private file(id: string) {

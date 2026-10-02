@@ -18,6 +18,7 @@ x-app-env: &app-env
   S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
   S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
   S3_FORCE_PATH_STYLE: 'true'
+  # Required while email-link sign-in is on (the default): the app refuses to start without it rather than put sign-in links in its log.
   SMTP_URL: ${SMTP_URL:-}
   MAIL_FROM: ${MAIL_FROM:-Studio <no-reply@localhost>}
   # Connecting accounts and publishing to them (docs/phase-2.md). Leave the network credentials empty to keep an account manual.
@@ -45,6 +46,7 @@ x-app-env: &app-env
   # Signing in and notifications (docs/phase-5.md). Single sign-on switches on with the OIDC_* values; a second factor (an authenticator app)
   # is asked of admins and approvers by default in production; Slack needs TOKEN_KEY above, and push messages need nothing.
   SECOND_FACTOR_REQUIRED: ${SECOND_FACTOR_REQUIRED:-}
+  # Default: on, except with OIDC_SECOND_FACTOR=idp, where an emailed link would skip the provider's second step.
   EMAIL_LINK_LOGIN: ${EMAIL_LINK_LOGIN:-}
   OIDC_ISSUER: ${OIDC_ISSUER:-}
   OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
