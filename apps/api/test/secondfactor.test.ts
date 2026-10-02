@@ -408,6 +408,7 @@ describe('managing it', () => {
     const r = await req(cookie, 'POST', `/api/brands/${env.brandId}/members/${own.id}/reset-2fa`);
     expect(r.status).toBe(403);
     expect(r.body.error.code).toBe('own_second_factor');
+    expect((await req(cookie, 'GET', `/api/brands/${env.brandId}/members`)).body.find((m: any) => m.id === own.id).can_reset_second_factor).toBe(false);
   });
 
   it('can be reset from the command line, for the admin who lost both, ending their sessions', async () => {

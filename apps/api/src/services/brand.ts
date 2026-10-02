@@ -85,15 +85,15 @@ export const memberInput = z.object({
 
 /**
  * The brand's people. `can_reset_second_factor` says whether the person asking may reset that member's authenticator: only an
- * admin of every brand the member belongs to may (see resetForMember in services/secondfactor.ts).
+ * admin of every brand the member belongs to may, and nobody their own (see resetForMember in services/secondfactor.ts).
  */
 export async function listMembers(ctx: Ctx, p: Principal, brandId: string) {
   await authorize(ctx.db, p, brandId, 'brand.manage');
   return ctx.db.query(
     `select m.id, m.role, u.id as user_id, u.email, u.name,
             exists(select 1 from user_totp t where t.user_id = u.id and t.confirmed_at is not null) as second_factor,
-            not exists(select 1 from member o where o.user_id = u.id and not exists(
-              select 1 from member a where a.brand_id = o.brand_id and a.user_id = $2 and a.role = 'admin')) as can_reset_second_factor
+            (u.id <> $2 and not exists(select 1 from member o where o.user_id = u.id and not exists(
+              select 1 from member a where a.brand_id = o.brand_id and a.user_id = $2 and a.role = 'admin'))) as can_reset_second_factor
      from member m join app_user u on u.id = m.user_id
      where m.brand_id = $1 order by u.email`,
     [brandId, p.kind === 'user' ? p.userId : null],

@@ -142,6 +142,12 @@ development unless set. Anyone else can turn it on in *Your account*.
   - A reset **ends every session of the person** and spends any sign-in link not used yet, so a new authenticator is set up only after a
     fresh sign-in: a stolen session or link cannot be used to put somebody else's phone on the account. The person is emailed about it, and it
     is in the audit log of each of their brands.
+- `OIDC_SECOND_FACTOR=idp` skips the app's second step for single sign-on, **trusting that you enforce one at the provider**. The app cannot see whether you do. The default (`app`) asks anyway.
+- With `OIDC_SECOND_FACTOR=idp` the **emailed link is off by default**: a link signs in without the provider, so it would be a way round
+  the provider's second step (and a stolen link would let its holder set up their own authenticator). Set `EMAIL_LINK_LOGIN=true` to keep
+  it as a way in for when the provider is down; then a session begun with a link owes the **app's** second step whatever the person's role,
+  and cannot set an authenticator up: people set one up after signing in with single sign-on, under *Your account*, and only then can use a link.
+- The secret is sealed with a key made from `SECRET`; losing `SECRET` makes every authenticator unusable and every person would have to be reset.
 
 ### Adding people
 
@@ -151,12 +157,6 @@ development unless set. Anyone else can turn it on in *Your account*.
   (`POST /api/invitations/:id/accept` or `/decline`). Until then the brand's admins have no say over their account. An invitation lasts
   14 days; admins see the waiting ones (`GET /api/brands/:id/invitations`) and can cancel them (`DELETE …/invitations/:id`).
 - Otherwise an admin anywhere could make, say, another workspace's admin a reader of their brand without asking, and act on that account.
-- `OIDC_SECOND_FACTOR=idp` skips the app's second step for single sign-on, **trusting that you enforce one at the provider**. The app cannot see whether you do. The default (`app`) asks anyway.
-- With `OIDC_SECOND_FACTOR=idp` the **emailed link is off by default**: a link signs in without the provider, so it would be a way round
-  the provider's second step (and a stolen link would let its holder set up their own authenticator). Set `EMAIL_LINK_LOGIN=true` to keep
-  it as a way in for when the provider is down; then a session begun with a link owes the **app's** second step whatever the person's role,
-  and cannot set an authenticator up: people set one up after signing in with single sign-on, under *Your account*, and only then can use a link.
-- The secret is sealed with a key made from `SECRET`; losing `SECRET` makes every authenticator unusable and every person would have to be reset.
 
 ## Notifications
 
