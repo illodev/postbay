@@ -1,3 +1,4 @@
+import { goneNote } from '../notes.js';
 import { issue, networkName, validateAgainst } from '../validate.js';
 import {
   ConnectorError,
@@ -237,7 +238,7 @@ export function createBluesky(client: BlueskyClient): Connector {
       const r = await client.xrpc<{ posts?: { uri: string }[] }>(pdsOf(account, client), 'app.bsky.feed.getPosts', { token, query: { uris: externalId } });
       const handleName = String(account.providerData.handle ?? account.externalId);
       const rkey = externalId.split('/').pop();
-      if (!r.posts?.length) return { visibility: 'unknown', note: 'Bluesky does not return this post any more' };
+      if (!r.posts?.length) return { visibility: 'unknown', ...goneNote('bluesky', 'post') };
       return { visibility: 'public', url: `https://bsky.app/profile/${handleName}/post/${rkey}` };
     },
 

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Queryable, Row } from '../db.js';
 import { profileOf } from '../connectors/profiles.js';
-import { redact } from '../connectors/http.js';
+import { redact, redactUrl } from '../connectors/http.js';
 import {
   ConnectorError,
   type Account, type Connector, type Handle, type Issue, type MediaItem, type PlacementSpec, type PublishInput, type VerifyResult,
@@ -168,6 +168,22 @@ type Patch = Partial<{
 type Text = Localized | Localized[];
 const JSON_COLUMNS = new Set<string>(['handle', 'last_error_i18n', 'hold_reason_i18n']);
 
+/**
+ * What goes in the attempt history, safe to store: the network's answer redacted as always, and the texts kept as codes (`x_i18n`) with
+ * the same care for their values but their own keys kept (a code is ours, and `code` would otherwise read as a secret's name).
+ */
+function redactDetail(detail: unknown): unknown {
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return redact(detail);
+  const kept: Record<string, unknown> = {};
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(detail)) (k.endsWith('_i18n') ? kept : rest)[k] = v;
+  const values = (v: unknown, depth = 0): unknown =>
+    typeof v === 'string' ? redactUrl(v).slice(0, 2000)
+      : Array.isArray(v) ? v.slice(0, 50).map((x) => values(x, depth + 1))
+        : v && typeof v === 'object' && depth < 8 ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, values(x, depth + 1)])) : v;
+  return { ...(redact(rest) as object), ...(values(kept) as object) };
+}
+
 /** A network's name as people write it. */
 const networkName = (network: string) => msg(`network.${network}` as never);
 
@@ -222,7 +238,7 @@ async function record(
     await db.query(
       `insert into publication_attempt (publication_id, step, attempt, started_at, finished_at, outcome, error_class, http_status, detail)
        values ($1,$2,$3,$4,$4,$5,$6,$7,$8)`,
-      [L.pub.id, step, n, ctx.now(), outcome, o.errorClass ?? null, o.httpStatus ?? null, JSON.stringify(redact(o.detail ?? {}))],
+      [L.pub.id, step, n, ctx.now(), outcome, o.errorClass ?? null, o.httpStatus ?? null, JSON.stringify(redactDetail(o.detail ?? {}))],
     );
     await audit(db, null, L.brandId, 'publication.attempt', 'publication', L.pub.id, null, { step, attempt: n, outcome, errorClass: o.errorClass ?? null, httpStatus: o.httpStatus ?? null });
   });
@@ -655,7 +671,7 @@ async function verify(ctx: Ctx, L: Loaded): Promise<string> {
           if (!(await commit(db, L.w, ['published'], { ...base, next_run_at: null }))) return 'changed';
           if (!sameAsBefore) {
             await audit(db, null, L.brandId, 'publication.private', 'publication', pub.id, { visibility: pub.visibility }, { visibility: 'private', note: res.note ?? null });
-            await tell(db, L, 'publication.private', { url: res.url ?? pub.url, message: res.note });
+            await tell(db, L, 'publication.private', { url: res.url ?? pub.url, message: res.note, ...(res.noteText ? { message_i18n: res.noteText } : {}) });
           }
           return 'private';
         });

@@ -1,3 +1,4 @@
+import { noteOf } from '../notes.js';
 import { call } from '../http.js';
 import { isKnown, msg, render, requestLocale, type Key, type Localized, type Params } from '../../i18n/index.js';
 import { issue, validateAgainst } from '../validate.js';
@@ -328,7 +329,7 @@ export function createTikTok(client: TikTokClient, opts: TikTokOptions = {}): Co
         }
         return { visibility: 'public', url, handle: postId ? { postId } : undefined };
       }
-      if (s.status === 'SEND_TO_USER_INBOX') return { visibility: 'private', note: "TikTok put the post in the account's inbox as a draft: a person has to finish it in the TikTok app" };
+      if (s.status === 'SEND_TO_USER_INBOX') return { visibility: 'private', ...noteOf('pub.note.tiktok.inbox') };
       return { visibility: 'processing', note: s.status };
     },
 

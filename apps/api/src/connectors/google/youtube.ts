@@ -1,3 +1,4 @@
+import { goneNote, noteOf } from '../notes.js';
 import { Readable } from 'node:stream';
 import { call } from '../http.js';
 import { issue, validateAgainst } from '../validate.js';
@@ -286,7 +287,7 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
         '/youtube/v3/videos', token, { part: 'status,processingDetails', id: externalId });
       const s = r.items?.[0]?.status;
       const url = `https://www.youtube.com/watch?v=${externalId}`;
-      if (!s) return { visibility: 'unknown', url, note: 'YouTube does not return this video any more' };
+      if (!s) return { visibility: 'unknown', url, ...goneNote('youtube', 'video') };
       if (s.uploadStatus === 'failed' || s.uploadStatus === 'rejected') {
         throw new ConnectorError('file_rejected', `YouTube refused the video (${s.rejectionReason ?? s.failureReason ?? s.uploadStatus})`, { detail: s });
       }
@@ -301,13 +302,13 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
       const audited = account.providerData.audited === true;
       if (audited && publishAt !== null && env.now().getTime() - publishAt < PUBLISH_GRACE_MS) {
         return {
-          visibility: 'processing', url, note: 'Its time has come and YouTube has not made it public yet; it usually does within minutes',
+          visibility: 'processing', url, ...noteOf('pub.note.youtube.notPublicYet'),
           retryAfterSec: graceRecheckSeconds(env.now().getTime() - publishAt),
         };
       }
-      if (!audited) return { visibility: 'private', url, note: 'The video is private on YouTube, because the project has not passed its audit: a person has to make it public in YouTube Studio' };
-      if (publishAt === null) return { visibility: 'private', url, note: 'The video is private on YouTube: a person has to make it public in YouTube Studio' };
-      return { visibility: 'private', url, note: 'The video is still private on YouTube 45 minutes after its time: a person has to make it public in YouTube Studio' };
+      if (!audited) return { visibility: 'private', url, ...noteOf('pub.note.youtube.unaudited') };
+      if (publishAt === null) return { visibility: 'private', url, ...noteOf('pub.note.youtube.private') };
+      return { visibility: 'private', url, ...noteOf('pub.note.youtube.stillPrivate') };
     },
 
     async discard(_account, handle, env): Promise<void> {

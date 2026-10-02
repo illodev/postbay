@@ -143,6 +143,28 @@ describe('the API in the request\'s language', () => {
     expect((await pubOf('es', held.pieceId)).hold_reason).toBe('Held by hand');
   });
 
+  it('shows a network\'s note on a post kept private in the history, in the reader\'s language', async () => {
+    const yt = await env.connect('youtube');
+    const { variantId } = await env.makePiece(env.users.producer, 'video', '16:9');
+    const v = await env.newVersion(env.users.producer, variantId, [{ name: 'clip.mp4', mime: 'video/mp4', kind: 'video', data: Buffer.from(`clip-${Math.random()}`) }]);
+    await env.approve(env.users.approver, v.body.id, [yt]);
+    const r = await env.call(env.users.approver, 'POST', `/api/versions/${v.body.id}/publications`, {
+      accountId: yt, scheduledAt: new Date(env.clock.now().getTime() + 2 * 60 * MIN).toISOString(), text: 'Spring menu', options: { madeForKids: 'no' },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    env.clock.set(new Date(r.body.prepare_at));
+    await env.settle();
+    env.clock.set(new Date(new Date(r.body.scheduled_at).getTime() + 2 * MIN));
+    await env.settle();
+    expect((await env.db.one('select visibility from publication where id = $1', [r.body.id]))!.visibility).toBe('private');
+    const noteIn = async (locale: string) =>
+      (await env.callIn(locale, env.users.approver, 'GET', `/api/publications/${r.body.id}/attempts`)).body.filter((a: any) => a.step === 'verify').at(-1).detail.note;
+    expect(await noteIn('es')).toBe('El vídeo es privado en YouTube porque el proyecto no ha pasado la auditoría: alguien tiene que hacerlo público en YouTube Studio');
+    expect(await noteIn('en')).toBe('The video is private on YouTube, because the project has not passed its audit: a person has to make it public in YouTube Studio');
+    const told = await env.db.one(`select payload from notification where kind = 'publication.private' and payload->>'publicationId' = $1 limit 1`, [r.body.id]);
+    expect(told!.payload.message_i18n).toMatchObject({ code: 'pub.note.youtube.unaudited' });
+  });
+
   it('shows the studio\'s note on an agent run it closed in the reader\'s language, and tells people with a kind of its own', async () => {
     const { pieceId } = await env.makePiece(env.users.producer);
     const tok = (await env.call(env.users.admin, 'POST', `/api/brands/${env.brandId}/tokens`, { name: 'agent' })).body.token as string;

@@ -1,3 +1,4 @@
+import { goneNote, noteOf } from '../notes.js';
 import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { call } from '../http.js';
@@ -189,11 +190,11 @@ export function createPinterest(client: PinterestClient): Connector {
       try {
         await client.request(`/v5/pins/${externalId}`, token);
       } catch (err) {
-        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', note: 'Pinterest does not return this pin any more' };
+        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', ...goneNote('pinterest', 'pin') };
         throw err;
       }
       if (account.providerData.audited !== true) {
-        return { visibility: 'private', url, note: 'The pin is on Pinterest, but only its creator can see it until Pinterest approves the app for Standard access' };
+        return { visibility: 'private', url, ...noteOf('pub.note.pinterest.private') };
       }
       return { visibility: 'public', url };
     },

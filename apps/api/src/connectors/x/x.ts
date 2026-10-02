@@ -1,3 +1,4 @@
+import { goneNote } from '../notes.js';
 import { issue, validateAgainst } from '../validate.js';
 import {
   ConnectorError,
@@ -261,9 +262,9 @@ export function createX(client: XClient, opts: XOptions = {}): Connector {
       const url = `https://x.com/${username}/status/${externalId}`;
       try {
         const r = await client.request<{ data?: { id: string }; errors?: unknown[] }>(`/2/tweets/${externalId}`, token);
-        return r.data?.id ? { visibility: 'public', url } : { visibility: 'unknown', note: 'X does not return this post any more' };
+        return r.data?.id ? { visibility: 'public', url } : { visibility: 'unknown', ...goneNote('x', 'post') };
       } catch (err) {
-        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', note: 'X does not return this post any more' };
+        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', ...goneNote('x', 'post') };
         throw err;
       }
     },

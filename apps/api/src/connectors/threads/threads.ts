@@ -1,3 +1,4 @@
+import { goneNote } from '../notes.js';
 import { msg } from '../../i18n/index.js';
 import { validateAgainst } from '../validate.js';
 import {
@@ -202,7 +203,7 @@ export function createThreads(client: ThreadsClient): Connector {
         const m = await client.get<{ id: string; permalink?: string }>(externalId, token, { fields: 'id,permalink' });
         return { visibility: 'public', url: m.permalink };
       } catch (err) {
-        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', note: 'Threads does not return this post any more' };
+        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', ...goneNote('threads', 'post') };
         throw err;
       }
     },

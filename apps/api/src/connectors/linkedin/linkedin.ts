@@ -1,3 +1,4 @@
+import { goneNote, noteOf } from '../notes.js';
 import { call } from '../http.js';
 import { issue, validateAgainst } from '../validate.js';
 import {
@@ -251,9 +252,9 @@ export function createLinkedIn(client: LinkedInClient): Connector {
       try {
         const p = (await client.request(`/rest/posts/${urn(externalId)}`, token)).body;
         if (p?.lifecycleState === 'PUBLISHED') return { visibility: 'public', url };
-        return { visibility: 'processing', url, note: `LinkedIn says the post is ${String(p?.lifecycleState ?? 'not published yet').toLowerCase()}` };
+        return { visibility: 'processing', url, ...(p?.lifecycleState ? noteOf('pub.note.linkedin.state', { state: String(p.lifecycleState).toLowerCase() }) : noteOf('pub.note.linkedin.notYet')) };
       } catch (err) {
-        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', note: 'LinkedIn does not return this post any more' };
+        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', ...goneNote('linkedin', 'post') };
         throw err;
       }
     },
