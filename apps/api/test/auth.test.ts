@@ -165,6 +165,32 @@ describe('configuration', () => {
     expect(() => loadConfig({ ...base, GOOGLE_ANALYTICS: 'yes' })).toThrow();
     expect(loadConfig(base).YOUTUBE_ANALYTICS_URL).toBe('https://youtubeanalytics.googleapis.com');
   });
+
+  it('reads the staging cap and the Meta login configurations from the configuration, checked, with an empty value meaning unset', async () => {
+    const { loadConfig } = await import('../src/config.js');
+    const { createConnectorSet } = await import('../src/connectors/registry.js');
+    const base = { SECRET: 'x'.repeat(40) };
+    expect(loadConfig(base).STAGING_MAX_GB_PER_BRAND).toBe(20);
+    expect(loadConfig({ ...base, STAGING_MAX_GB_PER_BRAND: '' }).STAGING_MAX_GB_PER_BRAND).toBe(20);
+    expect(loadConfig({ ...base, STAGING_MAX_GB_PER_BRAND: '2.5' }).STAGING_MAX_GB_PER_BRAND).toBe(2.5);
+    expect(() => loadConfig({ ...base, STAGING_MAX_GB_PER_BRAND: 'lots' })).toThrow(/STAGING_MAX_GB_PER_BRAND/);
+    expect(() => loadConfig({ ...base, STAGING_MAX_GB_PER_BRAND: '0' })).toThrow(/STAGING_MAX_GB_PER_BRAND/);
+
+    // The ids reach the sign-in dialog from the configuration that was loaded, not from whatever the process environment holds.
+    const meta = { ...base, TOKEN_KEY: Buffer.alloc(32, 1).toString('base64'), META_APP_ID: 'app', META_APP_SECRET: 'secret' };
+    const before = process.env.META_LOGIN_CONFIG_ID;
+    process.env.META_LOGIN_CONFIG_ID = 'from-the-process';
+    try {
+      const configured = createConnectorSet(loadConfig({ ...meta, META_LOGIN_CONFIG_ID: 'cfg-1', META_LOGIN_CONFIG_ID_PRIZES: 'cfg-2' })).provider('meta')!;
+      expect(new URL(configured.authorizeUrl!('st', 'http://app.test/cb')).searchParams.get('config_id')).toBe('cfg-1');
+      expect(new URL(configured.authorizeUrl!('st', 'http://app.test/cb', { prizes: true })).searchParams.get('config_id')).toBe('cfg-2');
+      const unset = createConnectorSet(loadConfig({ ...meta, META_LOGIN_CONFIG_ID: '' })).provider('meta')!;
+      expect(new URL(unset.authorizeUrl!('st', 'http://app.test/cb')).searchParams.get('config_id')).toBeNull();
+    } finally {
+      if (before === undefined) delete process.env.META_LOGIN_CONFIG_ID;
+      else process.env.META_LOGIN_CONFIG_ID = before;
+    }
+  });
 });
 
 describe('response headers', () => {

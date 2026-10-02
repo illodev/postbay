@@ -28,20 +28,17 @@ export const MAX_CHUNK_BYTES = 16 * 1024 ** 2;
 /** An unfinished upload is kept this long after the last piece (or the last time the same file was chosen again). */
 export const RESUME_TTL_SEC = 24 * 3600;
 
-const positive = (v: string | undefined, fallback: number) => {
-  const n = Number(v);
-  return v !== undefined && Number.isFinite(n) && n > 0 ? n : fallback;
-};
-
 /**
  * What the staging disk can be asked to hold. Pieces wait on this server's disk (STAGING_DIR) until the whole file is there, so a
- * brand may have at most this many bytes declared in unfinished uploads (STAGING_MAX_GB_PER_BRAND, 20 by default), and an upload
- * that keeps being resumed is still dropped this long after it began, however recently its last piece came.
+ * brand may have at most STAGING_MAX_GB_PER_BRAND (20 by default) declared in unfinished uploads (see `maxPendingBytes`), and an
+ * upload that keeps being resumed is still dropped this long after it began, however recently its last piece came.
  */
 export const STAGING_LIMITS = {
-  maxPendingBytesPerBrand: Math.round(positive(process.env.STAGING_MAX_GB_PER_BRAND, 20) * 1024 ** 3),
   maxAgeSec: 72 * 3600,
 };
+
+/** The most a brand may have declared in unfinished resumable uploads, in bytes. */
+export const maxPendingBytes = (ctx: Ctx) => Math.round(ctx.config.STAGING_MAX_GB_PER_BRAND * 1024 ** 3);
 
 /** SQL for the new expiry of an unfinished upload: a day from now, but never past its absolute limit. Takes the two parameters' places. */
 export const resumeExpiry = (ttlParam: string, maxAgeParam: string) =>

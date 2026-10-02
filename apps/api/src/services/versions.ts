@@ -12,7 +12,7 @@ import { notifyRoles } from './notify.js';
 import { runCovering } from './agent.js';
 import { refreshPieceState } from './pieces.js';
 import { probeMeta } from './renditions.js';
-import { CHUNK_BYTES, resumeExpiry, RESUME_TTL_SEC, STAGING_LIMITS } from './resumable.js';
+import { CHUNK_BYTES, maxPendingBytes, resumeExpiry, RESUME_TTL_SEC, STAGING_LIMITS } from './resumable.js';
 
 const MAX_BYTES = 4 * 1024 ** 3;
 const UPLOAD_TTL_SEC = 3600;
@@ -98,11 +98,12 @@ export async function requestUploads(ctx: Ctx, p: Principal, variantId: string, 
            where brand_id = $1 and resumable and completed_at is null and consumed_at is null and expires_at > now()`,
           [variant.brand_id],
         ))!.n);
-        if (staged + f.bytes > STAGING_LIMITS.maxPendingBytesPerBrand) {
+        const maxBytes = maxPendingBytes(ctx);
+        if (staged + f.bytes > maxBytes) {
           const gb = (n: number) => `${(n / 1024 ** 3).toFixed(1)} GB`;
           throw conflict('staging_full',
-            `This brand already has ${gb(staged)} of unfinished uploads waiting on the server (at most ${gb(STAGING_LIMITS.maxPendingBytesPerBrand)}). Finish or abandon those first: an unfinished upload is dropped a day after its last piece.`,
-            { pendingBytes: staged, maxBytes: STAGING_LIMITS.maxPendingBytesPerBrand });
+            `This brand already has ${gb(staged)} of unfinished uploads waiting on the server (at most ${gb(maxBytes)}). Finish or abandon those first: an unfinished upload is dropped a day after its last piece.`,
+            { pendingBytes: staged, maxBytes });
         }
         staged += f.bytes;
       }
