@@ -120,6 +120,8 @@ export interface ActivityItem {
   account_name: string | null;
   /** A new version: how many earlier threads it resolves. */
   resolves: number | null;
+  /** Done by a person through an AI assistant (MCP): the assistant's name ("Claude"), from the audit log. Null otherwise. */
+  via: string | null;
 }
 
 export interface Overview {
@@ -320,7 +322,8 @@ async function recentActivity(ctx: Ctx, brandId: string, limit = 20): Promise<Ac
   const rows = await ctx.db.query(
     `(select 'comment' as kind, c.id::text as id, c.created_at as at, ${WHO('u', 't')} as actor, (c.author_token_id is not null) as by_agent,
         p.id as piece_id, p.title as piece_title, ver.id as version_id, ver.number as version_number,
-        left(split_part(trim(c.body), E'\\n', 1), 200) as text, c.anchor, '{}'::text[] as networks, null::text as account_name, null::int as resolves
+        left(split_part(trim(c.body), E'\\n', 1), 200) as text, c.anchor, '{}'::text[] as networks, null::text as account_name, null::int as resolves,
+        (select ae.via->>'client_name' from audit_event ae where ae.entity = 'comment' and ae.entity_id = c.id and ae.action = 'comment.created' and ae.via is not null limit 1) as via
       from comment c join version ver on ver.id = c.version_id join variant v on v.id = ver.variant_id join piece p on p.id = v.piece_id
       left join app_user u on u.id = c.author_user_id left join api_token t on t.id = c.author_token_id
       where p.brand_id = $1 and c.parent_id is null
@@ -328,7 +331,8 @@ async function recentActivity(ctx: Ctx, brandId: string, limit = 20): Promise<Ac
      union all
      (select 'version', ver.id::text, ver.created_at, ${WHO('u', 't')}, (ver.author_token_id is not null),
         p.id, p.title, ver.id, ver.number, nullif(left(split_part(trim(ver.notes), E'\\n', 1), 200), ''), null, '{}'::text[], null,
-        (select count(*)::int from comment c where c.resolved_in_version_id = ver.id and c.parent_id is null)
+        (select count(*)::int from comment c where c.resolved_in_version_id = ver.id and c.parent_id is null),
+        (select ae.via->>'client_name' from audit_event ae where ae.entity = 'version' and ae.entity_id = ver.id and ae.action = 'version.created' and ae.via is not null limit 1)
       from version ver join variant v on v.id = ver.variant_id join piece p on p.id = v.piece_id
       left join app_user u on u.id = ver.author_user_id left join api_token t on t.id = ver.author_token_id
       where p.brand_id = $1
@@ -336,28 +340,29 @@ async function recentActivity(ctx: Ctx, brandId: string, limit = 20): Promise<Ac
      union all
      (select case a.decision when 'approve' then 'approved' else 'rejected' end, a.id::text, a.created_at, ${WHO('u', 'u')}, false,
         p.id, p.title, ver.id, ver.number, nullif(left(split_part(trim(a.note), E'\\n', 1), 200), ''), null,
-        array(select distinct sa.network from social_account sa where sa.id = any(a.account_ids) order by sa.network), null, null
+        array(select distinct sa.network from social_account sa where sa.id = any(a.account_ids) order by sa.network), null, null,
+        (select ae.via->>'client_name' from audit_event ae where ae.entity = 'version' and ae.entity_id = ver.id and ae.action in ('version.approved','version.rejected') and ae.actor_user_id = a.approver_user_id and ae.via is not null limit 1)
       from approval a join version ver on ver.id = a.version_id join variant v on v.id = ver.variant_id join piece p on p.id = v.piece_id
       join app_user u on u.id = a.approver_user_id
       where p.brand_id = $1
       order by a.created_at desc limit $2)
      union all
      (select 'changes_requested', e.id::text, e.at, ${WHO('u', 't')}, (e.actor_token_id is not null),
-        p.id, p.title, ver.id, ver.number, null, null, '{}'::text[], null, null
+        p.id, p.title, ver.id, ver.number, null, null, '{}'::text[], null, null, e.via->>'client_name'
       from audit_event e join version ver on ver.id = e.entity_id join variant v on v.id = ver.variant_id join piece p on p.id = v.piece_id
       left join app_user u on u.id = e.actor_user_id left join api_token t on t.id = e.actor_token_id
       where e.brand_id = $1 and e.action = 'version.changes_requested'
       order by e.id desc limit $2)
      union all
      (select 'published', pub.id::text, coalesce(pub.published_at, pub.scheduled_at), ${WHO('u', 'u')}, false,
-        p.id, p.title, ver.id, ver.number, null, null, array[sa.network], sa.display_name, null
+        p.id, p.title, ver.id, ver.number, null, null, array[sa.network], sa.display_name, null, null
       from publication pub join version ver on ver.id = pub.version_id join variant v on v.id = pub.variant_id join piece p on p.id = v.piece_id
       join social_account sa on sa.id = pub.social_account_id left join app_user u on u.id = pub.published_by
       where p.brand_id = $1 and pub.status = 'published'
       order by coalesce(pub.published_at, pub.scheduled_at) desc limit $2)
      union all
      (select 'agent_handed', r.id::text, coalesce(r.finished_at, r.started_at), t.name, true,
-        p.id, p.title, null, null, nullif(left(split_part(trim(r.notes), E'\\n', 1), 200), ''), null, '{}'::text[], null, null
+        p.id, p.title, null, null, nullif(left(split_part(trim(r.notes), E'\\n', 1), 200), ''), null, '{}'::text[], null, null, null
       from agent_run r join piece p on p.id = r.piece_id join api_token t on t.id = r.token_id
       where r.brand_id = $1 and r.outcome = 'needs_people'
       order by r.started_at desc limit $2)
@@ -373,7 +378,7 @@ async function recentActivity(ctx: Ctx, brandId: string, limit = 20): Promise<Ac
       t: anchor?.type === 'time' && typeof anchor.t === 'number' ? anchor.t : null,
       t_end: anchor?.type === 'time' && typeof anchor.t_end === 'number' ? anchor.t_end : null,
       page: anchor?.type === 'region' && typeof anchor.page === 'number' ? anchor.page : null,
-      networks: r.networks ?? [], account_name: r.account_name, resolves: r.resolves,
+      networks: r.networks ?? [], account_name: r.account_name, resolves: r.resolves, via: r.via ?? null,
     };
   });
 }

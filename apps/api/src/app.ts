@@ -16,6 +16,7 @@ import type { Mailer } from './mailer.js';
 import type { Media } from './media/ffmpeg.js';
 import { registerRoutes } from './routes/index.js';
 import { mediaRoutes } from './routes/media.js';
+import { isMcpClientPath, mcpRoutes } from './routes/mcp.js';
 import * as authSvc from './services/auth.js';
 import { createContext } from './runtime.js';
 import type { Storage } from './storage/index.js';
@@ -99,6 +100,8 @@ export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; c
   // Who is asking: a producer token (Authorization: Bearer) or a browser session (cookie).
   app.addHook('preHandler', async (req) => {
     if (!req.url.startsWith('/api/')) return;
+    // An AI assistant's endpoints (MCP and its OAuth) take the assistant's own token or nothing: never a producer token, never a cookie.
+    if (isMcpClientPath(req.url)) return;
     const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? '')?.[1];
     if (bearer) {
       req.principal = await authSvc.principalFromApiToken(ctx, bearer);
@@ -177,6 +180,8 @@ export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; c
 
   await app.register(async (media) => mediaRoutes(media, ctx));
   await app.register(async (api) => registerRoutes(api, ctx));
+  // Using the studio from an AI assistant: the MCP endpoint, its OAuth server and their discovery documents (src/mcp/).
+  await app.register(async (mcp) => mcpRoutes(mcp, ctx));
 
   // In production the API also serves the built front end.
   const dist = config.WEB_DIST ? path.resolve(config.WEB_DIST) : null;

@@ -9,7 +9,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    proxy: { '/api': api, '/media': api },
+    // /.well-known: the discovery documents an AI assistant reads before signing in (MCP, see apps/api/src/routes/mcp.ts).
+    proxy: { '/api': api, '/media': api, '/.well-known': api },
   },
   build: { outDir: 'dist', sourcemap: true },
 });

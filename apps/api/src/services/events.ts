@@ -27,6 +27,8 @@ export const EVENT_DESCRIPTIONS: Record<EventType, string> = {
 export interface Actor {
   kind: 'user' | 'token';
   name: string;
+  /** A person acting through an AI assistant (MCP): the assistant's name. */
+  via?: string;
 }
 
 /**
@@ -61,7 +63,7 @@ export async function actorOf(db: Queryable, p: Principal | null): Promise<Actor
   const a = actorCols(p);
   if (a.user) {
     const u = await db.one<{ name: string }>('select coalesce(name, email) as name from app_user where id = $1', [a.user]);
-    return { kind: 'user', name: u?.name ?? 'Someone' };
+    return { kind: 'user', name: u?.name ?? 'Someone', ...(p.kind === 'user' && p.via ? { via: p.via.clientName } : {}) };
   }
   const t = await db.one<{ name: string }>('select name from api_token where id = $1', [a.token]);
   return { kind: 'token', name: t?.name ?? 'A producer token' };

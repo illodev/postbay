@@ -11,6 +11,7 @@ import { t, tMaybe, type Key } from '../i18n';
 import { fmtDateTime, fmtDay, fmtShort, NETWORK_LABEL, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
 import { AgentTab } from '../components/AgentTab';
+import { AssistantsSettings } from '../components/Assistants';
 import { AccountCheckDialog, ServerCheckDialog } from '../components/CheckDialog';
 import { PrizesSettings } from '../components/PrizesSettings';
 import { SlackSettingsCard } from '../components/SlackSettings';
@@ -19,7 +20,7 @@ import '../styles/settings.css';
 import '../styles/features.css';
 
 /** The sections. "notifications" is the Slack section: the key stays as it was so old links keep working. */
-type Tab = 'general' | 'members' | 'accounts' | 'schedule' | 'agent' | 'webhooks' | 'prizes' | 'notifications' | 'tokens' | 'audit';
+type Tab = 'general' | 'members' | 'accounts' | 'schedule' | 'agent' | 'webhooks' | 'prizes' | 'notifications' | 'tokens' | 'assistants' | 'audit';
 
 const ROLES: Role[] = ['admin', 'approver', 'reviewer', 'producer', 'reader'];
 /** Built on use: the labels follow the language. */
@@ -1071,7 +1072,7 @@ export function SettingsPage() {
   const nav = useRef<HTMLElement>(null);
   const groups: { label: Key; items: [Tab, boolean][] }[] = [
     { label: 'settings.group.brand', items: [['general', can('manage') || can('pause')], ['members', can('manage')], ['accounts', can('manage')], ['schedule', can('manage')]] },
-    { label: 'settings.group.automation', items: [['agent', can('manage')], ['webhooks', can('manage')], ['prizes', can('manage')], ['notifications', can('manage')], ['tokens', can('manage')]] },
+    { label: 'settings.group.automation', items: [['agent', can('manage')], ['webhooks', can('manage')], ['prizes', can('manage')], ['notifications', can('manage')], ['tokens', can('manage')], ['assistants', can('manage')]] },
     { label: 'settings.group.control', items: [['audit', can('audit')]] },
   ];
   const visible = groups.flatMap((g) => g.items.filter(([, ok]) => ok).map(([k]) => k));
@@ -1126,6 +1127,7 @@ export function SettingsPage() {
           {current === 'prizes' && <PrizesSettings brandId={brand.id} />}
           {current === 'notifications' && <SlackSettingsCard brandId={brand.id} />}
           {current === 'tokens' && <Tokens brandId={brand.id} />}
+          {current === 'assistants' && <AssistantsSettings brandId={brand.id} />}
           {current === 'audit' && <Audit brandId={brand.id} zone={brand.timezone} />}
         </div>
       </div>

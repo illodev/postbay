@@ -1,0 +1,18 @@
+/* Assistants (MCP): the server address with its copy button, and the consent page. No borders: tone and gaps. */
+.asst-addr { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.asst-addr .set-secret { flex: 1 1 auto; min-width: 0; padding: 8px 12px; }
+.asst-addr .btn { flex: none; }
+.asst-sub { display: flex; flex-direction: column; gap: 6px; }
+.asst-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; background: var(--surface); color: var(--muted); }
+.asst-icon svg { width: 15px; height: 15px; }
+
+.auth-head p.consent-to { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .8125rem; }
+.consent-host { padding: 2px 8px; border-radius: 6px; background: var(--surface); font-family: var(--mono); font-size: .8125rem; color: var(--text); overflow-wrap: anywhere; }
+.consent-brands { list-style: none; margin: 0 -10px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.consent-brands li > label, .consent-brands li > div { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; font-size: .8125rem; cursor: pointer; }
+.consent-brands li > div { cursor: default; }
+.consent-brands li > label:hover { background: rgb(255 255 255 / 3%); }
+.consent-brands .grow { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.consent-brands .grow span:last-child { color: var(--muted); font-size: .75rem; }
+.consent-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.consent-actions .btn { flex: 1; }

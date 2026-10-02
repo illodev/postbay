@@ -7,6 +7,7 @@ import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
 import { EnrollFlow, RecoveryCodes } from '../components/SecondFactor';
 import { NotificationPrefs } from '../components/NotificationPrefs';
+import { MyAssistants } from '../components/Assistants';
 import { Chip, ErrorBox, errorMessage, Field, Skeleton, Tip, Tipped, useToast } from '../components/ui';
 import { LOCALES, t, useLocale, type Locale } from '../i18n';
 import { fmtDay, fmtShort, ROLE_LABEL } from '../lib/format';
@@ -193,6 +194,7 @@ export function SecurityPage() {
         <Language />
         <Authenticator />
         <NotificationPrefs />
+        <MyAssistants />
       </div>
     </>
   );

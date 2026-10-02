@@ -871,6 +871,8 @@ export interface ActivityItem {
   networks: string[];
   account_name: string | null;
   resolves: number | null;
+  /** Done by a person through an AI assistant (MCP): its name ("Claude"). */
+  via?: string | null;
 }
 
 export interface Overview {
