@@ -2,6 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { FileProfile } from '../connectors/profiles.js';
+import { inputArgs, sniff, type Container, type Sniffed } from './sniff.js';
 
 const run = promisify(execFile);
 
@@ -14,8 +15,14 @@ export interface ProbeResult {
   videoCodec?: string | null;
   audioCodec?: string | null;
   pixFmt?: string | null;
-  /** True when it can be treated as an MP4 (the mov/mp4 family). */
+  /** True when the container really is MP4 (an ftyp brand other than QuickTime's), not merely of the mov/mp4 family. */
   mp4?: boolean;
+  /** What the file really is, from its first bytes (see sniff.ts). */
+  container?: Container;
+  /** For MP4 and MOV: the index (moov) comes before the media, so the file can be read while it downloads. */
+  faststart?: boolean | null;
+  /** A JPEG that is really a Multi-Picture Object. */
+  mpo?: boolean;
   videoKbps?: number | null;
   hasAudio?: boolean;
 }
@@ -36,29 +43,49 @@ function parseRate(r: string | undefined): number | null {
   return Math.round((n / d) * 1000) / 1000;
 }
 
-/** ffmpeg arguments that turn any video into one that fits the profile. Exported so the choices can be tested. */
-export function videoArgs(src: string, dest: string, p: Extract<FileProfile, { kind: 'video' }>, probe: ProbeResult): string[] {
-  const args = [
-    '-y', '-v', 'error', '-i', src,
-    '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', p.pixFmt,
-    // Shrink to fit, never enlarge, keep the aspect ratio, and keep both sides even (H.264 needs it).
-    '-vf', `scale=w='min(iw,${p.maxWidth})':h='min(ih,${p.maxHeight})':force_original_aspect_ratio=decrease:force_divisible_by=2`,
-    '-maxrate', `${p.maxVideoKbps}k`, '-bufsize', `${p.maxVideoKbps * 2}k`,
-    '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
-    '-movflags', '+faststart',
-  ];
-  if (probe.fps && probe.fps > p.maxFps) args.push('-r', String(p.maxFps));
-  args.push(dest);
+type VideoProfileOf = Extract<FileProfile, { kind: 'video' }>;
+
+/** Whether the picture itself already fits, so it can be copied as it is and only the container (or the sound) changes. */
+export function videoStreamFits(p: VideoProfileOf, probe: ProbeResult): boolean {
+  return probe.videoCodec === p.videoCodec && probe.pixFmt === p.pixFmt
+    && !!probe.width && !!probe.height && probe.width <= p.maxWidth && probe.height <= p.maxHeight
+    && !!probe.fps && probe.fps <= p.maxFps + 0.01 && probe.fps >= (p.minFps ?? 0) - 0.01
+    && (probe.videoKbps ?? 0) <= p.maxVideoKbps;
+}
+
+/**
+ * ffmpeg arguments that turn a video into one that fits the profile. When the picture already fits (an H.264 MOV, an MP4 whose index
+ * is at the end) it is copied, not encoded again: the file is only rewritten as an MP4 with its index at the front. Exported so the
+ * choices can be tested. `input` is what goes before -i (the reader and the protocols allowed; see sniff.ts).
+ */
+export function videoArgs(src: string, dest: string, p: VideoProfileOf, probe: ProbeResult, input: string[] = []): string[] {
+  const copyVideo = videoStreamFits(p, probe);
+  const copyAudio = !probe.audioCodec || probe.audioCodec === p.audioCodec;
+  const args = ['-y', '-v', 'error', ...input, '-i', src, '-map', '0:v:0', '-map', '0:a:0?'];
+  if (copyVideo) {
+    args.push('-c:v', 'copy');
+  } else {
+    args.push(
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', p.pixFmt,
+      // Shrink to fit, never enlarge, keep the aspect ratio, and keep both sides even (H.264 needs it).
+      '-vf', `scale=w='min(iw,${p.maxWidth})':h='min(ih,${p.maxHeight})':force_original_aspect_ratio=decrease:force_divisible_by=2`,
+      '-maxrate', `${p.maxVideoKbps}k`, '-bufsize', `${p.maxVideoKbps * 2}k`,
+    );
+    if (probe.fps && probe.fps > p.maxFps) args.push('-r', String(p.maxFps));
+    else if (probe.fps && p.minFps && probe.fps < p.minFps) args.push('-r', String(p.minFps));
+  }
+  args.push(...(copyAudio ? ['-c:a', 'copy'] : ['-c:a', 'aac', '-b:a', '128k', '-ac', '2']));
+  // The index at the front, in an MP4 container whatever the name of the output says.
+  args.push('-movflags', '+faststart', '-f', 'mp4', dest);
   return args;
 }
 
 /** JPEG quality steps (ffmpeg's -q:v, lower is better): the first is used unless the result is over the profile's size. */
 export const IMAGE_QUALITY_LADDER = [2, 5, 9, 14, 20, 28];
 
-export function imageArgs(src: string, dest: string, p: Extract<FileProfile, { kind: 'image' }>, quality = IMAGE_QUALITY_LADDER[0]!): string[] {
+export function imageArgs(src: string, dest: string, p: Extract<FileProfile, { kind: 'image' }>, quality = IMAGE_QUALITY_LADDER[0]!, input: string[] = []): string[] {
   return [
-    '-y', '-v', 'error', '-i', src,
+    '-y', '-v', 'error', ...input, '-i', src,
     '-frames:v', '1',
     '-vf', `scale=w='min(iw,${p.maxWidth})':h=-2`,
     '-q:v', String(quality), '-pix_fmt', 'yuvj420p',
@@ -85,9 +112,11 @@ export function createMedia(log?: { warn: (o: object, m?: string) => void }): Me
   return {
     async probe(src) {
       try {
+        // What the file is, from its own bytes: ffprobe is then told which reader to use and may open nothing else.
+        const kind = await sniff(src);
         const { stdout } = await run(
           'ffprobe',
-          ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', src],
+          ['-v', 'error', ...inputArgs(src, kind), '-print_format', 'json', '-show_streams', '-show_format', src],
           { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
         );
         const info = JSON.parse(stdout) as {
@@ -107,7 +136,11 @@ export function createMedia(log?: { warn: (o: object, m?: string) => void }): Me
           videoCodec: v?.codec_name ?? null,
           audioCodec: a?.codec_name ?? null,
           pixFmt: v?.pix_fmt ?? null,
-          mp4: /\bmp4\b/.test(info.format?.format_name ?? ''),
+          // ffprobe names the whole family ("mov,mp4,m4a,…") for an MP4 and a MOV alike: the first bytes tell them apart.
+          mp4: kind.container === 'mp4',
+          container: kind.container,
+          faststart: kind.faststart ?? null,
+          ...(kind.container === 'jpeg' ? { mpo: kind.mpo === true } : {}),
           videoKbps: Number.isFinite(vbr) && vbr > 0 ? Math.round(vbr / 1000) : null,
           hasAudio: !!a,
         };
@@ -119,9 +152,10 @@ export function createMedia(log?: { warn: (o: object, m?: string) => void }): Me
 
     async frame(src, seconds) {
       try {
+        const kind = await sniff(src);
         const { stdout } = await run(
           'ffmpeg',
-          ['-v', 'error', '-ss', String(Math.max(0, seconds)), '-i', src, '-frames:v', '1', '-q:v', '3', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'],
+          ['-v', 'error', '-ss', String(Math.max(0, seconds)), ...inputArgs(src, kind), '-i', src, '-frames:v', '1', '-q:v', '3', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'],
           { timeout: 20_000, encoding: 'buffer', maxBuffer: 16 * 1024 * 1024 },
         );
         return stdout.length > 0 ? stdout : null;
@@ -132,13 +166,22 @@ export function createMedia(log?: { warn: (o: object, m?: string) => void }): Me
     },
 
     async transcode(src, dest, profile, probe) {
+      let kind: Sniffed;
+      let input: string[];
+      try {
+        kind = await sniff(src);
+        input = inputArgs(src, kind);
+      } catch (err) {
+        throw new Error(`ffmpeg failed (not converted): ${(err as Error).message}`);
+      }
       if (profile.kind === 'video') {
-        await runFfmpeg(videoArgs(src, dest, profile, probe), 45 * 60_000);
+        // What the bytes say wins over what was measured before, for the container and the index.
+        await runFfmpeg(videoArgs(src, dest, profile, { ...probe, container: kind.container, mp4: kind.container === 'mp4', faststart: kind.faststart ?? null }, input), 45 * 60_000);
         return;
       }
       // Best quality first; only when the picture is still too large for the network does it get worse, step by step.
       for (const q of IMAGE_QUALITY_LADDER) {
-        await runFfmpeg(imageArgs(src, dest, profile, q), 2 * 60_000);
+        await runFfmpeg(imageArgs(src, dest, profile, q, input), 2 * 60_000);
         if ((await stat(dest)).size <= profile.maxBytes) return;
       }
     },
