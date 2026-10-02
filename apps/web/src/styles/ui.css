@@ -13,8 +13,9 @@
 .confirm-text strong { color: var(--text); font-weight: 500; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .confirm-actions .btn { min-height: 36px; }
-.btn-confirm-danger { background: var(--bad); border-color: var(--bad); color: #fff; }
-.btn-confirm-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 88%, #fff); border-color: color-mix(in srgb, var(--bad) 88%, #fff); }
+/* styles.css loads after this file: the doubled class wins over its .btn */
+.btn.btn-confirm-danger { background: var(--bad); color: #fff; }
+.btn.btn-confirm-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 88%, #fff); }
 @media (max-width: 480px) {
   .confirm-actions { flex-direction: column-reverse; }
   .confirm-actions .btn { width: 100%; }

@@ -224,7 +224,8 @@
 .acct-invites-note { font-size: .75rem; color: var(--faint); margin-top: 6px; }
 
 /* ───────────────────────────── signing in, and pages for people outside the team ───────────────────────────── */
-.auth { background: var(--bg); }
+/* styles.css loads after this file and still paints a glow on .auth: none here */
+body .auth { background: var(--bg); }
 .auth .card.auth-card { width: min(400px, 100%); padding: 28px 26px 24px; display: flex; flex-direction: column; gap: 16px; background: var(--panel); box-shadow: none; }
 .auth .card.auth-card.auth-wide { width: min(480px, 100%); }
 .auth-brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: .9375rem; color: var(--text); }
