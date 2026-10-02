@@ -11,6 +11,9 @@ export const TEMPLATE_VARIABLES = [
   // A piece made from a project: its `source` as the studio has it, the directory the agent works in (absolute, as the agent sees it)
   // and, in git mode, the piece's branch. Empty for a piece without a project.
   'source', 'project_dir', 'project_branch',
+  // A version people approved (`version.approved`, for an agent that schedules): its id, the accounts it was approved for, and the
+  // calendar of those accounts (free slots and what is already scheduled).
+  'version_id', 'accounts', 'calendar',
 ] as const;
 export type TemplateVariable = (typeof TEMPLATE_VARIABLES)[number];
 
@@ -43,3 +46,22 @@ export const RESULT_FORMAT = `When you are done, write \`result.json\` in the ou
 Put the new files in the output directory (a video, images for a carousel, a PDF, subtitles as .vtt or .srt, a cover image named cover.png or cover.jpg).
 Every comment listed under "Comments for you" must appear in "comments": one you cannot settle is \`needs_human\`, never left out.
 Do not touch comments listed under "For people only".`;
+
+/** What an agent that schedules an approved version writes, in place of RESULT_FORMAT: the same {{result_format}} placeholder. */
+export const SCHEDULE_FORMAT = `When you are done, write \`result.json\` in the output directory:
+
+\`\`\`json
+{
+  "notes": "What you scheduled and why then, in a sentence or two, for the people who approved it.",
+  "schedule": [
+    { "versionId": "<the approved version's id>", "accountId": "<an account it was approved for>", "at": "2026-10-06T17:00:00.000Z",
+      "text": "The post's text.", "firstComment": "" }
+  ],
+  "cost": 0.05
+}
+\`\`\`
+
+Schedule only on the accounts listed under "Approved for", at a time still to come that is not on a blocked day; prefer the free slots
+listed under "Calendar". \`at\` is an instant with its offset (UTC, ending in Z, is simplest). Leave \`schedule\` empty, and say why in
+"notes", when no time suits: a person will schedule it. The studio refuses anything else, and you cannot cancel or move what is there.
+Make no files.`;

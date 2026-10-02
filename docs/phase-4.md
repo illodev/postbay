@@ -94,7 +94,8 @@ An admin switches prizes on per brand in *Settings → Prizes*. **That is what m
 messages**; a brand that does not use prizes is never asked for them. Accounts connected before have to be connected again (*Renew*) to grant
 them, and the prize dialog says so when a post's account lacks them.
 
-1. **A library**: a *file* kept here (uploaded straight to storage, with its hash checked), or a *link* somewhere else.
+1. **A library**: a *file* kept here (uploaded straight to storage, with its hash checked), or a *link* somewhere else. Since then also, and
+   recommended, a *piece* of the studio, which hands out its latest approved version: see [after the phases](after-the-phases.md#prizes-from-a-piece-of-the-studio).
 2. **A rule per post**: *Prize…* on a published or scheduled post. A prize, a keyword (any case, accents ignored, whole word), the message
    (`{{name}}`, `{{prize}}`, `{{link}}` which is required, `{{hours}}`), how long each person's link works, and a **confirmation that the post's
    own text says the reply is automatic and what is done with people's data**. A rule does not run without it. Every message is also given a

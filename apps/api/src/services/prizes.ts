@@ -4,7 +4,7 @@ import { authorize, type Principal } from '../auth/principal.js';
 import { ConnectorError } from '../connectors/types.js';
 import type { Ctx } from '../context.js';
 import { sha256Hex } from '../crypto.js';
-import type { Row } from '../db.js';
+import type { Queryable, Row } from '../db.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { english, msg, tr, type Localized } from '../i18n/index.js';
 import { audit } from './audit.js';
@@ -71,6 +71,12 @@ const safeName = (n: string) => n.replace(/[^\w.-]+/g, '_').slice(0, 120) || 'fi
 
 const createInput = z.discriminatedUnion('kind', [
   z.object({
+    /** A piece of the studio: what is handed out is the main file of its latest approved version when it is downloaded. The recommended kind. */
+    kind: z.literal('piece'),
+    name: z.string().trim().min(1).max(120),
+    pieceId: z.string().uuid(),
+  }),
+  z.object({
     kind: z.literal('link'),
     name: z.string().trim().min(1).max(120),
     url: z.string().trim().url().max(2000).refine((u) => /^https?:\/\//i.test(u), 'The link has to be a web address'),
@@ -87,10 +93,63 @@ const createInput = z.discriminatedUnion('kind', [
   }),
 ]);
 
-const prizeView = (r: Row) => ({
-  id: r.id, name: r.name, kind: r.kind, file_name: r.file_name, file_bytes: r.file_bytes === null ? null : Number(r.file_bytes), url: r.kind === 'link' ? r.url : null,
-  usable: r.kind === 'link' || r.uploaded_at !== null, archived: r.archived_at !== null, created_at: r.created_at,
-});
+/** What a piece prize hands out right now: the main file of the latest approved version of the piece, with that version. */
+export interface PieceFile {
+  version_id: string;
+  version_number: number;
+  format: string;
+  approved_at: Date;
+  storage_key: string;
+  name: string;
+  mime: string;
+  bytes: number;
+}
+
+/**
+ * The file a prize made from a piece hands out now: the main file (the PDF of a document, the video, or the first image or video of a
+ * carousel: the lowest position, never a cover or subtitles) of the version of the piece that was approved last, among all its variants.
+ * A version that was approved and then replaced by a newer one still in review keeps being handed out until the newer one is approved.
+ * Nothing (null) once the piece is discarded: then the prize shows as having no approved version and hands out nothing.
+ */
+export async function pieceFile(db: Queryable, pieceId: string): Promise<PieceFile | null> {
+  return db.one<PieceFile>(
+    `select ver.id as version_id, ver.number as version_number, v.format, va.approved_at, a.storage_key, a.name, a.mime, a.bytes
+     from version_approved va join version ver on ver.id = va.version_id join variant v on v.id = ver.variant_id join piece p on p.id = va.piece_id
+     join lateral (select storage_key, name, mime, bytes from asset where version_id = ver.id and kind in ('video','image','pdf') order by position, kind limit 1) a on true
+     where va.piece_id = $1 and p.discarded_at is null and ver.review_state <> 'discarded'
+     order by va.approved_at desc, ver.number desc limit 1`,
+    [pieceId],
+  );
+}
+
+const NO_APPROVED_VERSION = msg('prize.piece.withoutApprovedVersion');
+
+/**
+ * A prize as the library shows it. A piece prize says which piece and which version it would hand out now (`version`), or, with none,
+ * `usable: false` and why (`unavailable_reason`, in the reader's language).
+ */
+function prizeView(r: Row, current: PieceFile | null = null) {
+  const piece = r.kind === 'piece';
+  return {
+    id: r.id, name: r.name, kind: r.kind,
+    file_name: piece ? (current?.name ?? null) : r.file_name,
+    file_bytes: piece ? (current ? Number(current.bytes) : null) : r.file_bytes === null ? null : Number(r.file_bytes),
+    url: r.kind === 'link' ? r.url : null,
+    piece: piece ? { id: r.piece_id, title: r.piece_title ?? null } : null,
+    version: piece && current ? { id: current.version_id, number: current.version_number, format: current.format, approved_at: current.approved_at, file_name: current.name, mime: current.mime } : null,
+    usable: piece ? current !== null : r.kind === 'link' || r.uploaded_at !== null,
+    unavailable_reason: piece && !current ? english(NO_APPROVED_VERSION) : null,
+    unavailable_reason_i18n: piece && !current ? NO_APPROVED_VERSION : null,
+    archived: r.archived_at !== null, created_at: r.created_at,
+  };
+}
+
+/** The same, looking up what a piece prize hands out now. */
+async function viewOf(db: Queryable, r: Row) {
+  if (r.kind !== 'piece') return prizeView(r);
+  const title = r.piece_title === undefined ? (await db.one<{ title: string }>('select title from piece where id = $1', [r.piece_id]))?.title : r.piece_title;
+  return prizeView({ ...r, piece_title: title ?? null }, await pieceFile(db, r.piece_id));
+}
 
 export async function createPrize(ctx: Ctx, p: Principal, brandId: string, raw: unknown) {
   const input = createInput.parse(raw);
@@ -98,6 +157,15 @@ export async function createPrize(ctx: Ctx, p: Principal, brandId: string, raw: 
     await authorize(db, p, brandId, 'publication.schedule');
     const id = randomUUID();
     const userId = p.kind === 'user' ? p.userId : null;
+    if (input.kind === 'piece') {
+      const piece = await db.one('select id, title, discarded_at from piece where id = $1 and brand_id = $2', [input.pieceId, brandId]);
+      if (!piece) throw badRequest('unknown_piece', msg('prize.piece.unknown'));
+      const current = await pieceFile(db, piece.id);
+      if (!current) throw conflict('no_approved_version', msg('prize.piece.noApprovedVersion'));
+      const row = (await db.one(`insert into prize (id, brand_id, name, kind, piece_id, created_by) values ($1,$2,$3,'piece',$4,$5) returning *`, [id, brandId, input.name, piece.id, userId]))!;
+      await audit(db, p, brandId, 'prize.created', 'prize', id, null, { name: input.name, kind: 'piece', piece_id: piece.id, version_id: current.version_id });
+      return { prize: prizeView({ ...row, piece_title: piece.title }, current) };
+    }
     if (input.kind === 'link') {
       const row = (await db.one(`insert into prize (id, brand_id, name, kind, url, created_by) values ($1,$2,$3,'link',$4,$5) returning *`, [id, brandId, input.name, input.url, userId]))!;
       await audit(db, p, brandId, 'prize.created', 'prize', id, null, { name: input.name, kind: 'link' });
@@ -132,11 +200,13 @@ export async function completePrize(ctx: Ctx, p: Principal, prizeId: string) {
 export async function listPrizes(ctx: Ctx, p: Principal, brandId: string) {
   await authorize(ctx.db, p, brandId, 'publication.schedule');
   const rows = await ctx.db.query(
-    `select pr.*, (select count(*)::int from prize_rule r where r.prize_id = pr.id and r.active) as active_rules
-     from prize pr where pr.brand_id = $1 order by pr.archived_at nulls first, pr.created_at desc`,
+    `select pr.*, pc.title as piece_title, (select count(*)::int from prize_rule r where r.prize_id = pr.id and r.active) as active_rules
+     from prize pr left join piece pc on pc.id = pr.piece_id where pr.brand_id = $1 order by pr.archived_at nulls first, pr.created_at desc`,
     [brandId],
   );
-  return rows.map((r) => ({ ...prizeView(r), active_rules: r.active_rules }));
+  const out = [];
+  for (const r of rows) out.push({ ...(await viewOf(ctx.db, r)), active_rules: r.active_rules });
+  return out;
 }
 
 export async function archivePrize(ctx: Ctx, p: Principal, prizeId: string) {
@@ -171,7 +241,7 @@ async function ruleView(ctx: Ctx, rule: Row, network: string, manual: boolean) {
   return {
     id: rule.id, publication_id: rule.publication_id, mode: modeFor(network, manual), active: rule.active, keyword: rule.keyword, message: rule.message,
     link_hours: rule.link_hours, notice_confirmed: rule.notice_confirmed,
-    prize: prize ? prizeView(prize) : null,
+    prize: prize ? await viewOf(ctx.db, prize) : null,
     public_url: rule.public_token ? `${ctx.config.APP_URL}/prize/${rule.public_token}` : null, public_expires_at: rule.public_expires_at,
     deliveries: Object.fromEntries(['pending', 'sent', 'skipped', 'failed'].map((s) => [s, counts.find((c) => c.status === s)?.n ?? 0])),
   };
@@ -227,7 +297,9 @@ async function saveRule(ctx: Ctx, p: Principal, publicationId: string, input: z.
     if (!prize) throw badRequest('unknown_prize', msg('prize.unknown'));
     const before = await db.one('select * from prize_rule where publication_id = $1', [publicationId]);
     if (prize.archived_at && before?.prize_id !== prize.id) throw badRequest('prize_archived', msg('prize.archived'));
-    if (!(prize.kind === 'link' || prize.uploaded_at)) throw badRequest('prize_not_ready', msg('prize.notReady'));
+    if (prize.kind === 'piece') {
+      if (!(await pieceFile(db, prize.piece_id))) throw conflict('no_approved_version', msg('prize.piece.noApprovedVersion'));
+    } else if (!(prize.kind === 'link' || prize.uploaded_at)) throw badRequest('prize_not_ready', msg('prize.notReady'));
     const keywordNorm = normalize(input.keyword);
     if (!keywordNorm) throw badRequest('invalid_keyword', msg('prize.invalidKeyword'));
     if (!/\{\{\s*link\s*\}\}/.test(input.message)) throw badRequest('link_missing', msg('prize.linkMissing'));
@@ -351,7 +423,7 @@ export async function pollComments(ctx: Ctx, limit = 20): Promise<number> {
      where r.active and r.notice_confirmed and p.status = 'published' and p.manual = false and p.external_id is not null and a.status = 'active'
        and a.network in ('instagram','facebook') and p.published_at > $1
        and (pp.last_polled_at is null or pp.last_polled_at < $2) and (pp.lease_until is null or pp.lease_until < $3)
-     order by pp.last_polled_at nulls first limit $4`,
+     order by pp.last_polled_at nulls first, p.published_at, p.id limit $4`,
     [new Date(now.getTime() - POLL_UNTIL_MS), new Date(now.getTime() - every), now, limit],
   );
   let read = 0;
@@ -406,7 +478,7 @@ async function finish(ctx: Ctx, id: string, patch: { status: 'sent' | 'skipped' 
 async function sendOne(ctx: Ctx, d: Row): Promise<string> {
   const now = ctx.now();
   const row = await ctx.db.one(
-    `select r.active, r.notice_confirmed, r.message, r.link_hours, pr.name as prize_name, pr.archived_at, a.status as account_status, a.network, a.brand_id, b.prizes
+    `select r.active, r.notice_confirmed, r.message, r.link_hours, pr.name as prize_name, pr.archived_at, pr.kind as prize_kind, pr.piece_id, a.status as account_status, a.network, a.brand_id, b.prizes
      from prize_rule r join prize pr on pr.id = r.prize_id join social_account a on a.id = $2 join brand b on b.id = a.brand_id where r.id = $1`,
     [d.rule_id, d.account_id],
   );
@@ -434,6 +506,8 @@ async function sendOne(ctx: Ctx, d: Row): Promise<string> {
     return 'retry';
   };
   if (row.account_status !== 'active') return retry(msg('prize.reason.reconnect'), 3600);
+  // A piece with no approved version has nothing to hand out: the message waits for one (within Meta's window), rather than promise it.
+  if (row.prize_kind === 'piece' && !(await pieceFile(ctx.db, row.piece_id))) return retry(msg('prize.reason.noApprovedVersion'), 3600, false);
 
   // Meta allows 750 private replies an hour for an account: stay under it, and when it is reached wait for the oldest to leave the hour.
   const sentLastHour = await ctx.db.query(`select sent_at from prize_delivery where account_id = $1 and status = 'sent' and sent_at > $2 order by sent_at`, [d.account_id, new Date(now.getTime() - 3_600_000)]);
@@ -502,8 +576,9 @@ interface Resolved {
   id: string;
   expires_at: Date | string;
   name: string;
-  /** The kind of prize: a file kept here, or a link. */
-  kind: 'file' | 'link';
+  /** The kind of prize: a file kept here, a link, or a piece of the studio. */
+  kind: 'file' | 'link' | 'piece';
+  piece_id: string | null;
   file_key: string | null;
   file_name: string | null;
   url: string | null;
@@ -514,7 +589,7 @@ async function resolveToken(ctx: Ctx, secret: string): Promise<Resolved> {
   if (!/^[A-Za-z0-9_-]{16,80}$/.test(secret)) throw notFound('Prize');
   const now = ctx.now();
   const delivery = await ctx.db.one(
-    `select d.id, d.expires_at, d.downloads, d.status, pr.name, pr.kind, pr.file_key, pr.file_name, pr.url, b.name as brand
+    `select d.id, d.expires_at, d.downloads, d.status, pr.name, pr.kind, pr.file_key, pr.file_name, pr.url, pr.piece_id, b.name as brand
      from prize_delivery d join prize pr on pr.id = d.prize_id join brand b on b.id = d.brand_id where d.token_hash = $1`,
     [sha256Hex(secret)],
   );
@@ -524,7 +599,7 @@ async function resolveToken(ctx: Ctx, secret: string): Promise<Resolved> {
     return { ...(delivery as unknown as Resolved), source: 'delivery' };
   }
   const rule = await ctx.db.one(
-    `select r.id, r.public_expires_at as expires_at, r.active, pr.name, pr.kind, pr.file_key, pr.file_name, pr.url, b.name as brand
+    `select r.id, r.public_expires_at as expires_at, r.active, pr.name, pr.kind, pr.file_key, pr.file_name, pr.url, pr.piece_id, b.name as brand
      from prize_rule r join prize pr on pr.id = r.prize_id join brand b on b.id = r.brand_id where r.public_token = $1`,
     [secret],
   );
@@ -533,20 +608,34 @@ async function resolveToken(ctx: Ctx, secret: string): Promise<Resolved> {
   return { ...(rule as unknown as Resolved), source: 'public' };
 }
 
-/** What the page says. Nothing about who the prize was sent to, or which post it was. */
+/**
+ * What the page says. Nothing about who the prize was sent to, or which post it was. A prize made from a piece is a file to whoever
+ * opens it (the main file of the piece's latest approved version); while the piece has none, `available` is false and the page says so.
+ */
 export async function publicPrize(ctx: Ctx, secret: string) {
   const r = await resolveToken(ctx, secret);
-  return { prize: { name: r.name, kind: r.kind, file_name: r.kind === 'file' ? r.file_name : null }, brand: r.brand, expires_at: r.expires_at };
+  if (r.kind === 'piece') {
+    const current = await pieceFile(ctx.db, r.piece_id!);
+    return {
+      prize: { name: r.name, kind: 'file' as const, file_name: current?.name ?? null }, brand: r.brand, expires_at: r.expires_at,
+      available: current !== null, unavailable_reason: current ? null : tr('prize.piece.unavailablePublic'),
+    };
+  }
+  return { prize: { name: r.name, kind: r.kind, file_name: r.kind === 'file' ? r.file_name : null }, brand: r.brand, expires_at: r.expires_at, available: true, unavailable_reason: null };
 }
 
 export async function downloadPrize(ctx: Ctx, secret: string) {
   const r = await resolveToken(ctx, secret);
+  // What a piece hands out is decided now: the latest approved version's main file. With none, nothing is counted or handed out.
+  const current = r.kind === 'piece' ? await pieceFile(ctx.db, r.piece_id!) : null;
+  if (r.kind === 'piece' && !current) throw conflict('no_approved_version', msg('prize.piece.unavailablePublic'));
   if (r.source === 'delivery') {
     // Counted and checked in one statement, so two clicks at once cannot both be the last one allowed.
     const counted = await ctx.db.one('update prize_delivery set downloads = downloads + 1 where id = $1 and downloads < $2 and expires_at > $3 returning id', [r.id, MAX_DOWNLOADS, ctx.now()]);
     if (!counted) throw new AppError(410, 'used_up', msg('prize.link.usedUp'));
   }
   // A file is handed over by a link that works for five minutes; a link prize is simply the link.
+  if (current) return { url: await ctx.storage.presignGet(current.storage_key, { expiresSec: 300, filename: current.name }) };
   if (r.kind === 'file') return { url: await ctx.storage.presignGet(r.file_key!, { expiresSec: 300, filename: r.file_name ?? undefined }) };
   return { url: r.url! };
 }
