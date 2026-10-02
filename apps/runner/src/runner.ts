@@ -21,7 +21,9 @@ export function loadTemplates(config: Config): Map<string, string> {
   const out = new Map<string, string>();
   const problems: string[] = [];
   for (const [key, brand] of Object.entries(config.brands)) {
-    for (const [type, file] of Object.entries(brand.templates)) {
+    // A piece made from a project gets its own instructions, under "<brand>:project".
+    const files = { ...brand.templates, ...(brand.project?.template ? { project: brand.project.template } : {}) };
+    for (const [type, file] of Object.entries(files)) {
       const full = path.resolve(config.baseDir, file);
       let text: string;
       try {

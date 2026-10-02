@@ -35,6 +35,10 @@ try {
 for (const tool of [config.ffmpeg, config.ffprobe]) {
   if (spawnSync(tool, ['-version'], { stdio: 'ignore' }).status !== 0) log.warn({ tool }, 'cannot run this tool: the automatic checks need it');
 }
+const gitProjects = Object.entries(config.brands).filter(([, b]) => Object.values(b.project?.repos ?? {}).some((r) => r.mode === 'git')).map(([k]) => k);
+if (gitProjects.length && spawnSync('git', ['--version'], { stdio: 'ignore' }).status !== 0) {
+  log.warn({ brands: gitProjects }, 'cannot run git: pieces made from a project in git will fail until it is installed');
+}
 
 const queue = new Queue(config.stateDir);
 let runner: ReturnType<typeof startRunner>;
