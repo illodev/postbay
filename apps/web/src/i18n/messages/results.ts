@@ -12,7 +12,7 @@ export const results = define({
     'results.to': 'Hasta',
     'results.clear': 'Quitar filtros',
     'results.note': 'Cada red cuenta a su manera, así que nunca se suman entre sí: una «visualización» no significa lo mismo en todas. Los totales de cada red salen de la última lectura de cada publicación.',
-    'results.empty': 'Todavía no hay resultados en estas fechas',
+    'results.empty': 'Sin resultados en estas fechas.',
     'results.emptyHint': 'Las lecturas se toman 1 hora, 1 día, 7 días y 28 días después de que la app publique (las stories antes, porque sus números desaparecen al día). Lo que se publica a mano no tiene lecturas.',
 
     'results.posts': { one: '{count} publicación', other: '{count} publicaciones' },
@@ -71,7 +71,7 @@ export const results = define({
     'results.to': 'To',
     'results.clear': 'Clear',
     'results.note': 'Each network counts its own way, so networks are never added together: a “view” does not mean the same on each. Each network’s totals come from the latest reading of each post.',
-    'results.empty': 'Nothing to show for this period',
+    'results.empty': 'No results for these dates.',
     'results.emptyHint': 'Readings are taken 1 hour, 1 day, 7 days and 28 days after the app publishes a post (stories sooner, because their numbers disappear after a day). Posts published by hand have none.',
 
     'results.posts': { one: '{count} post', other: '{count} posts' },

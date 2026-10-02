@@ -97,7 +97,7 @@ function NetworkSection({ summary, rows, zone, onOpen }: {
   return (
     <section className="rs-net" aria-labelledby={headId}>
       <header className="rs-net-head">
-        <h2 id={headId}><NetMark network={summary.network} />{name}</h2>
+        <h2 id={headId}><NetMark network={summary.network} size="sm" />{name}</h2>
         <span className="rs-net-meta">{t('results.posts', { count: summary.posts })} · {t('results.read', { count: summary.read })}</span>
       </header>
       {shown.some((k) => k !== 'avgWatchSeconds') && (
@@ -217,20 +217,14 @@ export function ResultsPage() {
         <div className="rs-nets" aria-busy="true">
           {[0, 1].map((i) => (
             <section key={i} className="rs-net">
-              <header className="rs-net-head"><Skeleton width={160} height={18} /></header>
-              <div className="rs-kpis">{[0, 1, 2, 3].map((k) => <div key={k} className="rs-kpi"><Skeleton width={70} height={10} /><Skeleton width={90} height={22} style={{ marginTop: 8 }} /></div>)}</div>
-              <div style={{ padding: 16 }}><Skeleton height={40} /></div>
+              <header className="rs-net-head"><Skeleton width={160} height={16} /></header>
+              <div className="rs-kpis">{[0, 1, 2, 3].map((k) => <div key={k} className="rs-kpi"><Skeleton width={70} height={10} /><Skeleton width={90} height={20} style={{ marginTop: 8 }} /></div>)}</div>
+              <Skeleton height={40} />
             </section>
           ))}
         </div>
       )}
-      {data && data.networks.length === 0 && (
-        <div className="rs-empty">
-          <span className="rs-empty-icon"><Icon name="chart" /></span>
-          <strong>{t('results.empty')}</strong>
-          <p>{t('results.emptyHint')}</p>
-        </div>
-      )}
+      {data && data.networks.length === 0 && <p className="rs-empty" title={t('results.emptyHint')}>{t('results.empty')}</p>}
       {data && data.networks.length > 0 && (
         <>
           <div className="rs-nets">
@@ -238,7 +232,7 @@ export function ResultsPage() {
               <NetworkSection key={n.network} summary={n} rows={data.rows.filter((r) => r.publication.network === n.network)} zone={brand.timezone} onOpen={setOpen} />
             ))}
           </div>
-          <p className="rs-note"><Icon name="globe" />{t('results.note')}</p>
+          <p className="rs-note">{t('results.note')}</p>
         </>
       )}
       {open && <Detail row={open} zone={brand.timezone} onClose={() => setOpen(null)} />}

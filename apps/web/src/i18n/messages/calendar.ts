@@ -4,7 +4,6 @@ import { define } from './define';
 export const calendar = define({
   es: {
     'calendar.title': 'Calendario',
-    'calendar.zoneNote': 'horas de {zone}',
     'calendar.zoneHint': 'Todas las horas están en la zona horaria de {brand}.',
     'calendar.block': 'Bloquear un día',
     'calendar.blockHint': 'Ese día no se podrá programar nada: un festivo, una crisis, un día tranquilo.',
@@ -41,12 +40,10 @@ export const calendar = define({
     'calendar.todayEmpty': 'Hoy no sale nada.',
 
     'calendar.tray.title': 'Sin programar',
-    'calendar.tray.hint': 'Aprobadas y sin fecha. Arrastra una a un día para programarla, o haz clic para elegir cuándo.',
-    'calendar.tray.hintTap': 'Aprobadas y sin fecha. Toca una para elegir cuándo sale.',
-    'calendar.tray.empty': 'Nada pendiente',
-    'calendar.tray.emptyHint': 'Todo lo aprobado ya tiene fecha. Lo que apruebes aparecerá aquí.',
+    'calendar.tray.hint': 'Arrastra una pieza a un día para programarla, o haz clic para elegir cuándo.',
+    'calendar.tray.hintTap': 'Toca una pieza para elegir cuándo sale.',
+    'calendar.tray.empty': 'Todo lo aprobado tiene fecha.',
     'calendar.tray.scheduleLabel': 'Programar «{title}»',
-    'calendar.tray.dragTitle': 'Arrástrala a un día del calendario',
     'calendar.tray.dropped': 'Programando para el {day}: elige la cuenta y la hora.',
     'calendar.tray.paused': 'Con la marca en pausa no se puede programar.',
     'calendar.tray.show': 'Mostrar lo aprobado sin programar',
@@ -58,8 +55,7 @@ export const calendar = define({
     'calendar.legend.slot': 'Hueco libre',
     'calendar.legend.blocked': 'Día bloqueado',
 
-    'calendar.empty': 'Nada en estas fechas',
-    'calendar.emptyHint': 'Las publicaciones se programan desde la página de cada pieza aprobada.',
+    'calendar.empty': 'Nada en estas fechas.',
     'calendar.live': { zero: 'Sin publicaciones entre el {from} y el {to}', one: '{count} publicación entre el {from} y el {to}', other: '{count} publicaciones entre el {from} y el {to}' },
 
     // Network short names, in the monospaced tags of the calendar, the publish page and the results.
@@ -75,7 +71,6 @@ export const calendar = define({
   },
   en: {
     'calendar.title': 'Calendar',
-    'calendar.zoneNote': 'times in {zone}',
     'calendar.zoneHint': 'Every time is in the time zone of {brand}.',
     'calendar.block': 'Block a date',
     'calendar.blockHint': 'Nothing can be scheduled on a blocked date: a bank holiday, a crisis, a quiet day.',
@@ -112,12 +107,10 @@ export const calendar = define({
     'calendar.todayEmpty': 'Nothing goes out today.',
 
     'calendar.tray.title': 'Not scheduled',
-    'calendar.tray.hint': 'Approved, with no date yet. Drag one onto a day to schedule it, or click to choose when.',
-    'calendar.tray.hintTap': 'Approved, with no date yet. Tap one to choose when it goes out.',
-    'calendar.tray.empty': 'Nothing waiting',
-    'calendar.tray.emptyHint': 'Everything approved has a date. What you approve next shows up here.',
+    'calendar.tray.hint': 'Drag a piece onto a day to schedule it, or click to choose when.',
+    'calendar.tray.hintTap': 'Tap a piece to choose when it goes out.',
+    'calendar.tray.empty': 'Everything approved has a date.',
     'calendar.tray.scheduleLabel': 'Schedule “{title}”',
-    'calendar.tray.dragTitle': 'Drag it onto a day in the calendar',
     'calendar.tray.dropped': 'Scheduling for {day}: choose the account and the time.',
     'calendar.tray.paused': 'While the brand is paused nothing can be scheduled.',
     'calendar.tray.show': 'Show what is approved and not scheduled',
@@ -129,8 +122,7 @@ export const calendar = define({
     'calendar.legend.slot': 'Empty slot',
     'calendar.legend.blocked': 'Blocked day',
 
-    'calendar.empty': 'Nothing in these dates',
-    'calendar.emptyHint': 'Posts are scheduled from the page of each approved piece.',
+    'calendar.empty': 'Nothing on these dates.',
     'calendar.live': { zero: 'No posts between {from} and {to}', one: '{count} post between {from} and {to}', other: '{count} posts between {from} and {to}' },
 
     'calendar.net.instagram': 'IG',

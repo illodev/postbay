@@ -11,8 +11,7 @@ export const publish = define({
 
     'publish.due': 'Toca ahora',
     'publish.dueHint': 'Publicaciones a mano cuya hora ya ha llegado.',
-    'publish.dueEmpty': 'Nada que publicar ahora',
-    'publish.dueEmptyHint': 'Cuando llegue la hora de una publicación a mano, aparecerá aquí con su texto y sus archivos.',
+    'publish.dueEmpty': 'Nada que publicar a mano ahora.',
     'publish.paused': 'La marca está en pausa, así que no hay nada pendiente de publicar.',
     'publish.text': 'Texto',
     'publish.noText': 'Sin texto',
@@ -45,8 +44,7 @@ export const publish = define({
 
     'publish.upcoming': 'Próximas',
     'publish.upcomingHint': 'Lo programado para las dos próximas semanas.',
-    'publish.upcomingEmpty': 'No hay nada programado',
-    'publish.upcomingEmptyHint': 'Programa una pieza aprobada desde su página o arrastrándola al calendario.',
+    'publish.upcomingEmpty': 'Nada programado en las dos próximas semanas.',
     'publish.slots': 'Huecos sin contenido',
     'publish.slotsHint': 'Huecos fijos de la semana que todavía no tienen publicación.',
     'publish.slotUnnamed': 'Hueco sin nombre',
@@ -61,8 +59,7 @@ export const publish = define({
 
     'publish.due': 'Due now',
     'publish.dueHint': 'Posts published by hand whose hour has come.',
-    'publish.dueEmpty': 'Nothing to publish right now',
-    'publish.dueEmptyHint': 'When a post that is published by hand reaches its hour, it shows up here with its text and files.',
+    'publish.dueEmpty': 'Nothing to publish by hand right now.',
     'publish.paused': 'This brand is paused, so nothing is listed as due.',
     'publish.text': 'Text',
     'publish.noText': 'No text',
@@ -95,8 +92,7 @@ export const publish = define({
 
     'publish.upcoming': 'Coming up',
     'publish.upcomingHint': 'What is scheduled for the next two weeks.',
-    'publish.upcomingEmpty': 'Nothing scheduled',
-    'publish.upcomingEmptyHint': 'Schedule an approved piece from its page, or by dragging it onto the calendar.',
+    'publish.upcomingEmpty': 'Nothing scheduled for the next two weeks.',
     'publish.slots': 'Slots that need content',
     'publish.slotsHint': 'Weekly slots that do not have a post yet.',
     'publish.slotUnnamed': 'Unnamed slot',

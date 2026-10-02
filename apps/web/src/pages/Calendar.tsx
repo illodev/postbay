@@ -6,7 +6,7 @@ import { api, type Account, type CalendarData, type PieceDetail, type PieceSumma
 import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
 import { PublicationBadges, ScheduleDialog } from '../components/publications';
-import { Chip, Dialog, Empty, ErrorBox, errorMessage, Field, NetMark, Skeleton, useToast } from '../components/ui';
+import { Chip, Dialog, ErrorBox, errorMessage, Field, NetMark, Segmented, Skeleton, useToast } from '../components/ui';
 import { t, tMaybe, type Key } from '../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -186,11 +186,10 @@ function Tray({ items, loading, canDrag, touch, onSchedule }: {
 }) {
   return (
     <aside className="oc-tray" aria-labelledby="oc-tray-title">
-      <header className="oc-tray-head">
+      <header className="oc-tray-head" title={canDrag && !touch ? t('calendar.tray.hint') : t('calendar.tray.hintTap')}>
         <h2 id="oc-tray-title">{t('calendar.tray.title')}</h2>
-        {!loading && <span className="oc-count">{items.length}</span>}
+        {!loading && items.length > 0 && <span className="ops-count">{items.length}</span>}
       </header>
-      <p className="oc-tray-hint">{canDrag && !touch ? t('calendar.tray.hint') : t('calendar.tray.hintTap')}</p>
       {loading && (
         <div className="oc-tray-list">
           {[0, 1].map((i) => (
@@ -198,13 +197,7 @@ function Tray({ items, loading, canDrag, touch, onSchedule }: {
           ))}
         </div>
       )}
-      {!loading && items.length === 0 && (
-        <div className="oc-tray-empty">
-          <Icon name="check" />
-          <strong>{t('calendar.tray.empty')}</strong>
-          <span>{t('calendar.tray.emptyHint')}</span>
-        </div>
-      )}
+      {!loading && items.length === 0 && <p className="oc-tray-empty">{t('calendar.tray.empty')}</p>}
       {!loading && items.length > 0 && (
         <ul className="oc-tray-list">
           {items.map((r) => (
@@ -220,13 +213,14 @@ function Tray({ items, loading, canDrag, touch, onSchedule }: {
                 }}
                 onClick={() => onSchedule(r)}
                 aria-label={t('calendar.tray.scheduleLabel', { title: r.title })}
-                title={canDrag && !touch ? t('calendar.tray.dragTitle') : undefined}
+                title={canDrag && !touch ? t('calendar.tray.hint') : t('calendar.tray.hintTap')}
               >
                 <Thumb versionId={r.versionId} pieceId={r.pieceId} className="oc-ready-thumb" />
                 <span className="oc-ready-text">
                   <span className="oc-ready-title">{r.title}</span>
                   <span className="oc-ready-meta">
-                    <span className="oc-badge">V{r.number}</span>
+                    <span>V{r.number}</span>
+                    <span aria-hidden="true">·</span>
                     <span className="oc-ready-formats">{r.formats.length > 2 ? `${r.formats.slice(0, 2).join(' · ')} +${r.formats.length - 2}` : r.formats.join(' · ')}</span>
                   </span>
                 </span>
@@ -500,7 +494,7 @@ export function CalendarPage() {
       return byDay.has(day) || blocked.has(day) || day === today;
     });
     if (!pubCount && !slotCount && !agendaDays.some((d) => blocked.has(d.toISODate()!))) {
-      return <Empty title={t('calendar.empty')}>{t('calendar.emptyHint')}</Empty>;
+      return <p className="ops-quiet">{t('calendar.empty')}</p>;
     }
     return (
       <div className="oc-agenda">
@@ -511,7 +505,7 @@ export function CalendarPage() {
           return (
             <section key={day} className={`oc-aday ${day === today ? 'today' : ''} ${isBlocked ? 'blocked' : ''} ${dropDay === day ? 'drop' : ''}`} aria-label={longDay(d)} {...dropProps(day, isBlocked)}>
               <header className="oc-aday-head">
-                <span className="oc-aday-num">{d.toFormat('dd')}</span>
+                <span className="oc-aday-num">{d.toFormat('d')}</span>
                 <h3>{cap(longDay(d))}</h3>
                 {day === today && <span className="oc-today-tag">{t('calendar.today')}</span>}
                 {isBlocked && blockedNote(day)}
@@ -564,13 +558,7 @@ export function CalendarPage() {
     );
   };
 
-  const viewSwitch = (
-    <div className="ops-seg" role="group" aria-label={t('calendar.viewLabel')}>
-      {VIEWS.map((v) => (
-        <button key={v} aria-pressed={view === v} onClick={() => setView(v)}>{t(`calendar.view.${v}` as Key)}</button>
-      ))}
-    </div>
-  );
+  const viewSwitch = <Segmented label={t('calendar.viewLabel')} value={view} onChange={setView} options={VIEWS.map((v) => ({ value: v, label: t(`calendar.view.${v}` as Key) }))} />;
 
   let body: ReactNode = null;
   if (isLoading) {
@@ -609,7 +597,7 @@ export function CalendarPage() {
           <>
             {!narrow && viewSwitch}
             {can('schedule') && (
-              <button className="btn btn-small oc-block-btn" onClick={() => setBlocking(true)}>
+              <button className="btn btn-ghost" onClick={() => setBlocking(true)}>
                 <Icon name="ban" />
                 <span>{t('calendar.block')}</span>
               </button>
@@ -620,20 +608,18 @@ export function CalendarPage() {
 
       <div className="oc-toolbar">
         <div className="oc-nav">
-          <div className="ops-seg">
-            <button onClick={() => step(-1)} aria-label={t('calendar.prev')} title={t('calendar.prev')}><Icon name="chevronLeft" /></button>
-            <button onClick={() => setAnchor(DateTime.now().setZone(zone))}>{t('calendar.today')}</button>
-            <button onClick={() => step(1)} aria-label={t('calendar.next')} title={t('calendar.next')}><Icon name="chevronRight" /></button>
-          </div>
+          <button className="btn btn-ghost ops-iconbtn" onClick={() => step(-1)} aria-label={t('calendar.prev')} title={t('calendar.prev')}><Icon name="chevronLeft" /></button>
+          <button className="btn btn-ghost ops-iconbtn" onClick={() => step(1)} aria-label={t('calendar.next')} title={t('calendar.next')}><Icon name="chevronRight" /></button>
+          <button className="btn" onClick={() => setAnchor(DateTime.now().setZone(zone))}>{t('calendar.today')}</button>
           <h2 className="oc-period" aria-live="polite">{title}</h2>
-          {paused && <span className="chip chip-on_hold" title={t('calendar.pausedHint')}>{t('calendar.paused')}</span>}
+          {paused && <Chip state="on_hold" label={t('calendar.paused')} />}
         </div>
         <div className="oc-tools">
           {data && (
             <span className="oc-meta">
               {t('calendar.pubs', { count: pubCount })}
               {slotCount > 0 && <> · {t('calendar.freeSlots', { count: slotCount })}</>}
-              <span className="oc-zone" title={t('calendar.zoneHint', { brand: brand.name })}> · {t('calendar.zoneNote', { zone })}</span>
+              <span title={t('calendar.zoneHint', { brand: brand.name })}> · {zone}</span>
             </span>
           )}
           {networks.length > 1 && (
@@ -644,10 +630,10 @@ export function CalendarPage() {
           )}
           {narrow && viewSwitch}
           {can('schedule') && !narrow && (
-            <button className="btn btn-small oc-tray-toggle" aria-pressed={trayOpen} onClick={toggleTray} title={trayOpen ? t('calendar.tray.hide') : t('calendar.tray.show')}>
+            <button className="btn btn-ghost oc-tray-toggle" aria-pressed={trayOpen} onClick={toggleTray} title={trayOpen ? t('calendar.tray.hide') : t('calendar.tray.show')}>
               <Icon name="inbox" />
               <span>{t('calendar.tray.title')}</span>
-              {ready.items.length > 0 && <span className="oc-count">{ready.items.length}</span>}
+              {ready.items.length > 0 && <span className="ops-count">{ready.items.length}</span>}
             </button>
           )}
         </div>

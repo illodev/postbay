@@ -173,12 +173,11 @@ function DueCard({ due, zone, canMark }: { due: Due; zone: string; canMark: bool
   );
 }
 
-function SectionHead({ id, title, count, hint }: { id: string; title: string; count?: number; hint: string }) {
+function SectionHead({ id, title, count, hint }: { id: string; title: string; count?: number; hint?: string }) {
   return (
-    <div className="pt-section-head">
+    <div className="ops-section-head" title={hint}>
       <h2 id={id}>{title}</h2>
       {count !== undefined && count > 0 && <span className="ops-count">{count}</span>}
-      <p>{hint}</p>
     </div>
   );
 }
@@ -234,27 +233,19 @@ export function PublishPage() {
       <PageBar
         crumbs={[{ label: t('publish.title') }]}
         actions={
-          <Link className="btn btn-small" to="/calendar">
+          <Link className="btn btn-ghost" to="/calendar">
             <Icon name="calendar" />
             <span>{t('publish.toCalendar')}</span>
           </Link>
         }
       />
 
-      <section className="pt-section" aria-labelledby="pt-due">
+      <section className="ops-section" aria-labelledby="pt-due">
         <SectionHead id="pt-due" title={t('publish.due')} count={due.data?.length} hint={t('publish.dueHint')} />
         {due.isLoading && <div className="pt-card pt-card-skel" aria-hidden="true"><Skeleton height="100%" radius={0} /><div className="pt-body"><Skeleton width="40%" height={18} /><SkeletonText lines={3} /></div></div>}
         {due.error && <ErrorBox error={due.error} />}
         {brand.paused && <div className="notice notice-warn">{t('publish.paused')}</div>}
-        {due.data && due.data.length === 0 && !brand.paused && (
-          <div className="pt-empty">
-            <span className="pt-empty-icon"><Icon name="check" /></span>
-            <div>
-              <strong>{t('publish.dueEmpty')}</strong>
-              <p>{t('publish.dueEmptyHint')}</p>
-            </div>
-          </div>
-        )}
+        {due.data && due.data.length === 0 && !brand.paused && <p className="ops-quiet">{t('publish.dueEmpty')}</p>}
         {due.data && due.data.length > 0 && (
           <div className="pt-due">
             {due.data.map((d) => <DueCard key={d.id} due={d} zone={zone} canMark={can('schedule')} />)}
@@ -263,7 +254,7 @@ export function PublishPage() {
       </section>
 
       {attention.length > 0 && (
-        <section className="pt-section pt-attn" aria-labelledby="pt-attn">
+        <section className="ops-section pt-attn" aria-labelledby="pt-attn">
           <SectionHead id="pt-attn" title={t('publish.attention')} count={attention.length} hint={t('publish.attentionHint')} />
           <ul className="ops-rows pt-list">
             {attention.map((p) => (
@@ -297,19 +288,11 @@ export function PublishPage() {
         </section>
       )}
 
-      <section className="pt-section" aria-labelledby="pt-upcoming">
+      <section className="ops-section" aria-labelledby="pt-upcoming">
         <SectionHead id="pt-upcoming" title={t('publish.upcoming')} count={upcoming.length} hint={t('publish.upcomingHint')} />
         {cal.isLoading && <RowsSkeleton />}
         {cal.error && <ErrorBox error={cal.error} />}
-        {cal.data && upcoming.length === 0 && (
-          <div className="pt-empty">
-            <span className="pt-empty-icon pt-empty-quiet"><Icon name="calendar" /></span>
-            <div>
-              <strong>{t('publish.upcomingEmpty')}</strong>
-              <p>{t('publish.upcomingEmptyHint')}</p>
-            </div>
-          </div>
-        )}
+        {cal.data && upcoming.length === 0 && <p className="ops-quiet">{t('publish.upcomingEmpty')}</p>}
         {upcoming.length > 0 && (
           <ul className="ops-rows pt-list">
             {upcoming.map((p) => (
@@ -335,7 +318,7 @@ export function PublishPage() {
       </section>
 
       {empty.length > 0 && (
-        <section className="pt-section" aria-labelledby="pt-slots">
+        <section className="ops-section" aria-labelledby="pt-slots">
           <SectionHead id="pt-slots" title={t('publish.slots')} count={empty.length} hint={t('publish.slotsHint')} />
           <ul className="ops-rows pt-list">
             {empty.map((s) => (
