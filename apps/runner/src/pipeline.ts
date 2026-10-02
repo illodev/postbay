@@ -1,14 +1,15 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { agentEnv, buildCommand, logPrefix, parseCost, runAgent } from './agent.js';
+import { logPrefix, parseCost, planAgent, runAgent } from './agent.js';
 import { Studio, StudioError, type Comment, type RunStart } from './api.js';
 import { checkOutput, type CheckResult } from './checks.js';
 import type { Brand, Config } from './config.js';
 import type { Logger } from './log.js';
 import type { Item, Queue } from './queue.js';
 import { RESULT_FORMAT, render, type TemplateVariable } from './template.js';
-import { collectFiles, describeComments, describeRequirements, dirsFor, ensureDirs, prepareChanges, type OutputFile, type Prepared } from './workspace.js';
+import type { Secrets } from './secrets.js';
+import { agentDir, collectFiles, describeComments, describeRequirements, dirsFor, ensureDirs, prepareChanges, readResult, type OutputFile, type Prepared } from './workspace.js';
 
 export interface PipelineDeps {
   config: Config;
@@ -78,6 +79,20 @@ interface Work {
 const MIN = 60_000;
 const gone = (e: unknown) => e instanceof StudioError && (e.status === 404 || e.status === 403);
 const transient = (e: unknown) => e instanceof StudioError && (e.status === 0 || e.status >= 500);
+
+/**
+ * Which of the runner's secrets turn up in what the agent left to be posted: its notes, replies and piece (all of result.json that
+ * is used) and the files that would be uploaded.
+ */
+async function secretsIn(secrets: Secrets, result: Result | null, files: OutputFile[]): Promise<string[]> {
+  const found = new Set(result ? secrets.foundIn(JSON.stringify(result)) : []);
+  for (const f of files) for (const label of await secrets.foundInFile(f.path)) found.add(label);
+  return [...found];
+}
+
+const LEAK_NOTE =
+  "The agent's result held a secret of this runner (a studio token, a webhook secret or a value of the agent's environment), so nothing it wrote was posted. " +
+  'Look at what it was asked (a comment may have told it to), keep the agent apart from the runner (agent.runAs or agent.sandbox) and replace that secret.';
 
 /** Limits how much of a message goes into a reply or a note. */
 const clip = (s: string, n = 900) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -227,6 +242,7 @@ async function doWork(c: Ctx): Promise<boolean> {
   const work = item.work as Work;
   const scope = scopeOf(c);
   const dirs = dirsFor(deps.config.workspaceRoot, item.brand, scope.key, item.runId!);
+  const access = { runAs: brand.agent.runAs };
   item.runDir = dirs.run;
 
   const template = deps.templates.get(`${item.brand}:${item.type}`);
@@ -238,7 +254,7 @@ async function doWork(c: Ctx): Promise<boolean> {
   const info = await studio.brandSettings(work.brandId);
   try {
     if (isSlot(item)) {
-      await ensureDirs(dirs);
+      await ensureDirs(dirs, access);
       requirements = await studio.requirements(work.brandId);
       const d = data(item);
       await writeFile(path.join(dirs.input, 'slot.json'), JSON.stringify(d, null, 2));
@@ -251,7 +267,7 @@ async function doWork(c: Ctx): Promise<boolean> {
         reason: item.type, note: '', requested_by: '',
       });
     } else {
-      prepared = await prepareChanges(studio, c.log, dirs, work.brandId, data(item).version.id, item.payload);
+      prepared = await prepareChanges(studio, c.log, dirs, work.brandId, data(item).version.id, item.payload, access);
       requirements = prepared.requirements;
       work.eligible = prepared.eligible.map((x) => x.id);
       const d = data(item);
@@ -292,22 +308,20 @@ async function doWork(c: Ctx): Promise<boolean> {
       if (attempt > 0) {
         // Whatever the last attempt left must not be uploaded by mistake with the new one: it moves aside, for reference.
         await rename(dirs.output, path.join(dirs.run, `output-attempt-${attempt}`)).catch(() => {});
-        await mkdir(dirs.output, { recursive: true });
       }
+      // Whatever an earlier run of this item made of the directories (a restart), they are laid out again as they should be.
+      await ensureDirs(dirs, access);
+      await agentDir(dirs.output, access);
       const instructions = render(template, vars);
-      await mkdir(dirs.run, { recursive: true });
       await writeFile(path.join(dirs.run, 'instructions.md'), instructions);
-      const placeholders = {
-        instructionsFile: 'instructions.md', runDir: dirs.run, inputDir: dirs.input, outputDir: dirs.output, pieceDir: dirs.piece,
-        maxBudget: item.maxCost == null ? undefined : String(Math.max(0, item.maxCost - work.cost)),
-        maxMinutes: String(item.maxMinutes ?? ''), runId: item.runId, pieceId: scopeOf(c).pieceId ?? '',
-      };
       let res;
       try {
+        const plan = planAgent(brand.agent, dirs, {
+          brand: item.brand, runId: item.runId!, pieceId: scopeOf(c).pieceId ?? '', maxMinutes: String(item.maxMinutes ?? ''),
+          maxBudget: item.maxCost == null ? undefined : String(Math.max(0, item.maxCost - work.cost)),
+        });
         res = await runAgent({
-          command: buildCommand(brand.agent.command, placeholders),
-          cwd: dirs.run,
-          env: agentEnv({ ...brand.agent.env, ESTUDIO_RUN_DIR: dirs.run, ESTUDIO_INPUT_DIR: dirs.input, ESTUDIO_OUTPUT_DIR: dirs.output, ESTUDIO_SOURCES_DIR: dirs.sources }),
+          ...plan,
           stdin: brand.agent.input === 'stdin' ? instructions : undefined,
           timeoutMs: remaining,
           killGraceMs: brand.agent.killGraceSeconds * 1000,
@@ -326,15 +340,25 @@ async function doWork(c: Ctx): Promise<boolean> {
 
       let result: Result | null = null;
       let problem: string | null = null;
-      try {
-        result = resultSchema.parse(JSON.parse(await readFile(path.join(dirs.output, 'result.json'), 'utf8')));
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') problem = `result.json could not be read: ${clip(String(err), 300)}`;
+      const read = await readResult(dirs.output);
+      if ('problem' in read) problem = read.problem;
+      else if ('text' in read) {
+        try {
+          result = resultSchema.parse(JSON.parse(read.text));
+        } catch (err) {
+          problem = `result.json could not be read: ${clip(String(err), 300)}`;
+        }
       }
       work.cost += parseCost(brand.agent.cost, res.stdout, result);
       if (res.timedOut) return conclude(c, 'timeout', { notes: `The agent was stopped after ${Math.round(res.durationMs / 60000)} minutes.` }, 'The agent ran out of time on this.');
 
       const found = problem ? { files: [], problem } : await collectFiles(dirs.output, result?.files);
+      // Before anything the agent wrote goes anywhere: none of this runner's secrets may be in it.
+      const leaked = await secretsIn(deps.config.secrets, result, found.files);
+      if (leaked.length) {
+        c.log.error({ run: item.runId, brand: item.brand, secrets: leaked }, "the agent's result holds a secret of this runner: nothing of it is posted");
+        return conclude(c, 'failed', { notes: LEAK_NOTE }, "The agent's result could not be used.");
+      }
       if (!problem && found.files.length === 0 && result && (res.exitCode === 0 || res.exitCode === null) && declinedEverything(result, work.eligible)) {
         // It made nothing, and said so comment by comment: a person has to take it from here. That is an answer, not a failure.
         work.said = result.comments;

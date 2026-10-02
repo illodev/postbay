@@ -239,9 +239,12 @@ a version with `resolves`, comments, replies, slots) are unchanged. Added in thi
 - **Nothing was run against real Meta or Google** (see phase 2). Phase 3's loop does not need them, but publication events for real
   posts have only been seen with the fakes.
 - **The agent executes commands.** `--allowedTools` is Claude Code's permission list, not a sandbox: `ffmpeg` can still be given any
-  arguments. Run the runner as an unprivileged user, ideally in a container with nothing else in it, and give the agent only the
-  credentials it needs. The comments an agent reads are text written by your reviewers; "only people" is a rule about who acts,
-  **not a defence against instructions hidden in a comment**.
+  arguments. The comments an agent reads are text written by your reviewers; "only people" is a rule about who acts, **not a defence
+  against instructions hidden in a comment**. So the runner keeps its secrets in files (never in its environment, which an agent of the
+  same user reads through `/proc`), runs the agent in a sandbox (`agent.sandbox`: bubblewrap, a container) or as another user
+  (`agent.runAs`), closes each brand's directory to everyone else, and refuses to post an agent's result that holds any secret it knows.
+  An agent that is neither sandboxed nor another user can still read everything the runner can, and the runner says so when it starts.
+  See [Keeping the agent apart](../apps/runner/README.md#keeping-the-agent-apart-from-the-runner).
 - **The runner is one process with a queue in files.** Several runners can work for one studio (the studio allows one run per piece),
   but each has its own queue, and a webhook address points to one.
 - **Cost is trusted.** A runner that under-reports its spending would be believed; the in-agent budget flag and the run time limit are
@@ -258,7 +261,8 @@ a version with `resolves`, comments, replies, slots) are unchanged. Added in thi
 1. Set `TOKEN_KEY` (webhooks need it) and start the studio. In *Settings → API tokens* make a producer token; in *Settings → Agent*
    set both budgets, small at first.
 2. Copy `apps/runner/config.example.json`, edit the template to say how your brand speaks and what the agent must never invent, put the
-   token and the secret in the environment, and start the runner (see its README).
+   token and the secret in files only the runner's user can read (`tokenFile`, `webhookSecretFile`), check the sandbox, and start the
+   runner (see its README). Read its warnings on start.
 3. In *Settings → Webhooks* add the runner's address and use *Send a test*.
 4. Upload a short video, and as a reviewer comment on a frame and request changes. Watch the piece page: the Agent card shows the run
    as it happens.

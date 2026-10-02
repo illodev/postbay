@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
+import type { Secrets } from './secrets.js';
 
 /** An answer from the studio that was not a success, with the code the studio gave it. */
 export class StudioError extends Error {
@@ -81,15 +82,22 @@ export const mimeOf = (file: string) => MIME[path.extname(file).slice(1).toLower
 
 /** The studio's producer API, as the runner uses it. */
 export class Studio {
-  constructor(private base: string, private token: string, private fetchImpl: typeof fetch = fetch) {}
+  /**
+   * `secrets`: what must never be sent in a body. Anything the runner posts that holds one (an agent's error output quoted in a
+   * run's notes, say) goes with the secret replaced. The pipeline refuses an agent's result that holds one before it gets here;
+   * this is the last net, for everything else.
+   */
+  constructor(private base: string, private token: string, private fetchImpl: typeof fetch = fetch, private secrets?: Secrets) {}
 
   private async call<T>(method: string, url: string, body?: unknown): Promise<T> {
+    let payload = body !== undefined ? JSON.stringify(body) : undefined;
+    if (payload && this.secrets?.foundIn(payload).length) payload = this.secrets.redact(payload);
     let res: Response;
     try {
       res = await this.fetchImpl(new URL(url, this.base), {
         method,
         headers: { authorization: `Bearer ${this.token}`, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        body: payload,
         signal: AbortSignal.timeout(60_000),
       });
     } catch (err) {

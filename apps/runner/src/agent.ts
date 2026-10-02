@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
-import { createWriteStream } from 'node:fs';
+import { constants, createWriteStream } from 'node:fs';
 import path from 'node:path';
-import type { ArgSpec, CostSpec } from './config.js';
+import type { AgentSpec, ArgSpec, CostSpec } from './config.js';
+import type { Dirs } from './workspace.js';
 
 /** Fills {{placeholders}} in the command, and drops the optional arguments whose value does not exist. */
 export function buildCommand(spec: ArgSpec[], vars: Record<string, string | undefined>): string[] {
@@ -39,15 +40,60 @@ export function parseCost(spec: CostSpec, stdout: string, result: { cost?: numbe
 }
 
 /**
- * The agent does not inherit the runner's environment: the studio's token and the webhook secret are in it, and the
- * agent has no business with either. It gets what a program needs to run and find its own login, and what the
- * brand's configuration adds.
+ * The agent does not inherit the runner's environment: whatever secrets are in it are none of the agent's business. It
+ * gets what a program needs to run and find its own login, and what the brand's configuration adds. An agent that runs as
+ * another user (runAs) does not get the runner's identity either (HOME, USER, LOGNAME, SHELL): its configuration gives HOME.
+ *
+ * This keeps the secrets out of the agent's own environment only. The runner's environment stays readable through
+ * /proc/<pid>/environ to anything running as the runner's user, which is why secrets belong in files and the agent in
+ * another user or a sandbox (see the README).
  */
-const PASS = ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'TZ', 'SHELL', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'https_proxy', 'http_proxy', 'no_proxy'];
-export function agentEnv(extra: Record<string, string>, source: Record<string, string | undefined> = process.env): Record<string, string> {
+const IDENTITY = ['HOME', 'USER', 'LOGNAME', 'SHELL'];
+const PASS = ['PATH', ...IDENTITY, 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'TZ', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'https_proxy', 'http_proxy', 'no_proxy'];
+export function agentEnv(extra: Record<string, string>, source: Record<string, string | undefined> = process.env, o: { identity?: boolean } = {}): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const k of PASS) if (source[k] !== undefined) env[k] = source[k]!;
+  for (const k of PASS) if (source[k] !== undefined && (o.identity !== false || !IDENTITY.includes(k))) env[k] = source[k]!;
   return { ...env, ...extra };
+}
+
+/** How the agent is started: the command (behind the sandbox's, if any), its environment, where, and as whom. */
+export interface AgentPlan {
+  command: string[];
+  env: Record<string, string>;
+  cwd: string;
+  uid?: number;
+  gid?: number;
+}
+
+/**
+ * Puts the agent's command together for one run. With a sandbox, its command comes first, filled with the runner's paths, and
+ * the agent's command and ESTUDIO_* variables get the paths as the agent sees them (`sandbox.pieceDir` when the sandbox mounts
+ * the piece directory somewhere else).
+ */
+export function planAgent(
+  agent: AgentSpec, dirs: Dirs,
+  run: { brand: string; runId: string; pieceId: string; maxBudget?: string; maxMinutes: string },
+  source: Record<string, string | undefined> = process.env,
+): AgentPlan {
+  const host = { runDir: dirs.run, inputDir: dirs.input, outputDir: dirs.output, pieceDir: dirs.piece, sourcesDir: dirs.sources };
+  const mount = agent.sandbox?.pieceDir;
+  const seen = (p: string) => (mount ? path.posix.join(mount, path.relative(dirs.piece, p).split(path.sep).join('/')) : p);
+  const inside = Object.fromEntries(Object.entries(host).map(([k, v]) => [k, seen(v)])) as typeof host;
+  const command = buildCommand(agent.command, {
+    ...inside, instructionsFile: 'instructions.md', maxBudget: run.maxBudget, maxMinutes: run.maxMinutes, runId: run.runId, pieceId: run.pieceId,
+  });
+  const prefix = agent.sandbox
+    ? buildCommand(agent.sandbox.command, {
+        ...host, agentRunDir: inside.runDir, agentPieceDir: inside.pieceDir, runId: run.runId, pieceId: run.pieceId, brand: run.brand,
+        home: agent.env.HOME ?? source.HOME, uid: String(agent.runAs?.uid ?? process.getuid?.() ?? ''), gid: String(agent.runAs?.gid ?? process.getgid?.() ?? ''),
+      })
+    : [];
+  const env = agentEnv(
+    { ...agent.env, ESTUDIO_RUN_DIR: inside.runDir, ESTUDIO_INPUT_DIR: inside.inputDir, ESTUDIO_OUTPUT_DIR: inside.outputDir, ESTUDIO_SOURCES_DIR: inside.sourcesDir },
+    source,
+    { identity: !agent.runAs },
+  );
+  return { command: [...prefix, ...command], env, cwd: dirs.run, uid: agent.runAs?.uid, gid: agent.runAs?.gid };
 }
 
 export interface AgentRun {
@@ -70,6 +116,9 @@ export function runAgent(o: {
   command: string[];
   cwd: string;
   env: Record<string, string>;
+  /** Another user and group to run as (needs the runner to be root). */
+  uid?: number;
+  gid?: number;
   stdin?: string;
   timeoutMs: number;
   killGraceMs: number;
@@ -79,9 +128,14 @@ export function runAgent(o: {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const [cmd, ...args] = o.command;
-    const child = spawn(cmd!, args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
-    const outLog = createWriteStream(`${o.logPrefix}.stdout.log`);
-    const errLog = createWriteStream(`${o.logPrefix}.stderr.log`);
+    // Node drops the supplementary groups too when it changes the user.
+    const child = spawn(cmd!, args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true, uid: o.uid, gid: o.gid });
+    // Never through a link: the logs are written by the runner, and a link left where they go would make it write somewhere else.
+    const logFlags = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW;
+    const outLog = createWriteStream(`${o.logPrefix}.stdout.log`, { flags: logFlags as unknown as string, mode: 0o600 });
+    const errLog = createWriteStream(`${o.logPrefix}.stderr.log`, { flags: logFlags as unknown as string, mode: 0o600 });
+    outLog.on('error', () => {});
+    errLog.on('error', () => {});
     let stdout = '';
     let stderr = '';
     let timedOut = false;
