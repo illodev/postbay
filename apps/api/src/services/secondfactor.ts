@@ -34,7 +34,7 @@ interface TotpRow { user_id: string; secret_sealed: Buffer; confirmed_at: Date |
 export async function requirement(ctx: Ctx, userId: string): Promise<{ required: boolean; enrolled: boolean; byRole: boolean }> {
   const r = await ctx.db.one<{ enrolled: boolean; privileged: boolean }>(
     `select exists(select 1 from user_totp where user_id = $1 and confirmed_at is not null) as enrolled,
-            exists(select 1 from member where user_id = $1 and role in ('admin','approver')) as privileged`,
+            exists(select 1 from member where user_id = $1 and role in ('admin','approver') and deactivated_at is null) as privileged`,
     [userId],
   );
   const byRole = ctx.config.secondFactorRequired && !!r?.privileged;
@@ -215,7 +215,7 @@ export async function resetForMember(ctx: Ctx, p: Principal, brandId: string, me
     }
     // Locks the person's memberships, so none is added or changed while this is decided.
     const brands = await db.query<{ brand_id: string; manages: boolean }>(
-      `select m.brand_id, exists(select 1 from member a where a.brand_id = m.brand_id and a.user_id = $2 and a.role = 'admin') as manages
+      `select m.brand_id, exists(select 1 from member a where a.brand_id = m.brand_id and a.user_id = $2 and a.role = 'admin' and a.deactivated_at is null) as manages
        from member m where m.user_id = $1 for update of m`,
       [m.user_id, p.userId],
     );

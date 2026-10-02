@@ -134,6 +134,9 @@ const schema = z.object({
   PRIZE_POLL_SECONDS: z.coerce.number().int().min(1).default(180),
   /** How often the people whose retention period ended are deleted. */
   PRIZE_PURGE_SECONDS: z.coerce.number().int().min(1).default(3600),
+
+  /** How often approved versions are put into free slots, for the brands that ask for it (rules.auto_fill_slots). */
+  FILL_SLOTS_SECONDS: z.coerce.number().int().min(1).default(300),
 });
 
 export type Config = z.infer<typeof schema> & {

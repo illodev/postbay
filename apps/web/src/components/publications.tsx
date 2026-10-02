@@ -5,8 +5,10 @@ import { api, type Account, type AccountOptionsReply, type Attempt, type Calenda
 import { getLocale, t, type Key } from '../i18n';
 import { countHashtags, countLength, countMentions, truncatePreview } from '../lib/text';
 import { ERROR_CLASS_LABEL, fmtBytes, fmtDateTime, isoToZonedInput, NETWORK_LABEL, STEP_LABEL, VISIBILITY_LABEL, zonedToIso } from '../lib/format';
-import { Chip, CopyButton, Dialog, ErrorBox, Field, useToast } from './ui';
+import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, useConfirm, useToast } from './ui';
+import { MoreMenu, type MenuEntry } from './MoreMenu';
 import { defaultValues, NetMark, NetworkOptions, sendableOptions, type OptionValues } from './NetworkOptions';
+import { PrizeDialog } from './PrizeDialog';
 import '../styles/publications.css';
 
 /** Accounts a version is approved for right now: the ones every counted approver agreed on. */
@@ -41,6 +43,9 @@ const ICON = {
   clock: 'M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
   download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
   info: 'M12 11v5M12 8h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
+  alert: 'M12 9v4M12 17h.01M10.3 3.9 2.4 17.5A2 2 0 0 0 4.1 20.5h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
+  chevron: 'm6 9 6 6 6-6',
+  external: 'M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
 };
 
 // ───────────────────────────── per-network text ─────────────────────────────
@@ -257,7 +262,14 @@ function Section({ title, hint, children, className }: { title: string; hint?: R
 const accountMode = (a: Account) =>
   a.automated ? t('publications.account.auto') : a.status === 'reconnect_required' ? t('publications.account.reconnect') : t('publications.account.manual');
 
-export function ScheduleDialog({ version, brandId, zone, onClose }: { version: VersionDetail; brandId: string; zone: string; onClose: () => void }) {
+export function ScheduleDialog({ version, brandId, zone, initialWhen, onClose }: {
+  version: VersionDetail;
+  brandId: string;
+  zone: string;
+  /** Where the date field starts, as a wall-clock time in the brand's zone ('yyyy-MM-ddTHH:mm'), e.g. the day a piece was dropped on. */
+  initialWhen?: string;
+  onClose: () => void;
+}) {
   const invalidate = useInvalidate();
   const toast = useToast();
   const { data: accounts } = useQuery({ queryKey: ['accounts', brandId], queryFn: () => api.get<Account[]>(`/api/brands/${brandId}/accounts`) });
@@ -269,7 +281,7 @@ export function ScheduleDialog({ version, brandId, zone, onClose }: { version: V
   const allowed = approvedAccountIds(version);
   const options = (accounts ?? []).filter((a) => allowed.includes(a.id));
   const [accountId, setAccountId] = useState('');
-  const [when, setWhen] = useState('');
+  const [when, setWhen] = useState(initialWhen ?? '');
   const [text, setText] = useState('');
   const [firstComment, setFirstComment] = useState('');
   const [placement, setPlacement] = useState('');
@@ -843,5 +855,296 @@ export function PackDialog({ pubId, zone, onClose, onPublished }: { pubId: strin
         </div>
       )}
     </Dialog>
+  );
+}
+
+// ───────────────────────────── a piece's publications, as a list ─────────────────────────────
+
+/** A publication as the piece sends it: with the moment it went out, when it has. */
+type ListedPublication = PublicationRow & { published_at?: string | null };
+
+/** The variants of the piece, to name the version each publication carries. */
+export interface ListVariant {
+  id: string;
+  format: string;
+  style: string;
+  versions?: { id: string; number: number; review_state: string }[];
+}
+
+type Group = 'attention' | 'upcoming' | 'published' | 'cancelled';
+type Tone = 'bad' | 'warn' | 'info';
+interface Detail { tone: Tone; summary: string; text?: string }
+
+const UPCOMING = ['scheduled', 'preparing', 'ready', 'publishing'];
+
+/** A manual publication whose time has come: someone has to publish it now. */
+const dueByHand = (p: ListedPublication) => p.manual && p.status === 'scheduled' && DateTime.fromISO(p.scheduled_at) <= DateTime.now();
+
+function groupOf(p: ListedPublication): Group {
+  if (p.status === 'cancelled') return 'cancelled';
+  if (['failed', 'on_hold', 'awaiting_reapproval'].includes(p.status)) return 'attention';
+  if (p.status === 'published' && !p.manual && (p.visibility === 'private' || p.visibility === 'unknown')) return 'attention';
+  if (dueByHand(p)) return 'attention';
+  if (p.status === 'published') return 'published';
+  return 'upcoming';
+}
+
+/** What there is to know about a publication beyond its state: one line to read at a glance, the whole text on demand. */
+function detailsOf(p: ListedPublication): Detail[] {
+  const out: Detail[] = [];
+  if (p.status === 'on_hold') out.push({ tone: 'warn', summary: p.hold_reason || t('publications.list.held') });
+  if (p.status === 'awaiting_reapproval') out.push({ tone: 'warn', summary: t('publications.list.awaiting') });
+  if (dueByHand(p)) out.push({ tone: 'warn', summary: t('publications.list.dueByHand') });
+  if (p.manual) return out;
+  if (p.last_error && ['scheduled', 'preparing', 'ready', 'publishing', 'failed'].includes(p.status)) {
+    const label = p.last_error_class ? (ERROR_CLASS_LABEL[p.last_error_class] ?? null) : null;
+    out.push({ tone: p.status === 'failed' ? 'bad' : 'warn', summary: label ?? p.last_error, text: label ? p.last_error : undefined });
+  }
+  if (p.status === 'published' && p.visibility === 'private') out.push({ tone: 'warn', summary: privateNote(p.network) });
+  if (p.status === 'published' && p.visibility === 'unknown') out.push({ tone: 'warn', summary: t('publications.note.gone') });
+  if (p.status === 'published' && p.visibility === 'processing') out.push({ tone: 'info', summary: t('publications.note.processing') });
+  if (p.native_scheduled && ['scheduled', 'ready'].includes(p.status)) out.push({ tone: 'info', summary: t('publications.note.native') });
+  return out;
+}
+
+/** "jue 16 oct · 19:00", with the year only when it is not this one. */
+function shortWhen(iso: string, zone: string): string {
+  const d = DateTime.fromISO(iso, { zone });
+  return d.toFormat(d.year === DateTime.now().setZone(zone).year ? 'ccc d LLL · HH:mm' : 'd LLL yyyy · HH:mm');
+}
+
+function RowDetails({ details, id }: { details: Detail[]; id: string }) {
+  const [open, setOpen] = useState(false);
+  const first = details[0]!;
+  const more = details.length > 1 || !!first.text || first.summary.length > 90;
+  const icon = first.tone === 'info' ? ICON.info : ICON.alert;
+  if (!more) {
+    return (
+      <div className="pb-detail" data-tone={first.tone}>
+        <span className="pb-detail-line"><Icon d={icon} /><span className="pb-detail-sum">{first.summary}</span></span>
+      </div>
+    );
+  }
+  return (
+    <div className="pb-detail" data-tone={first.tone} data-open={open || undefined}>
+      <button type="button" className="pb-detail-line" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
+        <Icon d={icon} />
+        <span className="pb-detail-sum">{first.summary}</span>
+        <span className="pb-detail-more">{open ? t('publications.list.less') : t('publications.list.more')}</span>
+        <Icon d={ICON.chevron} className="pb-icon pb-detail-chev" />
+      </button>
+      {open && (
+        <div id={id} className="pb-detail-body">
+          {details.map((d, i) => (
+            <p key={i} data-tone={d.tone}>
+              {d.text ? <><strong>{sentence(d.summary)}</strong> {sentence(d.text)}</> : sentence(d.summary)}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The publications of a piece, one line each and grouped by what they need: the ones that need someone first, then what is
+ * coming, then what is out. Each line names the account, the moment, the version it carries and its state; its one obvious
+ * action is beside it (try again, publish now, open the post) and everything else is in its "⋯" menu. What went wrong or
+ * what a network says about it is a line under it, opened for the whole text.
+ */
+export function PublicationList({ pubs, variants = [], brandId, zone, brand, canSchedule, me }: {
+  pubs: ListedPublication[];
+  variants?: ListVariant[];
+  brandId: string;
+  zone: string;
+  /** The brand's settings: whether prizes are on and whether moving needs a second person. */
+  brand?: { prizes?: { enabled: boolean }; rules?: { reapprove_on_move: boolean } };
+  canSchedule: boolean;
+  /** Who is looking, to say why they cannot confirm their own change. */
+  me?: string;
+}) {
+  const invalidate = useInvalidate();
+  const toast = useToast();
+  const ask = useConfirm();
+  const baseId = useId();
+  const [move, setMove] = useState<ListedPublication | null>(null);
+  const [resched, setResched] = useState<ListedPublication | null>(null);
+  const [mark, setMark] = useState<string | null>(null);
+  const [pack, setPack] = useState<string | null>(null);
+  const [attempts, setAttempts] = useState<string | null>(null);
+  const [retry, setRetry] = useState<ListedPublication | null>(null);
+  const [prize, setPrize] = useState<ListedPublication | null>(null);
+  const [showCancelled, setShowCancelled] = useState(false);
+  const act = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: 'cancel' | 'confirm' | 'hand-over' | 'recheck' }) => api.post(`/api/publications/${id}/${action}`),
+    onSuccess: (_r, v) => {
+      invalidate();
+      toast(t(`publications.list.done.${v.action === 'hand-over' ? 'handOver' : v.action}` as Key));
+    },
+    onError: (e) => toast(errorMessage(e), 'error'),
+  });
+
+  const sameFormat = (format: string) => variants.filter((v) => v.format === format).length > 1;
+  const versionTag = (p: ListedPublication) => {
+    const v = variants.find((x) => x.id === p.variant_id);
+    const format = v ? (v.format === 'carousel' || v.format === 'document' ? t(`publications.list.format.${v.format}` as Key) : v.format) : null;
+    const full = [format, v?.style || null, `v${p.version_number}`].filter(Boolean).join(' · ');
+    const short = [format, v && sameFormat(v.format) && v.style ? v.style : null, `v${p.version_number}`].filter(Boolean).join(' · ');
+    return { full, short };
+  };
+
+  const groups: Group[] = ['attention', 'upcoming', 'published', 'cancelled'];
+  const by = (g: Group) => {
+    const list = pubs.filter((p) => groupOf(p) === g);
+    const when = (p: ListedPublication) => DateTime.fromISO((g === 'published' && p.published_at) || p.scheduled_at).toMillis();
+    return list.sort((a, b) => (g === 'published' || g === 'cancelled' ? when(b) - when(a) : when(a) - when(b)));
+  };
+
+  const row = (p: ListedPublication, g: Group) => {
+    const tag = versionTag(p);
+    const details = detailsOf(p);
+    const pending = ['scheduled', 'awaiting_reapproval', 'on_hold', 'preparing', 'ready', 'failed'].includes(p.status);
+    const at = g === 'published' && p.published_at ? p.published_at : p.scheduled_at;
+    const isPrivate = p.status === 'published' && !p.manual && p.visibility && p.visibility !== 'public';
+
+    // The one action the line shows: what anyone would do next with it.
+    let primary: ReactNode = null;
+    let primaryKey: string | null = null;
+    if (canSchedule && p.status === 'failed' && !p.manual) {
+      primaryKey = 'retry';
+      primary = <button type="button" className="btn btn-small" onClick={() => setRetry(p)}>{t('publications.list.retry')}</button>;
+    } else if (canSchedule && dueByHand(p)) {
+      primaryKey = 'publish';
+      primary = <button type="button" className="btn btn-small" onClick={() => setPack(p.id)}>{t('publications.list.publish')}</button>;
+    } else if (canSchedule && p.status === 'awaiting_reapproval') {
+      primaryKey = 'confirm';
+      primary = <button type="button" className="btn btn-small" disabled={act.isPending} onClick={() => act.mutate({ id: p.id, action: 'confirm' })} title={me ? t('publications.list.confirmHint', { email: me }) : undefined}>{t('publications.list.confirm')}</button>;
+    } else if (canSchedule && p.status === 'on_hold') {
+      primaryKey = 'reschedule';
+      primary = <button type="button" className="btn btn-small" onClick={() => setResched(p)}>{t('publications.list.reschedule')}</button>;
+    } else if (p.url && p.status === 'published') {
+      primaryKey = 'open';
+      primary = (
+        <a className="btn btn-small" href={p.url} target="_blank" rel="noreferrer" title={t('publications.list.openHint', { network: netName(p.network) })}>
+          {t('publications.list.open')}<Icon d={ICON.external} className="pb-icon pb-btn-ext" />
+        </a>
+      );
+    }
+
+    const items: MenuEntry[] = [];
+    if (p.url && primaryKey !== 'open') items.push({ label: t('publications.list.open'), icon: 'external', href: p.url });
+    if (canSchedule && p.status === 'scheduled' && p.manual && primaryKey !== 'publish') items.push({ label: t('publications.list.publish'), icon: 'send', hint: t('publications.list.publishHint'), onSelect: () => setPack(p.id) });
+    if (canSchedule && p.status === 'scheduled') items.push({ label: t('publications.list.move'), icon: 'calendar', onSelect: () => setMove(p) });
+    if (canSchedule && p.status === 'published' && !p.manual && p.visibility === 'private') {
+      items.push({ label: t('publications.list.recheck'), icon: 'refresh', hint: t('publications.list.recheckHint'), onSelect: () => act.mutate({ id: p.id, action: 'recheck' }) });
+    }
+    if (canSchedule && !p.manual && (p.status === 'failed' || (p.status === 'scheduled' && !p.native_scheduled))) {
+      items.push({
+        label: t('publications.list.handOver'),
+        icon: 'hand',
+        hint: t('publications.list.handOverHint'),
+        onSelect: async () => {
+          const ok = await ask({ title: t('publications.list.handOverTitle'), text: t('publications.list.handOverText', { account: p.account_name, network: netName(p.network) }), confirmLabel: t('publications.list.handOverGo') });
+          if (ok) act.mutate({ id: p.id, action: 'hand-over' });
+        },
+      });
+    }
+    if (brand?.prizes?.enabled && canSchedule && ['scheduled', 'preparing', 'ready', 'publishing', 'published', 'awaiting_reapproval', 'on_hold'].includes(p.status)) {
+      items.push({ label: t('publications.list.prize'), icon: 'gift', onSelect: () => setPrize(p) });
+    }
+    if (!p.manual) items.push({ label: t('publications.list.history'), icon: 'history', hint: t('publications.list.historyHint'), onSelect: () => setAttempts(p.id) });
+    if (canSchedule && pending) {
+      items.push({ sep: true });
+      items.push({
+        label: t('publications.list.cancel'),
+        icon: 'x',
+        danger: true,
+        onSelect: async () => {
+          const ok = await ask({
+            title: t('publications.list.cancelTitle'),
+            text: t(p.native_scheduled ? 'publications.list.cancelTextNative' : 'publications.list.cancelText', { account: p.account_name, network: netName(p.network), when: fmtDateTime(p.scheduled_at, zone) }),
+            confirmLabel: t('publications.list.cancelGo'),
+            danger: true,
+          });
+          if (ok) act.mutate({ id: p.id, action: 'cancel' });
+        },
+      });
+    }
+
+    return (
+      <li key={p.id} className="pb-row" data-group={g}>
+        <div className="pb-row-main">
+          <span className="pb-row-net"><NetMark network={p.network} labelled /></span>
+          <span className="pb-row-who">
+            <strong title={p.account_name}>{p.account_name}</strong>
+            <span className="pb-row-sub">
+              <span>{netName(p.network)}</span>
+              <span aria-hidden="true">·</span>
+              <span className="pb-row-ver" title={t('publications.list.carries', { version: tag.full })}>{tag.short}</span>
+            </span>
+          </span>
+          <time className="pb-row-when" dateTime={at} title={fmtDateTime(at, zone)}>{shortWhen(at, zone)}</time>
+          <span className="pb-row-state">
+            {isPrivate ? <Chip state="on_hold" label={VISIBILITY_LABEL[p.visibility!] ?? p.visibility!} /> : <Chip state={p.status} />}
+            <span className="pb-row-mode" data-mode={p.manual ? 'manual' : 'auto'} title={p.manual ? t('publications.list.manualHint') : t('publications.list.autoHint')} aria-label={p.manual ? t('publications.mode.manual') : t('publications.mode.auto')} role="img">
+              <Icon d={p.manual ? ICON.hand : ICON.auto} />
+            </span>
+          </span>
+          <span className="pb-row-act">
+            {primary}
+            {items.length > 0 ? (
+              <MoreMenu items={items} label={t('publications.list.menu', { account: p.account_name })} className="mm-trigger pb-row-more" />
+            ) : (
+              <span className="pb-row-more-gap" aria-hidden="true" />
+            )}
+          </span>
+        </div>
+        {details.length > 0 && <RowDetails details={details} id={`${baseId}-${p.id}`} />}
+      </li>
+    );
+  };
+
+  return (
+    <div className="pb-list">
+      {groups.map((g) => {
+        const list = by(g);
+        if (list.length === 0) return null;
+        const folded = g === 'cancelled' && !showCancelled;
+        return (
+          <section key={g} className="pb-group" data-group={g} aria-label={t(`publications.list.group.${g}` as Key)}>
+            <h3 className="pb-group-head">
+              {g === 'cancelled' ? (
+                <button type="button" className="pb-group-toggle" aria-expanded={!folded} onClick={() => setShowCancelled(!showCancelled)}>
+                  <Icon d={ICON.chevron} className="pb-icon pb-group-chev" />
+                  <span>{t(`publications.list.group.${g}` as Key)}</span>
+                  <span className="pb-group-n">{list.length}</span>
+                </button>
+              ) : (
+                <>
+                  <span className="pb-group-dot" aria-hidden="true" />
+                  <span>{t(`publications.list.group.${g}` as Key)}</span>
+                  <span className="pb-group-n">{list.length}</span>
+                </>
+              )}
+            </h3>
+            {!folded && <ul className="pb-rows">{list.map((p) => row(p, g))}</ul>}
+          </section>
+        );
+      })}
+      {move && <MoveDialog pub={move} brandId={brandId} zone={zone} needsConfirmation={!!brand?.rules?.reapprove_on_move} onClose={() => setMove(null)} />}
+      {resched && (
+        <RescheduleDialog
+          pub={resched}
+          zone={zone}
+          approvedVersions={(variants.find((v) => v.id === resched.variant_id)?.versions ?? []).filter((v) => v.review_state === 'approved').map((v) => ({ id: v.id, number: v.number }))}
+          onClose={() => setResched(null)}
+        />
+      )}
+      {pack && <PackDialog pubId={pack} zone={zone} onClose={() => setPack(null)} onPublished={() => { setMark(pack); setPack(null); }} />}
+      {mark && <MarkPublishedDialog pubId={mark} onClose={() => setMark(null)} />}
+      {attempts && <AttemptsDialog pubId={attempts} zone={zone} onClose={() => setAttempts(null)} />}
+      {retry && <RetryDialog pub={retry} zone={zone} onClose={() => setRetry(null)} />}
+      {prize && <PrizeDialog pub={prize} brandId={brandId} zone={zone} onClose={() => setPrize(null)} />}
+    </div>
   );
 }

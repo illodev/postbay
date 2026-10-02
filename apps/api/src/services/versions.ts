@@ -8,7 +8,8 @@ import type { ProbeResult } from '../media/ffmpeg.js';
 import { badRequest, conflict, forbidden } from '../errors.js';
 import { msg, type Key } from '../i18n/index.js';
 import { audit } from './audit.js';
-import { loadVariant, loadVersion } from './loaders.js';
+import { loadVariant, loadVersion, rulesOf } from './loaders.js';
+import { slotScheduleOf } from './scheduling.js';
 import { notifyRoles } from './notify.js';
 import { runCovering } from './agent.js';
 import { refreshPieceState } from './pieces.js';
@@ -336,6 +337,7 @@ export async function getVersion(ctx: Ctx, p: Principal, versionId: string) {
   }
   const approvals = await ctx.db.query(
     `select a.id, a.decision, a.account_ids, a.checklist, a.note, a.created_at, a.approved_fingerprint, a.piece_title, a.ai_generated,
+       a.auto_schedule, a.schedule_text, a.schedule_first_comment,
        coalesce(u.name, u.email) as approver, a.approved_fingerprint = $2 as matches_fingerprint
      from approval a join app_user u on u.id = a.approver_user_id where a.version_id = $1 order by a.created_at`,
     [versionId, version.fingerprint],
@@ -356,8 +358,11 @@ export async function getVersion(ctx: Ctx, p: Principal, versionId: string) {
     review_state: version.review_state, created_at: version.created_at, author: author?.name ?? null,
     author_user_id: version.author_user_id, by_agent: version.author_token_id !== null, uploaded_by: await uploaderOf(ctx.db, versionId),
     variant: { id: variant.id, format: variant.format, style: variant.style, piece_id: variant.piece_id },
-    piece: await ctx.db.one('select id, title, kind, brief, ai_generated, review_state from piece where id = $1', [version.piece_id]),
+    piece: await ctx.db.one('select id, title, kind, brief, ai_generated, review_state, slot_id, slot_at from piece where id = $1', [version.piece_id]),
     brand, assets: withUrls, approvals, versions: siblings,
+    // What approving it would schedule by itself: at its slot (a piece made for one), and whether the brand fills free slots with what is approved.
+    slot_schedule: await slotScheduleOf(ctx, ctx.db, versionId),
+    auto_fill_slots: rulesOf(brand!).auto_fill_slots,
   };
 }
 

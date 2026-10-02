@@ -5,6 +5,7 @@ import { accountsDueForHealth, checkHealth } from './services/connectors.js';
 import { scanMetrics } from './services/metrics.js';
 import { pollComments, purgePrizeData, scanPrizeDeliveries } from './services/prizes.js';
 import { scanSlotAlerts } from './services/slots.js';
+import { fillFreeSlots } from './services/scheduling.js';
 import { deliver, dueDeliveries, purgeOldEvents } from './services/webhooks.js';
 import { expireRuns } from './services/agent.js';
 import { advance, dueForAttention, TIMING, wakeFrozen, wakeOrphans } from './services/publisher.js';
@@ -58,6 +59,7 @@ export async function startWorker(ctx: Ctx): Promise<Worker> {
   let lastPrizePurge = 0;
   let lastPurge = 0;
   let lastSlotScan = 0;
+  let lastFill = 0;
   let sweeping = false;
   const sweep = async (): Promise<number> => {
     if (sweeping) return 0;
@@ -89,6 +91,11 @@ export async function startWorker(ctx: Ctx): Promise<Worker> {
       if (Date.now() - lastSlotScan > 300_000) {
         lastSlotScan = Date.now();
         await scanSlotAlerts(ctx);
+      }
+      // Brands that fill their free slots: approved versions that were never scheduled go into the next free ones.
+      if (Date.now() - lastFill > ctx.config.FILL_SLOTS_SECONDS * 1000) {
+        lastFill = Date.now();
+        await fillFreeSlots(ctx);
       }
       if (Date.now() - lastPurge > 6 * 3600_000) {
         lastPurge = Date.now();

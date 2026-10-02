@@ -26,12 +26,24 @@ export const agentSettings = z.object({
   max_run_minutes: z.number().int().min(1).max(240),
   slot_alert_days: z.number().int().min(0).max(30),
   currency: z.string().trim().min(1).max(8),
+  /**
+   * Whether a producer token, inside an agent run, may schedule a version that people approved, on the accounts they approved it for
+   * (POST /versions/:id/publications). Off by default. It never approves, never schedules what is not approved, and never cancels or
+   * moves anything.
+   */
+  can_schedule_approved: z.boolean(),
 });
 export type AgentSettings = z.infer<typeof agentSettings>;
 
 export const DEFAULT_AGENT: AgentSettings = {
-  max_rounds: 3, max_cost_per_piece: null, max_cost_per_month: null, max_run_minutes: 30, slot_alert_days: 3, currency: 'USD',
+  max_rounds: 3, max_cost_per_piece: null, max_cost_per_month: null, max_run_minutes: 30, slot_alert_days: 3, currency: 'USD', can_schedule_approved: false,
 };
+
+/**
+ * What a run started by `version.approved` is for: scheduling what people approved. It is not a round of changes (rounds count only the
+ * other runs) and no version can be uploaded inside it.
+ */
+export const SCHEDULING_TRIGGER = 'version.approved';
 
 export const agentOf = (brand: { agent?: unknown }): AgentSettings => ({ ...DEFAULT_AGENT, ...((brand.agent as Partial<AgentSettings> | null) ?? {}) });
 
@@ -48,7 +60,8 @@ export const startInput = z.object({
 });
 
 export const finishInput = z.object({
-  outcome: z.enum(['uploaded', 'needs_people', 'failed', 'checks_failed', 'timeout', 'aborted']),
+  /** `scheduled`: a run started by `version.approved` that scheduled what was approved. */
+  outcome: z.enum(['uploaded', 'needs_people', 'failed', 'checks_failed', 'timeout', 'aborted', 'scheduled']),
   cost: z.number().min(0).max(1_000_000).default(0),
   notes: z.string().max(5000).default(''),
   versionId: z.string().uuid().optional(),
@@ -113,15 +126,18 @@ export async function expireRuns(ctx: Ctx): Promise<number> {
 
 /**
  * The run of this token that covers work on this piece right now, if any: one it started on the piece, or one it started for the
- * brand (an empty slot) during which it made the piece. Only a run that is still running, inside its lease and its longest run.
+ * brand (an empty slot) during which it made the piece. Only a run that is still running, inside its lease and its longest run. A run
+ * started to schedule what was approved (SCHEDULING_TRIGGER) covers scheduling only: a version is never uploaded inside one, so it
+ * cannot be a way round the round cap.
  */
-export async function runCovering(db: Queryable, tokenId: string, pieceId: string, now: Date): Promise<string | null> {
+export async function runCovering(db: Queryable, tokenId: string, pieceId: string, now: Date, purpose: 'upload' | 'schedule' = 'upload'): Promise<string | null> {
   const r = await db.one<{ id: string }>(
     `select r.id from agent_run r join piece p on p.id = $2
      where r.token_id = $1 and r.status = 'running' and r.lease_until >= $3 and (r.deadline_at is null or r.deadline_at >= $3)
        and (r.piece_id = p.id or (r.piece_id is null and p.created_by_token = r.token_id and p.created_at >= r.opened_at))
+       and ($4 = 'schedule' or r.trigger <> $5)
      order by r.started_at limit 1`,
-    [tokenId, pieceId, now],
+    [tokenId, pieceId, now, purpose, SCHEDULING_TRIGGER],
   );
   return r?.id ?? null;
 }
@@ -148,6 +164,8 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
   const input = startInput.parse(raw);
   const token = requireToken(p);
   const pieceId = 'pieceId' in scope ? scope.pieceId : null;
+  // A run that only schedules what people approved is not a round of changes: the round cap does not stop it (the budgets do).
+  const scheduling = input.trigger === SCHEDULING_TRIGGER;
 
   const outcome = await ctx.db.tx(async (db): Promise<{ started: Started } | { blocked: { reason: BlockReason; text: Localized; details: Record<string, unknown> } }> => {
     let brandId: string;
@@ -184,7 +202,7 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
     }
     if (input.eventId) {
       const done = await db.one(
-        `select outcome from agent_run where trigger_event_id = $1 and brand_id = $2 and outcome in ('uploaded','needs_people')`,
+        `select outcome from agent_run where trigger_event_id = $1 and brand_id = $2 and outcome in ('uploaded','needs_people','scheduled')`,
         [input.eventId, brandId],
       );
       if (done) throw conflict('already_handled', 'An agent already handled this event');
@@ -195,8 +213,9 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
     const spentPiece = pieceId ? await spend(db, 'piece_id = $1 and started_at > $2', [pieceId, reset ?? new Date(0)]) : 0;
     const rounds = pieceId
       ? (await db.one<{ n: number }>(
-          `select count(*)::int as n from agent_run where piece_id = $1 and started_at > $2 and outcome is distinct from 'aborted' and outcome is distinct from 'blocked'`,
-          [pieceId, reset ?? new Date(0)],
+          `select count(*)::int as n from agent_run where piece_id = $1 and started_at > $2 and outcome is distinct from 'aborted' and outcome is distinct from 'blocked'
+             and trigger <> $3`,
+          [pieceId, reset ?? new Date(0), SCHEDULING_TRIGGER],
         ))!.n
       : 0;
 
@@ -205,7 +224,7 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
     const money = (n: number) => n.toFixed(2);
     if (s.max_cost_per_piece === null || s.max_cost_per_month === null) {
       blocked = { reason: 'budget_not_set', text: msg('agent.blocked.budgetNotSet'), details: {} };
-    } else if (pieceId && rounds >= s.max_rounds) {
+    } else if (pieceId && rounds >= s.max_rounds && !scheduling) {
       blocked = { reason: 'rounds_exhausted', text: msg('agent.blocked.roundsExhausted', { rounds: s.max_rounds }), details: { rounds, maxRounds: s.max_rounds } };
     } else if (pieceId && spentPiece >= s.max_cost_per_piece) {
       blocked = { reason: 'piece_budget_reached', text: msg('agent.blocked.pieceBudget', { spent: money(spentPiece), cap: String(s.max_cost_per_piece), currency: s.currency }), details: { spent: spentPiece, cap: s.max_cost_per_piece } };
@@ -240,10 +259,11 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
        values ($1,$2,$3,$4,$5,$6,$7,$8,$6) returning id`,
       [brandId, pieceId, token.tokenId, input.trigger, input.eventId ?? null, lease, now, remaining],
     ))!;
-    await audit(db, p, brandId, 'agent.started', 'agent_run', run.id, null, { piece_id: pieceId, trigger: input.trigger, round: rounds + 1 });
+    const round = scheduling ? rounds : rounds + 1;
+    await audit(db, p, brandId, 'agent.started', 'agent_run', run.id, null, { piece_id: pieceId, trigger: input.trigger, round });
     return {
       started: {
-        id: run.id, round: rounds + 1, maxRounds: s.max_rounds, leaseUntil: lease,
+        id: run.id, round, maxRounds: s.max_rounds, leaseUntil: lease,
         limits: { maxMinutes: s.max_run_minutes, maxCost: remaining, currency: s.currency },
       },
     };
@@ -347,7 +367,8 @@ export async function pieceAgent(ctx: Ctx, p: Principal, pieceId: string) {
      where r.piece_id = $1 order by r.started_at desc, r.seq desc limit 30`,
     [pieceId],
   );
-  const counted = runs.filter((r) => new Date(r.started_at) > since && r.outcome !== 'aborted' && r.outcome !== 'blocked');
+  const isRound = (r: Record<string, any>) => new Date(r.started_at) > since && r.outcome !== 'aborted' && r.outcome !== 'blocked' && r.trigger !== SCHEDULING_TRIGGER;
+  const counted = runs.filter(isRound);
   const live = runs.find((r) => r.status === 'running' && new Date(r.lease_until) > ctx.now());
   const lastBlocked = runs.find((r) => r.outcome === 'blocked' && new Date(r.started_at) > since);
   let needsPerson = false;
@@ -370,7 +391,7 @@ export async function pieceAgent(ctx: Ctx, p: Principal, pieceId: string) {
     blocked_reason: needsPerson ? lastBlocked!.blocked_reason : null,
     blocked_message: needsPerson ? lastBlocked!.notes : null,
     blocked_message_i18n: needsPerson ? (lastBlocked!.notes_i18n ?? null) : null,
-    runs: runs.map((r) => ({ ...runView(r), version_number: r.version_number, counted: new Date(r.started_at) > since && r.outcome !== 'aborted' && r.outcome !== 'blocked' })),
+    runs: runs.map((r) => ({ ...runView(r), version_number: r.version_number, counted: isRound(r) })),
   };
 }
 

@@ -1,8 +1,15 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import * as RAlert from '@radix-ui/react-alert-dialog';
+import * as RDialog from '@radix-ui/react-dialog';
+import * as RMenu from '@radix-ui/react-dropdown-menu';
+import * as RPopover from '@radix-ui/react-popover';
+import * as RSelect from '@radix-ui/react-select';
+import * as RTooltip from '@radix-ui/react-tooltip';
+import { createContext, useCallback, useContext, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactElement, type ReactNode } from 'react';
 import { ApiError } from '../api';
 import { t, tMaybe } from '../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import '../styles/ui.css';
+import { Icon, type IconName } from './icons';
 import { HAS_LOGO, NetLogo } from './netlogos';
 
 /** What to tell the person about an error: the translated text for a known API code, else the server's message. */
@@ -32,7 +39,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
   return (
     <ToastCtx.Provider value={push}>
-      <ConfirmProvider>{children}</ConfirmProvider>
+      <RTooltip.Provider delayDuration={450} skipDelayDuration={250}>
+        <ConfirmProvider>{children}</ConfirmProvider>
+      </RTooltip.Provider>
       <div className="toasts" role="status" aria-live="polite">
         {items.map((t) => (
           <div key={t.id} className={`toast toast-${t.kind}`}>{t.text}</div>
@@ -65,44 +74,30 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
   );
 }
 
-/** Modal built on <dialog>: focus trap, Escape to close and backdrop come from the browser. */
+/**
+ * A modal, on Radix: focus trap, Escape and a click outside close it, the page behind does not scroll, and the menus,
+ * selects and tooltips opened inside it show above it (a browser <dialog> kept them underneath).
+ */
 export function Dialog({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  // Closing the <dialog> on unmount fires its "close" event a moment later. That is not the person closing it, and
-  // must not call onClose: under StrictMode the effect runs, cleans up and runs again, and the stray event used to
-  // unmount the dialog right after it opened.
-  const closingOnUnmount = useRef(false);
-  useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
-    return () => {
-      if (d?.open) {
-        closingOnUnmount.current = true;
-        d.close();
-      }
-    };
-  }, []);
   return (
-    <dialog
-      ref={ref}
-      className={wide ? 'dialog dialog-wide' : 'dialog'}
-      onClose={() => {
-        if (closingOnUnmount.current) {
-          closingOnUnmount.current = false;
-          return;
-        }
-        onClose();
-      }}
-      onClick={(e) => e.target === ref.current && onClose()}
-    >
-      <div className="dialog-body">
-        <header className="dialog-head">
-          <h2>{title}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label={t('common.close')}>×</button>
-        </header>
-        {children}
-      </div>
-    </dialog>
+    <RDialog.Root open onOpenChange={(open) => !open && onClose()}>
+      <RDialog.Portal>
+        <RDialog.Overlay className="dialog-overlay" />
+        <RDialog.Content className={wide ? 'dialog dialog-wide' : 'dialog'} aria-describedby={undefined}>
+          <div className="dialog-body">
+            <header className="dialog-head">
+              <RDialog.Title asChild>
+                <h2>{title}</h2>
+              </RDialog.Title>
+              <RDialog.Close className="icon-btn" aria-label={t('common.close')}>
+                <Icon name="x" />
+              </RDialog.Close>
+            </header>
+            {children}
+          </div>
+        </RDialog.Content>
+      </RDialog.Portal>
+    </RDialog.Root>
   );
 }
 
@@ -154,51 +149,41 @@ export interface ConfirmOptions {
  * wants to hold the question in its state; most callers want `useConfirm()` instead.
  */
 export function ConfirmDialog({ title, text, confirmLabel, cancelLabel, danger, busy, onConfirm, onCancel }: ConfirmOptions & { busy?: boolean; onConfirm: () => void; onCancel: () => void }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  const closingOnUnmount = useRef(false);
-  const titleId = useRef(`confirm-${Math.random().toString(36).slice(2)}`).current;
-  useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
-    return () => {
-      if (d?.open) {
-        closingOnUnmount.current = true;
-        d.close();
-      }
-    };
-  }, []);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const okRef = useRef<HTMLButtonElement>(null);
   return (
-    <dialog
-      ref={ref}
-      className={`dialog confirm ${danger ? 'confirm-danger' : ''}`}
-      aria-labelledby={titleId}
-      onClose={() => {
-        if (closingOnUnmount.current) {
-          closingOnUnmount.current = false;
-          return;
-        }
-        onCancel();
-      }}
-      onClick={(e) => e.target === ref.current && onCancel()}
-    >
-      <form
-        className="confirm-body"
-        method="dialog"
-        onSubmit={(e) => {
-          e.preventDefault();
-          onConfirm();
-        }}
-      >
-        <h2 id={titleId}>{title}</h2>
-        {text && <div className="confirm-text">{text}</div>}
-        <div className="confirm-actions">
-          <button type="button" className="btn" onClick={onCancel} autoFocus={danger}>{cancelLabel ?? t('common.cancel')}</button>
-          <button type="submit" className={`btn ${danger ? 'btn-confirm-danger' : 'btn-primary'}`} disabled={busy} autoFocus={!danger}>
-            {confirmLabel ?? t('common.confirm')}
-          </button>
-        </div>
-      </form>
-    </dialog>
+    <RAlert.Root open onOpenChange={(open) => !open && onCancel()}>
+      <RAlert.Portal>
+        <RAlert.Overlay className="dialog-overlay" />
+        <RAlert.Content
+          className={`dialog confirm ${danger ? 'confirm-danger' : ''}`}
+          aria-describedby={undefined}
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            (danger ? cancelRef : okRef).current?.focus();
+          }}
+        >
+          <form
+            className="confirm-body"
+            onSubmit={(e) => {
+              e.preventDefault();
+              onConfirm();
+            }}
+          >
+            <RAlert.Title asChild>
+              <h2>{title}</h2>
+            </RAlert.Title>
+            {text && <div className="confirm-text">{text}</div>}
+            <div className="confirm-actions">
+              <button ref={cancelRef} type="button" className="btn" onClick={onCancel}>{cancelLabel ?? t('common.cancel')}</button>
+              <button ref={okRef} type="submit" className={`btn ${danger ? 'btn-confirm-danger' : 'btn-primary'}`} disabled={busy}>
+                {confirmLabel ?? t('common.confirm')}
+              </button>
+            </div>
+          </form>
+        </RAlert.Content>
+      </RAlert.Portal>
+    </RAlert.Root>
   );
 }
 
@@ -287,7 +272,7 @@ export function Switch({ label, hint, checked, onChange, disabled }: { label: Re
 
 /** A small set of choices side by side (grid · board · list, S · M · L); arrows move between them. */
 export function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: { value: T; label: ReactNode; title?: string }[]; onChange: (value: T) => void }) {
-  const move = (e: React.KeyboardEvent, i: number) => {
+  const move = (e: KeyboardEvent, i: number) => {
     const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
     if (!step) return;
     e.preventDefault();
@@ -303,5 +288,119 @@ export function Segmented<T extends string>({ label, value, options, onChange }:
         </button>
       ))}
     </div>
+  );
+}
+
+// ───────────────────────────── floating: popover, menu, select, tooltip (Radix) ─────────────────────────────
+// Placed where they fit (flipping at the window's edge), closed by Escape and a click outside, keyboard-driven, and shown
+// above dialogs. Styled here, not by Radix: .float is the shared surface.
+
+type Side = 'top' | 'right' | 'bottom' | 'left';
+type Align = 'start' | 'center' | 'end';
+
+/** A panel anchored to its trigger. Controlled (`open`/`onOpenChange`) when the page closes it itself, e.g. after a choice. */
+export function Popover({ trigger, children, open, onOpenChange, side = 'bottom', align = 'start', width, label, className = '' }: {
+  trigger: ReactElement; children: ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void; side?: Side; align?: Align; width?: number | string; label?: string; className?: string;
+}) {
+  return (
+    <RPopover.Root open={open} onOpenChange={onOpenChange}>
+      <RPopover.Trigger asChild>{trigger}</RPopover.Trigger>
+      <RPopover.Portal>
+        <RPopover.Content className={`float ${className}`.trim()} side={side} align={align} sideOffset={6} collisionPadding={8} style={{ width }} aria-label={label}>
+          {children}
+        </RPopover.Content>
+      </RPopover.Portal>
+    </RPopover.Root>
+  );
+}
+
+/** A menu of actions: arrows, Enter, typeahead. Its children are MenuItem, MenuSeparator and MenuLabel. */
+export function Menu({ trigger, children, side = 'bottom', align = 'end', width, open, onOpenChange }: {
+  trigger: ReactElement; children: ReactNode; side?: Side; align?: Align; width?: number | string; open?: boolean; onOpenChange?: (open: boolean) => void;
+}) {
+  return (
+    <RMenu.Root open={open} onOpenChange={onOpenChange}>
+      <RMenu.Trigger asChild>{trigger}</RMenu.Trigger>
+      <RMenu.Portal>
+        <RMenu.Content className="float menu" side={side} align={align} sideOffset={6} collisionPadding={8} style={{ width }}>
+          {children}
+        </RMenu.Content>
+      </RMenu.Portal>
+    </RMenu.Root>
+  );
+}
+
+export function MenuItem({ icon, lead, children, onSelect, danger, disabled, hint, checked }: {
+  icon?: IconName; /** something else in the icon's place: a brand mark, an avatar */ lead?: ReactNode; children: ReactNode; onSelect: () => void;
+  danger?: boolean; disabled?: boolean; /** a shortcut or a short note, on the right */ hint?: ReactNode; /** the current choice: a check on the right */ checked?: boolean;
+}) {
+  return (
+    <RMenu.Item className={`menu-item ${danger ? 'menu-item-danger' : ''}`.trim()} onSelect={onSelect} disabled={disabled} aria-current={checked || undefined}>
+      {icon && <Icon name={icon} />}
+      {lead}
+      <span className="grow menu-text">{children}</span>
+      {hint && <span className="menu-hint">{hint}</span>}
+      {checked && <span className="select-check"><Icon name="check" /></span>}
+    </RMenu.Item>
+  );
+}
+
+export const MenuSeparator = () => <RMenu.Separator className="menu-sep" />;
+export const MenuLabel = ({ children }: { children: ReactNode }) => <RMenu.Label className="menu-label">{children}</RMenu.Label>;
+
+export interface SelectOption<T extends string> {
+  value: T;
+  label: ReactNode;
+  /** shown before the label, in the list and in the closed select: a NetMark, an Avatar, an icon */
+  icon?: ReactNode;
+  disabled?: boolean;
+}
+
+/**
+ * The app's own select: its list is styled, keyboard and typeahead work, and it opens above a dialog. A value may not be
+ * the empty string (Radix keeps that for "nothing chosen", shown with the placeholder): use 'all', 'none'… instead.
+ */
+export function Select<T extends string>({ value, onChange, options, placeholder, label, disabled, id, className = '' }: {
+  value: T | undefined; onChange: (value: T) => void; options: SelectOption<T>[]; placeholder?: string; label?: string; disabled?: boolean; id?: string; className?: string;
+}) {
+  return (
+    <RSelect.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
+      <RSelect.Trigger className={`select-trigger ${className}`.trim()} aria-label={label} id={id}>
+        <RSelect.Value placeholder={placeholder} />
+        <RSelect.Icon className="select-chevron">
+          <Icon name="chevronDown" />
+        </RSelect.Icon>
+      </RSelect.Trigger>
+      <RSelect.Portal>
+        <RSelect.Content className="float select-list" position="popper" side="bottom" align="start" sideOffset={4} collisionPadding={8}>
+          <RSelect.Viewport>
+            {options.map((o) => (
+              <RSelect.Item key={o.value} value={o.value} disabled={o.disabled} className="menu-item">
+                {o.icon}
+                <RSelect.ItemText>{o.label}</RSelect.ItemText>
+                <RSelect.ItemIndicator className="select-check">
+                  <Icon name="check" />
+                </RSelect.ItemIndicator>
+              </RSelect.Item>
+            ))}
+          </RSelect.Viewport>
+        </RSelect.Content>
+      </RSelect.Portal>
+    </RSelect.Root>
+  );
+}
+
+/** A tooltip: what a button does, and its shortcut. The trigger must take a ref (a button, a link). */
+export function Tip({ label, shortcut, side = 'top', children }: { label: ReactNode; shortcut?: string; side?: Side; children: ReactElement }) {
+  return (
+    <RTooltip.Root>
+      <RTooltip.Trigger asChild>{children}</RTooltip.Trigger>
+      <RTooltip.Portal>
+        <RTooltip.Content className="tip" side={side} sideOffset={6} collisionPadding={8}>
+          {label}
+          {shortcut && <span className="kbd">{shortcut}</span>}
+        </RTooltip.Content>
+      </RTooltip.Portal>
+    </RTooltip.Root>
   );
 }
