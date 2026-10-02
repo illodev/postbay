@@ -245,10 +245,8 @@ function ScheduleFor({ versionId, brandId, zone, when, onClose }: { versionId: s
     );
   }
   if (!v.data) return null;
-  // `initialWhen` presets the day and hour the piece was dropped on (an optional prop of ScheduleDialog; passed through a
-  // spread so this compiles before and after it exists).
-  const preset = when ? ({ initialWhen: when } as object) : {};
-  return <ScheduleDialog version={v.data} brandId={brandId} zone={zone} onClose={onClose} {...preset} />;
+  // A drop presets the day and hour; a click leaves both to the person.
+  return <ScheduleDialog version={v.data} brandId={brandId} zone={zone} initialWhen={when} onClose={onClose} />;
 }
 
 // ───────────────────────────── the page ─────────────────────────────
@@ -358,7 +356,6 @@ export function CalendarPage() {
     const slot = allSlots.find((s) => s.day === day);
     const time = slot ? hourIn(slot.at, zone) : '10:00';
     setScheduling({ versionId, when: `${day}T${time}` });
-    toast(t('calendar.tray.dropped', { day: longDay(DateTime.fromISO(day, { zone })) }));
   };
 
   const step = (dir: -1 | 1) => setAnchor(anchor.plus(view === 'month' ? { months: dir } : view === 'week' ? { weeks: dir } : { days: 30 * dir }));
