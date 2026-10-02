@@ -24,8 +24,8 @@ export const scheduling = define({
     'sched.slot.accountNotApproved': 'No se ha aprobado para {account}, la cuenta del hueco',
     'sched.autoScheduled.detail': 'Hueco «{slot}» de {account} ({network}): {day} a las {time}',
     'sched.autoScheduled.detailNoLabel': '{account} ({network}): {day} a las {time}',
-    'notify.publication.auto_scheduled.subject': 'El estudio ha programado en un hueco libre algo que estaba aprobado',
-    'notify.publication.auto_scheduled.label': 'El estudio programa en un hueco libre algo aprobado',
+    'notify.publication.auto_scheduled.subject': 'Postbay ha programado en un hueco libre algo que estaba aprobado',
+    'notify.publication.auto_scheduled.label': 'Postbay programa en un hueco libre algo aprobado',
   },
   en: {
     'sched.agent.off': 'This brand does not let the agent schedule: an admin can allow it in Settings › Agent',
@@ -46,7 +46,7 @@ export const scheduling = define({
     'sched.slot.accountNotApproved': "It was not approved for {account}, the slot's account",
     'sched.autoScheduled.detail': 'Slot "{slot}" of {account} ({network}): {day} at {time}',
     'sched.autoScheduled.detailNoLabel': '{account} ({network}): {day} at {time}',
-    'notify.publication.auto_scheduled.subject': 'The studio scheduled something approved in a free slot',
-    'notify.publication.auto_scheduled.label': 'The studio schedules something approved in a free slot',
+    'notify.publication.auto_scheduled.subject': 'Postbay scheduled something approved in a free slot',
+    'notify.publication.auto_scheduled.label': 'Postbay schedules something approved in a free slot',
   },
 });

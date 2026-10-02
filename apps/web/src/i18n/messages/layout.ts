@@ -3,7 +3,7 @@ import { define } from './define';
 // The frame around every page: sidebar, brand switcher, notifications, account menu.
 export const layout = define({
   es: {
-    'layout.home': 'Inicio del estudio',
+    'layout.home': 'Inicio de Postbay',
     'layout.nav.home': 'Para ti',
     'layout.allPieces': 'Todas',
     'layout.collections': 'Colecciones',
@@ -34,7 +34,7 @@ export const layout = define({
     'layout.palette.switchBrand': 'Cambiar a {brand}',
     'layout.palette.language': 'Idioma: {language}',
 
-    'layout.appName': 'Estudio',
+    'layout.appName': 'Postbay',
     'layout.nav.main': 'Principal',
     'layout.nav.pieces': 'Piezas',
     'layout.nav.calendar': 'Calendario',
@@ -74,7 +74,7 @@ export const layout = define({
     'notif.kind.agent.failed': 'Ha fallado una ejecución del agente',
   },
   en: {
-    'layout.home': 'Studio home',
+    'layout.home': 'Postbay home',
     'layout.nav.home': 'For you',
     'layout.allPieces': 'All pieces',
     'layout.collections': 'Collections',
@@ -105,7 +105,7 @@ export const layout = define({
     'layout.palette.switchBrand': 'Switch to {brand}',
     'layout.palette.language': 'Language: {language}',
 
-    'layout.appName': 'Studio',
+    'layout.appName': 'Postbay',
     'layout.nav.main': 'Main',
     'layout.nav.pieces': 'Pieces',
     'layout.nav.calendar': 'Calendar',

@@ -159,7 +159,7 @@ describe('Slack and push', () => {
       `*Test brand* · Una publicación ha pasado a publicarse a mano\nTenía que salir el 2026-10-02T17:00:00.000Z, pero la marca estaba en pausa, así que la app no la ha publicado. Ahora le toca a una persona: publícala a mano o cancélala.\n<http://app.test/pieces/${pieceId}|${pieceTitle}>`,
     );
     expect((await env.callIn('en', env.users.admin, 'POST', brandUrl('/slack/test'))).body).toEqual({ ok: true });
-    expect(slack.posts[1]!.text).toBe('*Test brand* · Esto es un mensaje de prueba del estudio de contenidos. Si lo lees, Slack está bien configurado.');
+    expect(slack.posts[1]!.text).toBe('*Test brand* · Esto es un mensaje de prueba de Postbay. Si lo lees, Slack está bien configurado.');
   });
 
   it('pushes in the person\'s language', async () => {

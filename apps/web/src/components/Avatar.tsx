@@ -1,6 +1,6 @@
 import { t } from '../i18n';
 import { Icon } from './icons';
-import { Tip } from './ui';
+import { Tipped } from './ui';
 
 // Saturated enough to read on the dark surfaces, never one of the state colours' exact hues.
 const COLOURS = ['#e0559b', '#5b7cfa', '#2fb67a', '#e8913a', '#9b6cff', '#d9534f', '#2aa3c9', '#b58a2a'];
@@ -24,20 +24,20 @@ export function Avatar({ name, agent, size = 26, title }: { name?: string | null
   const style = { width: size, height: size, fontSize: Math.round(size * 0.4) };
   if (agent) {
     return (
-      <Tip label={title ?? t('common.agent')}>
+      <Tipped label={title ?? t('common.agent')}>
         <span className="avatar avatar-agent" style={style} role="img" aria-label={title ?? t('common.agent')}>
           <Icon name="bot" />
         </span>
-      </Tip>
+      </Tipped>
     );
   }
   const label = name?.trim() || '?';
   return (
-    <Tip label={title ?? label}>
+    <Tipped label={title ?? label}>
       <span className="avatar" style={{ ...style, background: COLOURS[hash(label.toLowerCase()) % COLOURS.length] }} role="img" aria-label={title ?? label}>
         {initials(label)}
       </span>
-    </Tip>
+    </Tipped>
   );
 }
 
