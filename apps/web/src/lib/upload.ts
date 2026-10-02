@@ -1,4 +1,5 @@
 import { api, ApiError } from '../api';
+import { t } from '../i18n';
 import { sha256File } from './hash';
 
 export type AssetKind = 'video' | 'image' | 'pdf' | 'subtitles' | 'cover';
@@ -28,8 +29,8 @@ function putWithProgress(url: string, headers: Record<string, string>, file: Fil
     xhr.open('PUT', url);
     for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
-    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Upload failed (${xhr.status}): ${xhr.responseText}`)));
-    xhr.onerror = () => reject(new Error('Upload failed: network error'));
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(t('piece.upload.err.storage', { status: xhr.status, detail: xhr.responseText }))));
+    xhr.onerror = () => reject(new Error(t('piece.upload.err.network')));
     xhr.send(file);
   });
 }
@@ -113,8 +114,8 @@ async function sendInPieces(uploadId: string, file: File, start: PieceProgress, 
   let moved = 0;
   const wait = async (what: string) => {
     failures++;
-    if (failures > 8) throw new Error(`${what}. Choose the same file again to carry on from where it stopped.`);
-    onProgress(offset / size, 'connection problem, trying again');
+    if (failures > 8) throw new Error(t('piece.upload.err.gaveUp', { what }));
+    onProgress(offset / size, t('piece.upload.err.retrying'));
     await sleep(Math.min(20_000, 500 * 2 ** (failures - 1)));
     await whenOnline();
     try {
@@ -135,17 +136,17 @@ async function sendInPieces(uploadId: string, file: File, start: PieceProgress, 
           onProgress(offset / size);
         } else if (sent.status === 409 && sent.body?.error?.code === 'offset_mismatch') {
           // The server knows where the file ends. Going there is how a piece sent twice, or a restarted server, sorts itself out.
-          if (++moved > 25) throw new Error('The server and the browser cannot agree where the file ends. Choose the file again.');
+          if (++moved > 25) throw new Error(t('piece.upload.err.offset'));
           offset = sent.body.error.details.offset;
         } else if (sent.status >= 500 || sent.status === 429) {
           throw new Transient(`the server answered ${sent.status}`);
         } else {
           const e = sent.body?.error;
-          throw new ApiError(sent.status, e?.code ?? 'error', e?.message ?? `The upload was refused (${sent.status})`, e?.details);
+          throw new ApiError(sent.status, e?.code ?? 'error', e?.message ?? t('piece.upload.err.refused', { status: sent.status }), e?.details);
         }
       } catch (err) {
         if (!isTransient(err)) throw err;
-        await wait('The connection keeps failing');
+        await wait(t('piece.upload.err.keepsFailing'));
       }
     }
     onProgress(1);
@@ -160,13 +161,13 @@ async function sendInPieces(uploadId: string, file: File, start: PieceProgress, 
           break;
         }
         if (!isTransient(err)) throw err;
-        if (attempt >= 6) throw new Error('The server did not confirm the file. Choose the same file again to finish it.');
+        if (attempt >= 6) throw new Error(t('piece.upload.err.unconfirmed'));
         await sleep(Math.min(20_000, 1000 * 2 ** (attempt - 1)));
         await whenOnline();
       }
     }
   }
-  throw new Error('The file could not be completed. Choose it again to carry on.');
+  throw new Error(t('piece.upload.err.incomplete'));
 }
 
 /**
