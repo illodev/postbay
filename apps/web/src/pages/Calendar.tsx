@@ -1,12 +1,12 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DateTime, Info } from 'luxon';
-import { useEffect, useMemo, useState, type DragEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type Account, type CalendarData, type PieceDetail, type PieceSummary, type VersionDetail } from '../api';
 import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
 import { PublicationBadges, ScheduleDialog } from '../components/publications';
-import { Chip, Dialog, ErrorBox, errorMessage, Field, NetMark, Segmented, Select, Skeleton, Tip, useToast } from '../components/ui';
+import { Chip, Dialog, ErrorBox, errorMessage, Field, NetMark, Popover, Segmented, Select, Skeleton, Tip, useToast } from '../components/ui';
 import { t, tMaybe, type Key } from '../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -18,8 +18,43 @@ type Slot = CalendarData['slots'][number];
 type Entry = { kind: 'pub'; at: string; pub: Pub } | { kind: 'slot'; at: string; slot: Slot };
 
 const VIEWS: View[] = ['month', 'week', 'list'];
-/** How many entries a month cell shows before it offers "+N more". */
+/** How many entries a month cell shows before it has measured itself. */
 const CELL_MAX = 3;
+/** The heights a month cell is made of (ops.css): padding, the day's number, a publication, a slot, the "+N" button, the gap. */
+const CELL = { pad: 12, head: 22, pub: 36, slot: 22, more: 20, gap: 4 };
+
+/**
+ * How many of a day's entries fit in a month cell of this height, in the order of the clock; when they do not all fit,
+ * room is kept for the "+N more" button.
+ */
+function fitting(entries: { kind: 'pub' | 'slot' }[], height: number | null): number {
+  if (height === null) return entries.length > CELL_MAX ? CELL_MAX - 1 : entries.length;
+  const room = height - CELL.pad - CELL.head - CELL.gap;
+  const cost = (n: number) => entries.slice(0, n).reduce((h, e, i) => h + (i ? CELL.gap : 0) + (e.kind === 'pub' ? CELL.pub : CELL.slot), 0);
+  if (cost(entries.length) <= room) return entries.length;
+  let n = entries.length - 1;
+  while (n > 0 && cost(n) + CELL.gap + CELL.more > room) n--;
+  return n;
+}
+
+/** The height of a month cell, measured whenever the grid changes size: the cells share what is left of the page. */
+function useCellHeight(enabled: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const grid = ref.current;
+    if (!enabled || !grid) return;
+    const measure = () => {
+      const cell = grid.querySelector<HTMLElement>('.oc-week:not(.oc-dows) .oc-day');
+      if (cell) setHeight(cell.clientHeight);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(grid);
+    return () => ro.disconnect();
+  }, [enabled]);
+  return { ref, height };
+}
 /** What a drag carries: a publication to move, or an approved version to schedule. */
 const DRAG_PUB = 'application/x-studio-publication';
 const DRAG_VERSION = 'application/x-studio-version';
@@ -186,8 +221,10 @@ function Tray({ items, loading, canDrag, touch, onSchedule }: {
 }) {
   return (
     <aside className="oc-tray" aria-labelledby="oc-tray-title">
-      <header className="oc-tray-head" title={canDrag && !touch ? t('calendar.tray.hint') : t('calendar.tray.hintTap')}>
-        <h2 id="oc-tray-title">{t('calendar.tray.title')}</h2>
+      <header className="oc-tray-head">
+        <Tip label={canDrag && !touch ? t('calendar.tray.hint') : t('calendar.tray.hintTap')}>
+          <h2 id="oc-tray-title">{t('calendar.tray.title')}</h2>
+        </Tip>
         {!loading && items.length > 0 && <span className="ops-count">{items.length}</span>}
       </header>
       {loading && (
@@ -202,30 +239,31 @@ function Tray({ items, loading, canDrag, touch, onSchedule }: {
         <ul className="oc-tray-list">
           {items.map((r) => (
             <li key={r.versionId}>
-              <button
-                type="button"
-                className={`oc-ready ${canDrag ? 'movable' : ''}`}
-                draggable={canDrag && !touch}
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(DRAG_VERSION, r.versionId);
-                  e.dataTransfer.setData('text/plain', r.title);
-                  e.dataTransfer.effectAllowed = 'copy';
-                }}
-                onClick={() => onSchedule(r)}
-                aria-label={t('calendar.tray.scheduleLabel', { title: r.title })}
-                title={canDrag && !touch ? t('calendar.tray.hint') : t('calendar.tray.hintTap')}
-              >
-                <Thumb versionId={r.versionId} pieceId={r.pieceId} className="oc-ready-thumb" />
-                <span className="oc-ready-text">
-                  <span className="oc-ready-title">{r.title}</span>
-                  <span className="oc-ready-meta">
-                    <span>V{r.number}</span>
-                    <span aria-hidden="true">·</span>
-                    <span className="oc-ready-formats">{r.formats.length > 2 ? `${r.formats.slice(0, 2).join(' · ')} +${r.formats.length - 2}` : r.formats.join(' · ')}</span>
+              <Tip label={r.title} side="left">
+                <button
+                  type="button"
+                  className={`oc-ready ${canDrag ? 'movable' : ''}`}
+                  draggable={canDrag && !touch}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(DRAG_VERSION, r.versionId);
+                    e.dataTransfer.setData('text/plain', r.title);
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onClick={() => onSchedule(r)}
+                  aria-label={t('calendar.tray.scheduleLabel', { title: r.title })}
+                >
+                  <Thumb versionId={r.versionId} pieceId={r.pieceId} className="oc-ready-thumb" />
+                  <span className="oc-ready-text">
+                    <span className="oc-ready-title">{r.title}</span>
+                    <span className="oc-ready-meta">
+                      <span>V{r.number}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="oc-ready-formats">{r.formats.length > 2 ? `${r.formats.slice(0, 2).join(' · ')} +${r.formats.length - 2}` : r.formats.join(' · ')}</span>
+                    </span>
                   </span>
-                </span>
-                {canDrag && <span className="oc-ready-go" aria-hidden="true"><Icon name="calendar" /></span>}
-              </button>
+                  {canDrag && <span className="oc-ready-go" aria-hidden="true"><Icon name="calendar" /></span>}
+                </button>
+              </Tip>
             </li>
           ))}
         </ul>
@@ -367,48 +405,47 @@ export function CalendarPage() {
   const pubCount = inRange.reduce((n, d) => n + (byDay.get(d)?.filter((e) => e.kind === 'pub').length ?? 0), 0);
   const slotCount = inRange.reduce((n, d) => n + (byDay.get(d)?.filter((e) => e.kind === 'slot').length ?? 0), 0);
   const showTray = can('schedule') && trayOpen;
+  const { ref: gridRef, height: cellHeight } = useCellHeight(!!data && !agenda && view === 'month');
 
   // ── one publication or slot inside a grid cell ──
   const item = (e: Entry, tall: boolean) => {
     if (e.kind === 'slot') {
       const s = e.slot;
       return (
-        <div
-          key={`s-${s.id}-${s.at}`}
-          className="oc-item oc-slot"
-          title={t('calendar.slotTitle', { label: s.label || t('calendar.slot'), account: `${NETWORK_LABEL[s.network] ?? s.network} · ${s.account_name}` })}
-        >
-          <span className="oc-time">{hourIn(s.at, zone)}</span>
-          <NetMark network={s.network} size="xs" />
-          <span className="oc-name">{s.label || t('calendar.slot')}</span>
-        </div>
+        <Tip key={`s-${s.id}-${s.at}`} label={t('calendar.slotTitle', { label: s.label || t('calendar.slot'), account: `${NETWORK_LABEL[s.network] ?? s.network} · ${s.account_name}` })}>
+          <div className="oc-item oc-slot">
+            <span className="oc-time">{hourIn(s.at, zone)}</span>
+            <NetMark network={s.network} size="xs" />
+            <span className="oc-name">{s.label || t('calendar.slot')}</span>
+          </div>
+        </Tip>
       );
     }
     const p = e.pub;
     const draggable = canMove && (p.status === 'scheduled' || p.status === 'awaiting_reapproval');
     return (
-      <Link
-        key={p.id}
-        to={`/pieces/${p.piece_id}`}
-        className={`oc-item oc-pub ${stateClass(p)} ${draggable ? 'movable' : ''} ${tall ? 'tall' : ''}`}
-        draggable={draggable}
-        onDragStart={(ev) => {
-          ev.dataTransfer.setData(DRAG_PUB, p.id);
-          ev.dataTransfer.setData('text/plain', p.piece_title);
-          ev.dataTransfer.effectAllowed = 'move';
-        }}
-        title={pubTitle(p)}
-      >
-        <Thumb versionId={p.version_id} pieceId={p.piece_id} className="oc-thumb" />
-        <span className="oc-item-text">
-          <span className="oc-item-top">
-            <span className="oc-time">{hourIn(p.scheduled_at, zone)}</span>
-            <NetMark network={p.network} size="xs" />
+      <Tip key={p.id} label={pubTitle(p)}>
+        <Link
+          to={`/pieces/${p.piece_id}`}
+          className={`oc-item oc-pub ${stateClass(p)} ${draggable ? 'movable' : ''} ${tall ? 'tall' : ''}`}
+          draggable={draggable}
+          onDragStart={(ev) => {
+            ev.dataTransfer.setData(DRAG_PUB, p.id);
+            ev.dataTransfer.setData('text/plain', p.piece_title);
+            ev.dataTransfer.effectAllowed = 'move';
+          }}
+        >
+          <Thumb versionId={p.version_id} pieceId={p.piece_id} className="oc-thumb" />
+          <span className="oc-item-text">
+            <span className="oc-item-top">
+              <span className="oc-time">{hourIn(p.scheduled_at, zone)}</span>
+              <NetMark network={p.network} size="xs" />
+            </span>
+            <span className="oc-name">{p.piece_title}</span>
+            {tall && <span className="oc-sub">{STATE_LABEL[p.status] ?? p.status} · {p.manual ? t('calendar.byHand') : t('calendar.automatic')}</span>}
           </span>
-          <span className="oc-name">{p.piece_title}</span>
-          {tall && <span className="oc-sub">{STATE_LABEL[p.status] ?? p.status} · {p.manual ? t('calendar.byHand') : t('calendar.automatic')}</span>}
-        </span>
-      </Link>
+        </Link>
+      </Tip>
     );
   };
 
@@ -437,9 +474,11 @@ export function CalendarPage() {
       : {};
 
   const blockedNote = (day: string) => (
-    <span className="oc-blocked" title={blocked.get(day) || t('calendar.blocked')}>
+    <span className="oc-blocked">
       <Icon name="ban" />
-      <span className="oc-blocked-text">{blocked.get(day) || t('calendar.blocked')}</span>
+      <Tip label={blocked.get(day) || t('calendar.blocked')}>
+        <span className="oc-blocked-text">{blocked.get(day) || t('calendar.blocked')}</span>
+      </Tip>
       {can('schedule') && (
         <Tip label={t('calendar.unblock', { day: DateTime.fromISO(day).toLocaleString({ day: 'numeric', month: 'long' }) })}>
           <button className="oc-unblock" aria-label={t('calendar.unblock', { day: DateTime.fromISO(day).toLocaleString({ day: 'numeric', month: 'long' }) })} onClick={() => unblock.mutate(day)}>
@@ -456,7 +495,7 @@ export function CalendarPage() {
     const entries = byDay.get(day) ?? [];
     const isBlocked = blocked.has(day);
     const week = view === 'week';
-    const shown = week ? entries : entries.slice(0, entries.length > CELL_MAX ? CELL_MAX - 1 : CELL_MAX);
+    const shown = week ? entries : entries.slice(0, fitting(entries, cellHeight));
     const hidden = entries.length - shown.length;
     const label = longDay(d);
     return (
@@ -476,9 +515,16 @@ export function CalendarPage() {
         <div className="oc-items">
           {shown.map((e) => item(e, week))}
           {hidden > 0 && (
-            <button className="oc-more" aria-label={t('calendar.moreLabel', { count: hidden })} onClick={() => go({ view: 'week', anchor: d })}>
-              {t('calendar.more', { count: hidden })}
-            </button>
+            // The whole day, in a panel over the calendar: what did not fit is one click away.
+            <Popover
+              className="oc-day-pop"
+              label={cap(label)}
+              width={264}
+              trigger={<button className="oc-more" aria-label={t('calendar.moreLabel', { count: hidden })}>{t('calendar.more', { count: hidden })}</button>}
+            >
+              <div className="oc-day-pop-head">{cap(label)}</div>
+              <div className="oc-items">{entries.map((e) => item(e, false))}</div>
+            </Popover>
           )}
         </div>
         {dropDay === day && <span className="oc-drop-hint" aria-hidden="true">{t('calendar.dropHere')}</span>}
@@ -558,9 +604,10 @@ export function CalendarPage() {
   const viewSwitch = <Segmented label={t('calendar.viewLabel')} value={view} onChange={setView} options={VIEWS.map((v) => ({ value: v, label: t(`calendar.view.${v}` as Key) }))} />;
 
   let body: ReactNode = null;
+  const weeks = Math.ceil(days.length / 7);
   if (isLoading) {
     body = (
-      <div className="oc-grid month" aria-busy="true">
+      <div className="oc-grid month" aria-busy="true" style={{ ['--weeks' as string]: 5 }}>
         {Array.from({ length: 5 }, (_, w) => (
           <div key={w} className="oc-week">
             {Array.from({ length: 7 }, (_, i) => <div key={i} className="oc-day"><Skeleton width={18} height={12} /><Skeleton height={30} style={{ marginTop: 6, opacity: (w + i) % 3 ? 0 : 1 }} /></div>)}
@@ -571,13 +618,19 @@ export function CalendarPage() {
   } else if (data && !agenda) {
     const todayDow = days.some((d) => d.toISODate() === today) ? now.weekday : 0;
     body = (
-      <div className={`oc-grid ${view === 'week' ? 'week' : 'month'} ${paused ? 'paused' : ''}`} role="grid" aria-label={t('calendar.gridLabel', { period: title })}>
+      <div
+        ref={gridRef}
+        className={`oc-grid ${view === 'week' ? 'week' : 'month'} ${paused ? 'paused' : ''}`}
+        style={{ ['--weeks' as string]: weeks }}
+        role="grid"
+        aria-label={t('calendar.gridLabel', { period: title })}
+      >
         {view === 'month' && (
           <div className="oc-week oc-dows" role="row">
             {Info.weekdays('short').map((d, i) => <div key={d} className={`oc-dow-head ${todayDow === i + 1 ? 'today' : ''}`} role="columnheader">{d}</div>)}
           </div>
         )}
-        {Array.from({ length: Math.ceil(days.length / 7) }, (_, w) => (
+        {Array.from({ length: weeks }, (_, w) => (
           <div key={w} className="oc-week" role="row">{days.slice(w * 7, w * 7 + 7).map(cell)}</div>
         ))}
       </div>
@@ -587,7 +640,7 @@ export function CalendarPage() {
   }
 
   return (
-    <div className="ops">
+    <div className="ops oc-page">
       <PageBar
         crumbs={[{ label: t('calendar.title') }]}
         actions={
@@ -609,14 +662,14 @@ export function CalendarPage() {
           <Tip label={t('calendar.next')}><button className="btn btn-ghost ops-iconbtn" onClick={() => step(1)} aria-label={t('calendar.next')}><Icon name="chevronRight" /></button></Tip>
           <button className="btn" onClick={() => setAnchor(DateTime.now().setZone(zone))}>{t('calendar.today')}</button>
           <h2 className="oc-period" aria-live="polite">{title}</h2>
-          {paused && <span title={t('calendar.pausedHint')}><Chip state="on_hold" label={t('calendar.paused')} /></span>}
+          <Tip label={t('calendar.zoneHint', { brand: brand.name })}><span className="oc-zone">{zone}</span></Tip>
+          {paused && <Tip label={t('calendar.pausedHint')}><span><Chip state="on_hold" label={t('calendar.paused')} /></span></Tip>}
         </div>
         <div className="oc-tools">
           {data && (
             <span className="oc-meta">
               {t('calendar.pubs', { count: pubCount })}
               {slotCount > 0 && <> · {t('calendar.freeSlots', { count: slotCount })}</>}
-              <span title={t('calendar.zoneHint', { brand: brand.name })}> · {zone}</span>
             </span>
           )}
           {networks.length > 1 && (
@@ -627,6 +680,26 @@ export function CalendarPage() {
               onChange={setNetwork}
               options={[{ value: 'all', label: t('calendar.allNetworks') }, ...networks.map((n) => ({ value: n, label: NETWORK_LABEL[n] ?? n, icon: <NetMark network={n} size="xs" /> }))]}
             />
+          )}
+          {data && (pubCount > 0 || slotCount > 0) && (
+            // What the colours mean, and that things can be dragged: asked for, not taking a line of the page.
+            <Popover
+              className="oc-legend-pop"
+              label={t('calendar.legend')}
+              align="end"
+              tip={t('calendar.legend')}
+              trigger={<button className="btn btn-ghost ops-iconbtn" aria-label={t('calendar.legend')}><Icon name="info" /></button>}
+            >
+              <div className="oc-legend">
+                <span className="oc-key st-scheduled">{STATE_LABEL.scheduled}</span>
+                <span className="oc-key st-published">{STATE_LABEL.published}</span>
+                <span className="oc-key st-on_hold">{STATE_LABEL.on_hold}</span>
+                <span className="oc-key st-failed">{STATE_LABEL.failed}</span>
+                <span className="oc-key oc-key-slot">{t('calendar.legend.slot')}</span>
+                <span className="oc-key oc-key-blocked">{t('calendar.legend.blocked')}</span>
+              </div>
+              {canMove && !touch && <p className="oc-hint">{t('calendar.dragHint')}</p>}
+            </Popover>
           )}
           {narrow && viewSwitch}
           {can('schedule') && !narrow && (
@@ -645,20 +718,7 @@ export function CalendarPage() {
 
       <div className="oc-body">
         <div className={`oc-layout ${showTray || narrow ? 'with-tray' : ''}`}>
-          <div className="oc-main">
-            {body}
-            {data && (pubCount > 0 || slotCount > 0) && (
-              <div className="oc-legend" aria-label={t('calendar.legend')}>
-                <span className="oc-key st-scheduled">{STATE_LABEL.scheduled}</span>
-                <span className="oc-key st-published">{STATE_LABEL.published}</span>
-                <span className="oc-key st-on_hold">{STATE_LABEL.on_hold}</span>
-                <span className="oc-key st-failed">{STATE_LABEL.failed}</span>
-                <span className="oc-key oc-key-slot">{t('calendar.legend.slot')}</span>
-                <span className="oc-key oc-key-blocked">{t('calendar.legend.blocked')}</span>
-                {canMove && !agenda && <span className="oc-hint">{t('calendar.dragHint')}</span>}
-              </div>
-            )}
-          </div>
+          <div className="oc-main">{body}</div>
           {can('schedule') && (showTray || narrow) && (
             <Tray
               items={ready.items}
