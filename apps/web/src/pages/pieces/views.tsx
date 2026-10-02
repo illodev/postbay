@@ -3,23 +3,20 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { PieceSummary } from '../../api';
 import { Avatar } from '../../components/Avatar';
 import { Icon, type IconName } from '../../components/icons';
-import { NetMark } from '../../components/NetworkOptions';
-import { Chip } from '../../components/ui';
+import { Chip, NetMark, Skeleton } from '../../components/ui';
 import { t, type Key } from '../../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../../lib/format';
 import { Dropdown } from './Dropdown';
 import { ago, BOARD, FIRST_DIR, mediaLabel, stageOf, when, type Look, type Sort, type SortKey, type Stage } from './model';
 
 const netName = (n: string) => NETWORK_LABEL[n] ?? n;
-/** For the avatar's initials: "Lucía (Marketing)" → LM rather than L(. */
-const forAvatar = (name: string | null) => name?.replace(/[()[\]{}«»"“”]/g, ' ').replace(/\s+/g, ' ').trim() || null;
 
 /** The piece's preview, or a calm placeholder when there is nothing to draw (no version yet, or the preview failed). */
 export function Thumb({ piece, width = 480 }: { piece: PieceSummary; width?: 240 | 480 | 960 }) {
   const [failed, setFailed] = useState(false);
   const v = piece.latest_version;
   if (!v || failed) {
-    const icon: IconName = piece.kind === 'pdf' ? 'square' : piece.kind === 'video' ? 'play' : 'pieces';
+    const icon: IconName = piece.kind === 'video' ? 'play' : piece.kind === 'pdf' ? 'square' : 'image';
     return (
       <span className="pz-ph">
         <Icon name={icon} />
@@ -42,7 +39,7 @@ function Byline({ p }: { p: PieceSummary }) {
         <span className="tag-agent pz-agent"><Icon name="bot" />{t('common.agent')}</span>
       ) : (
         <>
-          <Avatar name={forAvatar(v.author)} size={16} title={v.author ?? undefined} />
+          <Avatar name={v.author} size={16} />
           <span className="pz-by-name">{v.author ?? '?'}</span>
         </>
       )}
@@ -62,7 +59,7 @@ function NextLine({ p, zone }: { p: PieceSummary; zone: string }) {
     >
       <Icon name={p.next_publication ? 'calendar' : 'send'} />
       <span className="pz-next-when">{p.next_publication ? when(p.next_publication.scheduled_at, zone) : t('pieces.card.published')}</span>
-      <span className="nets pz-nets" aria-label={nets}>{p.networks.slice(0, 4).map((n) => <NetMark key={n} network={n} />)}</span>
+      <span className="nets pz-nets" aria-label={nets}>{p.networks.slice(0, 4).map((n) => <NetMark key={n} network={n} size="sm" />)}</span>
     </div>
   );
 }
@@ -114,7 +111,7 @@ function CardMenu({ p, actions, align = 'end' }: { p: PieceSummary; actions: Car
                 title={locked ? t('pieces.menu.discardLocked') : undefined}
                 onClick={() => { close(); actions.onDiscard([p.id]); }}
               >
-                <Icon name="x" />{t('pieces.menu.discard')}
+                <Icon name="trash" />{t('pieces.menu.discard')}
               </button>
               {locked && <p className="pz-menu-note">{t('pieces.menu.discardLocked')}</p>}
             </>
@@ -226,12 +223,12 @@ export function GridSkeleton({ look }: { look: Look }) {
     <div className="pz-grid" data-size={look.size} style={{ ['--pz-aspect' as string]: look.aspect.replace(':', ' / ') }} aria-hidden="true">
       {Array.from({ length: 10 }, (_, i) => (
         <div key={i} className="pz-card pz-skel">
-          <div className="pz-thumb pz-shimmer" />
+          <div className="pz-thumb"><Skeleton width="100%" height="100%" radius={0} /></div>
           {look.info && (
             <div className="pz-meta">
-              <span className="pz-bone pz-shimmer" style={{ width: '78%' }} />
-              <span className="pz-bone pz-shimmer" style={{ width: '52%' }} />
-              <span className="pz-bone pz-shimmer" style={{ width: '34%', height: 18, borderRadius: 99 }} />
+              <Skeleton width={`${64 + ((i * 13) % 28)}%`} height={12} />
+              <Skeleton width="48%" height={10} />
+              <Skeleton width={82} height={18} radius={99} />
             </div>
           )}
         </div>
@@ -270,11 +267,12 @@ function BoardCard({ p, zone, onDragStart, onDragEnd }: { p: PieceSummary; zone:
           {p.open_comments > 0 && <span className="pz-bcount" title={t('pieces.card.comments', { count: p.open_comments })}><Icon name="bubble" />{p.open_comments}</span>}
           {p.latest_by_agent && <span className="pz-agent-dot" title={t('pieces.card.byAgent')}>{t('pieces.card.agentShort')}</span>}
         </div>
-        <div className="pz-bmeta pz-bdate">
+        <div
+          className="pz-bmeta pz-bdate"
+          title={stage === 'scheduled' && p.next_publication ? t('pieces.card.nextTitle', { when: date, network: netName(p.next_publication.network) }) : undefined}
+        >
+          {stage === 'scheduled' && <Icon name="calendar" />}
           <span>{date}</span>
-          {stage === 'scheduled' && p.next_publication ? (
-            <span className="nets pz-nets"><NetMark network={p.next_publication.network} /></span>
-          ) : p.networks.length > 0 && <span className="nets pz-nets">{p.networks.slice(0, 2).map((n) => <NetMark key={n} network={n} />)}</span>}
         </div>
       </div>
     </article>
@@ -346,9 +344,14 @@ export function BoardSkeleton() {
     <div className="pz-board" aria-hidden="true">
       {BOARD.map((s, i) => (
         <section key={s} className="pz-col">
-          <header className="pz-colh"><span className="pz-bone pz-shimmer" style={{ width: 90 }} /></header>
+          <header className="pz-colh"><Skeleton width={96} height={12} /></header>
           <div className="pz-colbody">
-            {Array.from({ length: (i % 3) + 1 }, (_, j) => <div key={j} className="pz-bcard pz-skel"><div className="pz-bthumb pz-shimmer" /><div className="pz-bbody"><span className="pz-bone pz-shimmer" style={{ width: '80%' }} /><span className="pz-bone pz-shimmer" style={{ width: '40%' }} /></div></div>)}
+            {Array.from({ length: (i % 3) + 1 }, (_, j) => (
+              <div key={j} className="pz-bcard pz-skel">
+                <div className="pz-bthumb"><Skeleton width="100%" height="100%" radius={0} /></div>
+                <div className="pz-bbody"><Skeleton width="86%" height={10} /><Skeleton width="44%" height={10} /></div>
+              </div>
+            ))}
           </div>
         </section>
       ))}
@@ -454,12 +457,12 @@ export function ListView({ pieces, sort, onSort, selected, onToggle, onToggleAll
                 <td className="pz-c-state"><Chip state={stageOf(p)} /></td>
                 <td className="pz-c-ver">{v ? <span className="pz-vtag">V{v.number}</span> : <span className="pz-none">—</span>}</td>
                 <td className="pz-c-author">
-                  {!v ? <span className="pz-none">—</span> : v.by_agent ? <span className="tag-agent pz-agent"><Icon name="bot" />{t('common.agent')}</span> : <span className="pz-by"><Avatar name={forAvatar(v.author)} size={18} title={v.author ?? undefined} /><span className="pz-by-name">{v.author}</span></span>}
+                  {!v ? <span className="pz-none">—</span> : v.by_agent ? <span className="tag-agent pz-agent"><Icon name="bot" />{t('common.agent')}</span> : <span className="pz-by"><Avatar name={v.author} size={18} /><span className="pz-by-name">{v.author}</span></span>}
                 </td>
                 <td className="pz-c-num">{p.open_comments ? <span className="pz-lcount"><Icon name="bubble" />{p.open_comments}</span> : <span className="pz-none">—</span>}</td>
                 <td className="pz-c-next">
                   {p.next_publication ? (
-                    <span className="pz-lnext"><span className="nets pz-nets"><NetMark network={p.next_publication.network} /></span>{when(p.next_publication.scheduled_at, zone)}</span>
+                    <span className="pz-lnext"><NetMark network={p.next_publication.network} size="sm" labelled />{when(p.next_publication.scheduled_at, zone)}</span>
                   ) : (
                     <span className="pz-none">—</span>
                   )}
@@ -482,8 +485,9 @@ export function ListSkeleton() {
           {Array.from({ length: 8 }, (_, i) => (
             <tr key={i}>
               <td className="pz-c-check" />
-              <td className="pz-c-thumb"><span className="pz-lthumb pz-shimmer" /></td>
-              <td colSpan={8}><span className="pz-bone pz-shimmer" style={{ width: `${40 + ((i * 17) % 40)}%` }} /></td>
+              <td className="pz-c-thumb"><Skeleton width={32} height={40} radius={5} /></td>
+              <td className="pz-c-title"><Skeleton width={`${50 + ((i * 17) % 40)}%`} height={11} /><Skeleton width="30%" height={9} style={{ marginTop: 6 }} /></td>
+              <td colSpan={7}><Skeleton width={`${30 + ((i * 11) % 30)}%`} height={11} /></td>
             </tr>
           ))}
         </tbody>

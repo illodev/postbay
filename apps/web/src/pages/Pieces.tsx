@@ -4,10 +4,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type PieceDetail, type PieceSummary, type VersionDetail } from '../api';
 import type { Campaign } from '../components/Layout';
 import { Icon, type IconName } from '../components/icons';
-import { NetMark } from '../components/NetworkOptions';
 import { PageBar } from '../components/PageBar';
 import { ScheduleDialog } from '../components/publications';
-import { Dialog, ErrorBox, Field, errorMessage, useToast } from '../components/ui';
+import { ConfirmDialog, Dialog, ErrorBox, Field, NetMark, Skeleton, errorMessage, useToast } from '../components/ui';
 import { t, type Key } from '../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -34,6 +33,12 @@ function NewPiece({ campaigns, campaignId, onClose }: { campaigns: Campaign[]; c
   const navigate = useNavigate();
   const toast = useToast();
   const [form, setForm] = useState({ title: '', kind: 'video', brief: '', targetDate: '', aiGenerated: false, campaignId: campaignId ?? '', source: '' });
+  const titleRef = useRef<HTMLInputElement>(null);
+  // The dialog gives the focus to its first control (the close button) as it opens: the title is where typing starts.
+  useEffect(() => {
+    const id = setTimeout(() => titleRef.current?.focus(), 0);
+    return () => clearTimeout(id);
+  }, []);
   const create = useMutation({
     mutationFn: () =>
       api.post<{ id: string }>(`/api/brands/${brand.id}/pieces`, {
@@ -59,7 +64,7 @@ function NewPiece({ campaigns, campaignId, onClose }: { campaigns: Campaign[]; c
     <Dialog title={t('pieces.newTitle')} onClose={onClose}>
       <form className="stack pz-form" onSubmit={submit}>
         <Field label={t('pieces.field.title')}>
-          <input type="text" required autoFocus maxLength={200} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+          <input ref={titleRef} type="text" required maxLength={200} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
         </Field>
         <div className="pz-form-row">
           <Field label={t('pieces.field.kind')}>
@@ -81,23 +86,23 @@ function NewPiece({ campaigns, campaignId, onClose }: { campaigns: Campaign[]; c
           <Field label={t('pieces.field.target')}>
             <input type="date" value={form.targetDate} onChange={(e) => setForm({ ...form, targetDate: e.target.value })} />
           </Field>
-          <Field label={t('pieces.field.source')}>
-            <input
-              type="text"
-              className="pz-mono-input"
-              maxLength={500}
-              spellCheck={false}
-              placeholder={t('pieces.field.sourcePlaceholder')}
-              value={form.source}
-              onChange={(e) => setForm({ ...form, source: e.target.value.replace(/[\r\n\t]/g, '') })}
-            />
-          </Field>
+          <label className="check">
+            <input type="checkbox" checked={form.aiGenerated} onChange={(e) => setForm({ ...form, aiGenerated: e.target.checked })} />
+            <span>{t('pieces.field.ai')}<br /><span className="muted small">{t('pieces.field.aiHint')}</span></span>
+          </label>
         </div>
-        <p className="pz-hint">{t('pieces.field.sourceHint')}</p>
-        <label className="check">
-          <input type="checkbox" checked={form.aiGenerated} onChange={(e) => setForm({ ...form, aiGenerated: e.target.checked })} />
-          <span>{t('pieces.field.ai')}<br /><span className="muted small">{t('pieces.field.aiHint')}</span></span>
-        </label>
+        <Field label={t('pieces.field.source')} hint={t('pieces.field.sourceHint')}>
+          <input
+            type="text"
+            className="pz-mono-input"
+            maxLength={500}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder={t('pieces.field.sourcePlaceholder')}
+            value={form.source}
+            onChange={(e) => setForm({ ...form, source: e.target.value.replace(/[\r\n\t]/g, '') })}
+          />
+        </Field>
         {create.error && <ErrorBox error={create.error} />}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
@@ -174,26 +179,33 @@ function DiscardDialog({ pieces, canSchedule, onClose, onDone }: { pieces: Piece
       onDone();
       onClose();
     },
+    onError: (e) => toast(errorMessage(e), 'error'),
     onSettled: () => qc.invalidateQueries({ queryKey: ['pieces'] }),
   });
+  // None of them is this person's to discard: say so, without a dialog that can only be cancelled.
+  useEffect(() => {
+    if (go.length) return;
+    toast(t('pieces.discard.noneYours', { count: locked.length }), 'error');
+    onClose();
+  }, [go.length, locked.length, toast, onClose]);
+  if (!go.length) return null;
   return (
-    <Dialog title={t('pieces.discard.title', { count: go.length || pieces.length })} onClose={onClose}>
-      <div className="stack">
-        {go.length > 0 && <p>{go.length === 1 ? t('pieces.discard.bodyOne', { title: go[0]!.title }) : t('pieces.discard.bodyMany', { count: go.length })}</p>}
-        {scheduled > 0 && <div className="notice notice-warn">{t('pieces.discard.cancels', { count: scheduled })}</div>}
-        {locked.length > 0 && <div className="notice notice-info">{t('pieces.discard.locked', { count: locked.length })}</div>}
-        {go.length > 0 && <p className="muted small">{t('pieces.discard.final')}</p>}
-        {discard.error && <ErrorBox error={discard.error} />}
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn" onClick={onClose}>{go.length ? t('common.cancel') : t('common.close')}</button>
-          {go.length > 0 && (
-            <button type="button" className="btn btn-danger" disabled={discard.isPending} onClick={() => discard.mutate()}>
-              {t('pieces.discard.submit', { count: go.length })}
-            </button>
-          )}
-        </div>
-      </div>
-    </Dialog>
+    <ConfirmDialog
+      danger
+      busy={discard.isPending}
+      title={t('pieces.discard.title', { count: go.length })}
+      confirmLabel={t('pieces.discard.submit', { count: go.length })}
+      text={
+        <>
+          <p>{go.length === 1 ? t('pieces.discard.bodyOne', { title: go[0]!.title }) : t('pieces.discard.bodyMany', { count: go.length })}</p>
+          {scheduled > 0 && <p className="pz-confirm-warn">{t('pieces.discard.cancels', { count: scheduled })}</p>}
+          {locked.length > 0 && <p>{t('pieces.discard.locked', { count: locked.length })}</p>}
+          <p>{t('pieces.discard.final')}</p>
+        </>
+      }
+      onConfirm={() => discard.mutate()}
+      onCancel={onClose}
+    />
   );
 }
 
@@ -264,7 +276,7 @@ function SelectionBar({ pieces, actions, onClear, onDownload, downloading }: {
       {actions.canEdit && live.length > 0 && (
         <>
           <button type="button" className="pz-sbtn" onClick={() => actions.onMove(live.map((p) => p.id))}><Icon name="folder" /><span>{t('pieces.sel.move')}</span></button>
-          <button type="button" className="pz-sbtn pz-sbtn-danger" onClick={() => actions.onDiscard(live.map((p) => p.id))}><Icon name="x" /><span>{t('pieces.sel.discard')}</span></button>
+          <button type="button" className="pz-sbtn pz-sbtn-danger" onClick={() => actions.onDiscard(live.map((p) => p.id))}><Icon name="trash" /><span>{t('pieces.sel.discard')}</span></button>
         </>
       )}
       {single && actions.canSchedule && single.review_state === 'approved' && (
@@ -541,7 +553,7 @@ export function PiecesPage() {
                 <MenuOption checked={!net} onClick={() => { close(); setNet(''); }}><Icon name="globe" /><span className="grow">{t('pieces.filter.allNetworksLong')}</span></MenuOption>
                 {networks.map((n) => (
                   <MenuOption key={n} checked={net === n} onClick={() => { close(); setNet(n); }}>
-                    <NetMark network={n} /><span className="grow">{NETWORK_LABEL[n] ?? n}</span>
+                    <NetMark network={n} size="sm" /><span className="grow">{NETWORK_LABEL[n] ?? n}</span>
                     <span className="pz-mcount">{scoped.filter((p) => p.networks.includes(n) && inState(p, state)).length}</span>
                   </MenuOption>
                 ))}
@@ -604,6 +616,7 @@ export function PiecesPage() {
         </p>
       )}
 
+      {isLoading && <p className="pz-summary" aria-hidden="true"><Skeleton width={120} height={10} /></p>}
       {error && <ErrorBox error={error} />}
       {isLoading && (view === 'board' ? <BoardSkeleton /> : view === 'list' ? <ListSkeleton /> : <GridSkeleton look={look} />)}
       {all && shown.length === 0 && view !== 'board' && empty()}

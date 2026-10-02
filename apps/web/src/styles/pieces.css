@@ -50,7 +50,7 @@
 .pz-dot { color: var(--faint); }
 
 /* ───────────────────────────── popovers and menus ───────────────────────────── */
-.pz-pop { top: calc(100% + 6px); width: auto; min-width: 220px; padding: 5px; }
+.popover.pz-pop { top: calc(100% + 6px); width: max-content; min-width: 200px; max-width: min(320px, 92vw); padding: 5px; }
 .pz-pop-start { left: 0; }
 .pz-pop-end { right: 0; }
 .pz-pop .menu-item { height: 32px; padding: 0 9px; gap: 9px; font-size: .8125rem; line-height: 1; }
@@ -61,12 +61,11 @@
 .pz-mi .pz-mi-check { color: var(--accent-hover); width: 14px; height: 14px; }
 .pz-mcount { font: 500 .75rem/1 var(--font); color: var(--faint); font-variant-numeric: tabular-nums; min-width: 14px; text-align: right; }
 .pz-mdot { width: 8px; height: 8px; border-radius: 50%; flex: none; margin: 0 3px; }
-.pz-pop .net { width: 18px; height: 18px; border-radius: 5px; font-size: .5625rem; flex: none; }
 .pz-danger, .pz-pop .pz-danger svg { color: var(--bad); }
 .pz-menu-note { margin: 2px 9px 6px; max-width: 240px; font-size: .75rem; line-height: 1.4; color: var(--faint); }
 
 /* appearance */
-.pz-pop-look { width: 280px; padding: 6px 12px 10px; }
+.popover.pz-pop-look { width: 280px; padding: 6px 12px 10px; }
 .pz-look { display: flex; flex-direction: column; }
 .pz-look-note { display: flex; align-items: center; gap: 6px; margin: 4px 0 6px; padding-bottom: 8px; border-bottom: 1px solid var(--border); font-size: .75rem; line-height: 1; color: var(--faint); }
 .pz-look-note svg { width: 12px; height: 12px; }
@@ -149,18 +148,15 @@
 .pz-next > svg { width: 13px; height: 13px; color: var(--info); flex: none; }
 .pz-next-when { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .pz-nets { margin-left: auto; gap: 3px; flex: none; }
-.pz .pz-nets .net { width: 18px; height: 18px; border-radius: 5px; font-size: .5625rem; line-height: 1; background: var(--surface-3); }
+.pz .net { background: var(--surface-3); }
 .pz-grid[data-size='S'] .pz-meta { padding: 9px 9px 10px 10px; }
 .pz-grid[data-size='S'] .pz-by-when, .pz-grid[data-size='S'] .pz-by .pz-dot { display: none; }
 .pz-grid[data-size='L'] .pz-title { font-size: .9375rem; }
 
-/* skeletons */
+/* skeletons (components/ui.tsx draws them) */
 .pz-skel { pointer-events: none; }
-.pz-bone { display: block; height: 11px; border-radius: 5px; }
-.pz-meta .pz-bone + .pz-bone { margin-top: 3px; }
-.pz-shimmer { background: linear-gradient(100deg, var(--surface-2) 30%, var(--surface-3) 50%, var(--surface-2) 70%); background-size: 300% 100%; animation: pz-shimmer 1.4s ease-in-out infinite; }
-@keyframes pz-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
-@media (prefers-reduced-motion: reduce) { .pz-shimmer { animation: none; } }
+.pz-skel .pz-meta { gap: 9px; padding-top: 12px; }
+.pz-skel .pz-bbody { gap: 8px; padding-top: 4px; }
 
 /* ───────────────────────────── empty states ───────────────────────────── */
 .pz-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 56px 24px 60px; border: 1px dashed var(--border-strong); border-radius: 14px; background: rgb(255 255 255 / 1.2%); }
@@ -220,7 +216,6 @@
 .pz-bthumb .pz-ph span { display: none; }
 .pz-bthumb .pz-ph svg { width: 16px; height: 16px; }
 .pz-bbody { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; padding-top: 1px; }
-.pz-bbody .pz-bone { height: 9px; }
 .pz-btitle { color: var(--text); font-size: .78125rem; font-weight: 500; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .pz-btitle:hover { text-decoration: none; color: #fff; }
 .pz-btitle::after { content: ''; position: absolute; inset: 0; border-radius: 10px; }
@@ -231,7 +226,6 @@
 .pz-bmeta svg { width: 12px; height: 12px; flex: none; }
 .pz-bdate > span:not(.nets) { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .pz-bdate > svg { color: var(--info); }
-.pz-bcard .pz-nets .net { width: 16px; height: 16px; font-size: .5rem; border-radius: 4px; }
 .pz-vtag { font: 600 .6875rem/1 var(--font); color: var(--muted); padding: 3px 5px; border-radius: 4px; background: var(--surface-3); letter-spacing: .02em; }
 .pz-bcount { display: inline-flex; align-items: center; gap: 3px; }
 .pz-agent-dot { display: inline-flex; align-items: center; gap: 4px; color: var(--agent); font-weight: 500; }
@@ -289,10 +283,10 @@
 .pz-table .pz-by-name { color: #c9ccd3; }
 
 /* ───────────────────────────── dialogs ───────────────────────────── */
-.pz-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+.pz-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; align-items: start; }
+.pz-form .check { padding-top: 26px; }
 .pz-form .field-label { line-height: 1.2; }
 .pz-mono-input { font-family: var(--mono) !important; font-size: .8125rem !important; }
-.pz-hint { margin: -.4rem 0 0; font-size: .8125rem; line-height: 1.45; color: var(--muted); }
 .pz-dlg-sub { margin: -.5rem 0 0; font-size: .875rem; }
 .pz-options { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow-y: auto; }
 .pz-option { appearance: none; display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); color: var(--text); font: 500 .875rem/1 var(--font); cursor: pointer; text-align: left; }
@@ -302,6 +296,10 @@
 .pz-option-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pz-option-note { font-size: .75rem; font-weight: 400; color: var(--faint); }
 .pz-option.is-current { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.pz-confirm-warn { color: var(--warn); }
+/* The shared confirm's red button loses to .btn (styles.css loads after ui.css); inside this page it keeps its colour. */
+.pz .btn.btn-confirm-danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.pz .btn.btn-confirm-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 88%, #fff); border-color: color-mix(in srgb, var(--bad) 88%, #fff); }
 .pz-busy { position: fixed; right: 16px; bottom: 16px; z-index: 100; }
 
 /* ───────────────────────────── narrower screens ───────────────────────────── */
