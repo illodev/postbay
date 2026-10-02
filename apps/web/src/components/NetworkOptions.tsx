@@ -5,8 +5,11 @@ import '../styles/publications.css';
 
 export type OptionValues = Record<string, string | boolean>;
 
+/** The "not set" entry of an optional choice: a select's value cannot be empty, so it stands for ''. */
+const UNSET = '__unset';
+
 /** The network's two-letter mark lives in ui.tsx now; re-exported so the imports from here keep working. */
-import { NetMark } from './ui';
+import { NetMark, Select } from './ui';
 export { NetMark };
 
 /**
@@ -175,11 +178,20 @@ export function NetworkOptions({ network, fields, placement, values, onChange }:
           {f.required ? <span className="pb-req"> · {t('publications.opt.required')}</span> : <span className="pb-opt"> {t('publications.optional')}</span>}
         </span>
         {f.type === 'select' ? (
-          <select id={id} required={f.required} value={String(values[f.key] ?? '')} onChange={(e) => onChange(f.key, e.target.value)}>
-            {/* A required choice starts empty on purpose: the network asks that nobody picks it for the person. */}
-            <option value="">{f.required ? t('publications.opt.choose') : t('publications.opt.notSet')}</option>
-            {f.choices?.map((c) => <option key={c.value} value={c.value} disabled={!!c.disabledWhen && values[c.disabledWhen] === true}>{c.label}</option>)}
-          </select>
+          // A required choice starts empty on purpose: the network asks that nobody picks it for the person. An optional
+          // one can be set back to nothing, which the list offers as its first entry.
+          <Select
+            id={id}
+            label={f.label}
+            required={f.required}
+            placeholder={f.required ? t('publications.opt.choose') : t('publications.opt.notSet')}
+            value={values[f.key] ? String(values[f.key]) : f.required ? undefined : UNSET}
+            onChange={(v) => onChange(f.key, v === UNSET ? '' : v)}
+            options={[
+              ...(f.required ? [] : [{ value: UNSET, label: t('publications.opt.notSet') }]),
+              ...(f.choices ?? []).map((c) => ({ value: c.value, label: c.label, disabled: !!c.disabledWhen && values[c.disabledWhen] === true })),
+            ]}
+          />
         ) : (
           <input
             id={id}

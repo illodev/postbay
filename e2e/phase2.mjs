@@ -246,9 +246,11 @@ await step('schedule YouTube (no first comment there) and Facebook twice', async
   await d.getByLabel('Text').fill('Spring menu: the full story');
   // YouTube needs a made-for-kids declaration for every video. Nobody chose one for the channel, so it starts empty and has to be
   // chosen: the required select stops the form until it is.
-  const kids = d.getByLabel('Is this video made for kids?');
-  assert((await kids.inputValue()) === '', 'made for kids must start empty when the channel has no default');
-  await kids.selectOption('no');
+  // The app's own select: empty shows its placeholder; a choice is made by opening it.
+  const kids = d.getByRole('combobox', { name: 'Is this video made for kids?' });
+  assert((await kids.innerText()).includes('Choose…'), 'made for kids must start empty when the channel has no default');
+  await kids.click();
+  await p.getByRole('option', { name: "No, it's not made for kids" }).click();
   await d.getByRole('button', { name: 'Schedule', exact: true }).click();
   await p.getByText('Scheduled: the app will publish it').waitFor();
 
