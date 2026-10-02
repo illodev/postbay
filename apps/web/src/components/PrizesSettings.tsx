@@ -4,7 +4,7 @@ import { api, type BrandSettings, type Prize } from '../api';
 import { t } from '../i18n';
 import { fmtBytes } from '../lib/format';
 import { uploadPrizeFile, type Progress } from '../lib/upload';
-import { Chip, CopyButton, Empty, ErrorBox, errorMessage, Field, Spinner, useToast } from './ui';
+import { Chip, CopyButton, Empty, ErrorBox, errorMessage, Field, Spinner, useConfirm, useToast } from './ui';
 
 function Settings({ brand }: { brand: BrandSettings }) {
   const qc = useQueryClient();
@@ -55,6 +55,7 @@ function PrizeState({ p }: { p: Prize }) {
 }
 
 function Library({ brandId }: { brandId: string }) {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const toast = useToast();
   const { data, error } = useQuery({ queryKey: ['prizes', brandId], queryFn: () => api.get<Prize[]>(`/api/brands/${brandId}/prizes`) });
@@ -123,7 +124,16 @@ function Library({ brandId }: { brandId: string }) {
                     </td>
                     <td className="set-actions">
                       <div className="row">
-                        {!p.archived && <button className="btn btn-small" onClick={() => confirm(t('prizes.library.archiveConfirm', { name: p.name })) && archive.mutate(p.id)}>{t('prizes.library.archive')}</button>}
+                        {!p.archived && (
+                          <button
+                            className="btn btn-small"
+                            onClick={async () => {
+                              if (await confirm({ title: t('prizes.library.archiveTitle', { name: p.name }), text: t('prizes.library.archiveConfirm'), confirmLabel: t('prizes.library.archive') })) archive.mutate(p.id);
+                            }}
+                          >
+                            {t('prizes.library.archive')}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -167,6 +177,7 @@ function Library({ brandId }: { brandId: string }) {
 
 function Erase({ brandId }: { brandId: string }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [who, setWho] = useState('');
   const [by, setBy] = useState<'name' | 'personId'>('name');
   const erase = useMutation({
@@ -174,7 +185,13 @@ function Erase({ brandId }: { brandId: string }) {
     onSuccess: (r) => { toast(r.deleted ? t('prizes.erase.deleted', { count: r.deleted }) : t('prizes.erase.nothing')); setWho(''); },
   });
   return (
-    <form className="card set-danger stack" onSubmit={(e) => { e.preventDefault(); if (confirm(t('prizes.erase.confirm', { who }))) erase.mutate(); }}>
+    <form
+      className="card set-danger stack"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (await confirm({ title: t('prizes.erase.ask', { who }), text: t('prizes.erase.confirm'), confirmLabel: t('prizes.erase.submit'), danger: true })) erase.mutate();
+      }}
+    >
       <h3>{t('prizes.erase.title')}</h3>
       <p className="set-hint">{t('prizes.erase.hint')}</p>
       <div className="set-fields">

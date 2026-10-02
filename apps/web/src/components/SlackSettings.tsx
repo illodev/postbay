@@ -3,12 +3,13 @@ import { useState } from 'react';
 import { api, type SlackSettings } from '../api';
 import { t, tMaybe } from '../i18n';
 import { fmtShort } from '../lib/format';
-import { Chip, ErrorBox, errorMessage, Field, Spinner, useToast } from './ui';
+import { Chip, ErrorBox, errorMessage, Field, Spinner, useConfirm, useToast } from './ui';
 
 /** Posts chosen events to a Slack channel, through that channel's incoming webhook. The address is a secret: it is never shown again. */
 export function SlackSettingsCard({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const { data, error } = useQuery({ queryKey: ['slack', brandId], queryFn: () => api.get<SlackSettings>(`/api/brands/${brandId}/slack`) });
   const [url, setUrl] = useState('');
   const [kinds, setKinds] = useState<Set<string> | null>(null);
@@ -75,7 +76,16 @@ export function SlackSettingsCard({ brandId }: { brandId: string }) {
               <strong>{t('settings.slack.removeTitle')}</strong>
               <p>{t('settings.slack.removeHint')}</p>
             </div>
-            <button type="button" className="btn btn-danger" onClick={() => confirm(t('settings.slack.removeConfirm')) && remove.mutate()} disabled={remove.isPending}>{t('settings.slack.remove')}</button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={remove.isPending}
+              onClick={async () => {
+                if (await confirm({ title: t('settings.slack.removeAsk'), text: t('settings.slack.removeConfirm'), confirmLabel: t('settings.slack.remove'), danger: true })) remove.mutate();
+              }}
+            >
+              {t('settings.slack.remove')}
+            </button>
           </div>
         </section>
       )}

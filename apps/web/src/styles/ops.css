@@ -113,7 +113,7 @@ a.ops-row-title:hover { color: var(--text); text-decoration: underline; text-dec
 .ops .oc-slot { height: 22px; gap: 5px; padding: 0 6px; border: 1px dashed var(--border-strong); color: var(--faint); font-size: .6875rem; }
 .ops .oc-slot .oc-time { color: var(--faint); }
 .ops .oc-slot .oc-name { font-size: .6875rem; line-height: 1; }
-.ops .oc-slot .net { width: auto; height: auto; background: none; color: var(--faint); font-size: .5625rem; letter-spacing: .02em; }
+.ops .oc-slot .net { background: none; opacity: .55; filter: grayscale(1); }
 .ops .oc-grid.paused .oc-pub.st-scheduled, .ops .oc-grid.paused .oc-pub.st-awaiting_reapproval { opacity: .5; }
 .ops .oc-more { appearance: none; align-self: flex-start; border: 0; background: none; color: var(--muted); font: 500 .6875rem/1 var(--font); text-align: left; height: 20px; padding: 0 6px; border-radius: 5px; cursor: pointer; }
 .ops .oc-more:hover { color: var(--text); background: var(--surface-2); }

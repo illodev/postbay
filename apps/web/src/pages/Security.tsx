@@ -1,17 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, type SecondFactorStatus } from '../api';
+import { api, type MyInvitation, type SecondFactorStatus } from '../api';
+import { Avatar, displayName } from '../components/Avatar';
+import { Icon } from '../components/icons';
+import { PageBar } from '../components/PageBar';
 import { EnrollFlow, RecoveryCodes } from '../components/SecondFactor';
 import { NotificationPrefs } from '../components/NotificationPrefs';
-import { Chip, ErrorBox, errorMessage, Field, Spinner, useToast } from '../components/ui';
+import { Chip, ErrorBox, errorMessage, Field, Skeleton, useToast } from '../components/ui';
 import { LOCALES, t, useLocale, type Locale } from '../i18n';
-import { ROLE_LABEL } from '../lib/format';
+import { fmtDay, fmtShort, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
 import '../styles/settings.css';
-
-const initials = (s: string) =>
-  s.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
 
 /** Asks for a current code before doing something that would otherwise let anyone at an unlocked laptop weaken the account. */
 function CodeAction({ label, hint, danger, run, onDone }: { label: string; hint: string; danger?: boolean; run: (code: string) => Promise<unknown>; onDone: (r: unknown) => void }) {
@@ -39,7 +39,7 @@ function Profile() {
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
-  const name = me.user.name ?? me.user.email;
+  const name = displayName(me.user.name, me.user.email);
   const signOut = async () => {
     try {
       await api.post('/api/auth/logout');
@@ -53,10 +53,10 @@ function Profile() {
     <section className="card stack" aria-labelledby="acct-profile">
       <h2 id="acct-profile">{t('account.profile.title')}</h2>
       <div className="acct-who">
-        <span className="avatar" aria-hidden="true">{initials(name)}</span>
+        <Avatar name={me.user.name || me.user.email} size={44} />
         <div style={{ minWidth: 0 }}>
           <strong>{name}</strong>
-          {me.user.name && <div className="muted small">{me.user.email}</div>}
+          <div className="muted small">{me.user.email}</div>
         </div>
       </div>
       <div>
@@ -71,7 +71,7 @@ function Profile() {
         </ul>
       </div>
       <p className="set-hint">{t('account.profile.nameHint')}</p>
-      <div><button className="btn btn-small" onClick={signOut}>{t('account.profile.signOut')}</button></div>
+      <div><button className="btn btn-small" onClick={signOut}><Icon name="logout" /><span>{t('account.profile.signOut')}</span></button></div>
     </section>
   );
 }
@@ -102,7 +102,7 @@ function Authenticator() {
   const [fresh, setFresh] = useState<string[] | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ['second-factor'] });
   if (error) return <section className="card acct-full"><ErrorBox error={error} /></section>;
-  if (!data) return <section className="card acct-full"><Spinner /></section>;
+  if (!data) return <section className="card acct-full stack"><Skeleton width={200} height={16} /><Skeleton width="60%" /></section>;
   if (fresh) return <section className="card acct-full"><RecoveryCodes codes={fresh} onDone={() => { setFresh(null); refresh(); }} /></section>;
   const left = data.recoveryCodesLeft;
   return (
@@ -143,17 +143,61 @@ function Authenticator() {
   );
 }
 
-/** The person's own page: who they are, the language, how they prove it is them, and what they are told about. */
-export function SecurityPage() {
+/** Brands of other workspaces that asked this person to join: nothing changes until they answer. */
+function Invitations({ items }: { items: MyInvitation[] }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const answer = useMutation({
+    mutationFn: ({ id, accept }: { id: string; accept: boolean; brand: string }) => api.post(`/api/invitations/${id}/${accept ? 'accept' : 'decline'}`),
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ['me'] });
+      toast(v.accept ? t('account.invitations.accepted', { brand: v.brand }) : t('account.invitations.declined'));
+    },
+    onError: (e) => toast(errorMessage(e), 'error'),
+  });
   return (
-    <>
-      <div className="page-head">
+    <section className="card stack acct-full acct-invites" aria-labelledby="acct-invites">
+      <div className="acct-invites-head">
+        <span className="acct-invites-icon"><Icon name="mail" /></span>
         <div>
-          <h1>{t('account.title')}</h1>
-          <p className="muted">{t('account.subtitle')}</p>
+          <h2 id="acct-invites">{t('account.invitations.title', { count: items.length })}</h2>
+          <p className="set-hint">{t('account.invitations.hint')}</p>
         </div>
       </div>
+      <ul className="ent-list">
+        {items.map((i) => (
+          <li key={i.id} className="ent">
+            <span className="brand-mark acct-brand-mark" aria-hidden="true">{i.brand.charAt(0).toUpperCase()}</span>
+            <div className="ent-main">
+              <div className="ent-title">{i.brand}<span className="muted acct-ws">· {i.workspace}</span></div>
+              <div className="ent-sub">
+                {t('account.invitations.as', { role: ROLE_LABEL[i.role] ?? i.role })}
+                {i.invited_by && <> · {t('account.invitations.by', { who: i.invited_by })}</>}
+                {' · '}{fmtShort(i.created_at)} · {t('account.invitations.expires', { date: fmtDay(i.expires_at) })}
+              </div>
+            </div>
+            <div className="ent-side">
+              <button className="btn btn-small btn-ghost" disabled={answer.isPending} onClick={() => answer.mutate({ id: i.id, accept: false, brand: i.brand })}>{t('account.invitations.decline')}</button>
+              <button className="btn btn-small btn-primary" disabled={answer.isPending} onClick={() => answer.mutate({ id: i.id, accept: true, brand: i.brand })}>{t('account.invitations.accept')}</button>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="set-hint acct-invites-note">{t('account.invitations.unknown')}</p>
+    </section>
+  );
+}
+
+/** The person's own page: who they are, the language, how they prove it is them, and what they are told about. */
+export function SecurityPage() {
+  const { me } = useSession();
+  const invitations = me.invitations ?? [];
+  return (
+    <>
+      <PageBar crumbs={[{ label: t('account.title') }]} />
+      <p className="set-lead acct-lead">{t('account.subtitle')}</p>
       <div className="acct">
+        {invitations.length > 0 && <Invitations items={invitations} />}
         <Profile />
         <Language />
         <Authenticator />

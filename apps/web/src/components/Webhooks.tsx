@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { api, type Webhook, type WebhookDelivery, type WebhookDeliveryDetail, type WebhookEventType } from '../api';
 import { t, tMaybe } from '../i18n';
 import { EVENT_LABEL, fmtDateTime, fmtShort } from '../lib/format';
-import { Chip, CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, Spinner, useToast } from './ui';
+import { Chip, CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, MenuButton, Spinner, useConfirm, useToast } from './ui';
 
 interface List {
   items: Webhook[];
@@ -188,6 +188,7 @@ function HookState({ h }: { h: Webhook }) {
 export function Webhooks({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const { data, error } = useQuery({ queryKey: ['webhooks', brandId], queryFn: () => api.get<List>(`/api/brands/${brandId}/webhooks`) });
   const [editing, setEditing] = useState<Webhook | 'new' | null>(null);
   const [deliveries, setDeliveries] = useState<Webhook | null>(null);
@@ -246,10 +247,25 @@ export function Webhooks({ brandId }: { brandId: string }) {
                     <button className="btn btn-small" onClick={() => setEditing(h)}>{t('common.edit')}</button>
                   </div>
                   <div className="ent-actions">
-                    <button className="btn btn-small btn-ghost" onClick={() => patch.mutate({ id: h.id, body: { active: !h.active } })}>{h.active ? t('settings.webhooks.disable') : t('settings.webhooks.enable')}</button>
-                    <button className="btn btn-small btn-ghost" onClick={() => confirm(t('settings.webhooks.rotateConfirm')) && rotate.mutate(h.id)}>{t('settings.webhooks.rotate')}</button>
-                    <span className="ent-sep" aria-hidden="true" />
-                    <button className="btn btn-small btn-danger set-quiet" onClick={() => confirm(t('settings.webhooks.deleteConfirm', { url: h.url })) && remove.mutate(h.id)}>{t('common.delete')}</button>
+                    <MenuButton
+                      label={t('settings.webhooks.actions')}
+                      items={[
+                        { label: h.active ? t('settings.webhooks.disable') : t('settings.webhooks.enable'), icon: h.active ? 'ban' : 'check', onSelect: () => patch.mutate({ id: h.id, body: { active: !h.active } }) },
+                        {
+                          label: t('settings.webhooks.rotate'), icon: 'key',
+                          onSelect: async () => {
+                            if (await confirm({ title: t('settings.webhooks.rotateTitle'), text: t('settings.webhooks.rotateConfirm'), confirmLabel: t('settings.webhooks.rotate') })) rotate.mutate(h.id);
+                          },
+                        },
+                        {
+                          label: t('common.delete'), icon: 'trash', danger: true,
+                          onSelect: async () => {
+                            const text = <><p>{t('settings.webhooks.deleteConfirm')}</p><p><code>{h.url}</code></p></>;
+                            if (await confirm({ title: t('settings.webhooks.deleteTitle'), text, confirmLabel: t('common.delete'), danger: true })) remove.mutate(h.id);
+                          },
+                        },
+                      ]}
+                    />
                   </div>
                 </div>
               </li>
