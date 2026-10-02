@@ -4,14 +4,13 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type BrandSettings, type PieceDetail, type PublicationRow, type Variant, type VersionDetail, type VersionSummary } from '../api';
 import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/icons';
-import { MoreMenu, type MenuEntry } from '../components/MoreMenu';
 import { PageBar } from '../components/PageBar';
 import { PieceActivity } from '../components/PieceActivity';
 import { PieceAgentCard } from '../components/PieceAgentCard';
 import { ago, authorName, formatHint, formatName, PieceFacts, PieceStage, variantName } from '../components/PieceHero';
 import { PublicationList } from '../components/publications';
 import { UploadDialog } from '../components/UploadDialog';
-import { Chip, Dialog, Empty, ErrorBox, errorMessage, Field, Skeleton, SkeletonText, Switch, useConfirm, useToast } from '../components/ui';
+import { Chip, Dialog, Empty, ErrorBox, errorMessage, Field, Menu, MenuItem, MenuSeparator, Select, Skeleton, SkeletonText, Switch, Tip, useConfirm, useToast } from '../components/ui';
 import { t, type Key } from '../i18n';
 import { fmtDateTime, fmtShort, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -25,6 +24,9 @@ type FullPiece = PieceDetail & {
   source?: string | null;
   publications: (PublicationRow & { published_at?: string | null })[];
 };
+
+/** The Select's value for "no campaign" (a Select value may not be empty). */
+const NO_CAMPAIGN = 'none';
 
 /** Publications that are still going to happen, and so are cancelled if the piece is discarded. */
 const PENDING = ['scheduled', 'awaiting_reapproval', 'on_hold', 'preparing', 'ready'];
@@ -105,10 +107,12 @@ function EditPiece({ piece, campaigns, onClose }: { piece: FullPiece; campaigns:
         </Field>
         <div className="pc-edit-row">
           <Field label={t('piece.fields.campaign')}>
-            <select value={form.campaignId} onChange={(e) => setForm({ ...form, campaignId: e.target.value })}>
-              <option value="">{t('piece.fields.noCampaign')}</option>
-              {campaigns?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <Select
+              label={t('piece.fields.campaign')}
+              value={form.campaignId || NO_CAMPAIGN}
+              onChange={(v) => setForm({ ...form, campaignId: v === NO_CAMPAIGN ? '' : v })}
+              options={[{ value: NO_CAMPAIGN, label: t('piece.fields.noCampaign') }, ...(campaigns ?? []).map((c) => ({ value: c.id, label: c.name }))]}
+            />
           </Field>
           <Field label={t('piece.edit.target')}>
             <input type="date" value={form.targetDate} onChange={(e) => setForm({ ...form, targetDate: e.target.value })} />
@@ -298,9 +302,11 @@ function Brief({ text, canEdit, onEdit, className }: { text: string; canEdit: bo
       <header className="pc-section-head">
         <h2 id="pc-brief-h">{t('piece.brief')}</h2>
         {canEdit && (
-          <button type="button" className="pc-icon-btn" onClick={onEdit} title={t('piece.briefEdit')} aria-label={t('piece.briefEdit')}>
-            <Icon name="pen" />
-          </button>
+          <Tip label={t('piece.briefEdit')}>
+            <button type="button" className="pc-icon-btn" onClick={onEdit} aria-label={t('piece.briefEdit')}>
+              <Icon name="pen" />
+            </button>
+          </Tip>
         )}
       </header>
       <div className="pc-brief-card">
@@ -387,16 +393,20 @@ function VariantRow({ variant, current, canUpload, onUpload, onShow }: {
       </span>
       <span className="pc-vrow-act">
         {latest ? (
-          <Link className="btn btn-small" to={`/review/${latest.id}`} title={t('piece.reviewHint', { n: latest.number, variant: name })}>
-            {t('piece.reviewN', { n: latest.number })}
-          </Link>
+          <Tip label={t('piece.reviewHint', { n: latest.number, variant: name })}>
+            <Link className="btn btn-small" to={`/review/${latest.id}`}>
+              {t('piece.reviewN', { n: latest.number })}
+            </Link>
+          </Tip>
         ) : canUpload ? (
           <button type="button" className="btn btn-small btn-primary" onClick={onUpload}>{t('piece.uploadFirst')}</button>
         ) : null}
         {canUpload && latest && (
-          <button type="button" className="pc-icon-btn" onClick={onUpload} title={t('piece.variant.upload', { variant: name })} aria-label={t('piece.variant.upload', { variant: name })}>
-            <Icon name="upload" />
-          </button>
+          <Tip label={t('piece.variant.upload', { variant: name })}>
+            <button type="button" className="pc-icon-btn" onClick={onUpload} aria-label={t('piece.variant.upload', { variant: name })}>
+              <Icon name="upload" />
+            </button>
+          </Tip>
         )}
       </span>
     </li>
@@ -445,7 +455,7 @@ function useShortcuts(map: Record<string, (() => void) | null>) {
       if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
       const el = e.target as HTMLElement | null;
       if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return;
-      if (document.querySelector('dialog[open], .palette')) return;
+      if (document.querySelector('[role="dialog"], [role="menu"], .palette')) return;
       const fn = map[e.key.toLowerCase()];
       if (fn) {
         e.preventDefault();
@@ -521,16 +531,6 @@ export function PiecePage() {
       }
     : null;
 
-  const menu: MenuEntry[] = canEdit
-    ? [
-        { label: t('piece.menu.edit'), icon: 'pen', hint: t('piece.menu.editHint'), onSelect: () => setEditing(true) },
-        { label: t('piece.menu.move'), icon: 'folder', hint: t('piece.menu.moveHint'), onSelect: () => setMoving(true) },
-        ...(canUpload ? [{ label: t('piece.addVariant.button'), icon: 'plus' as const, hint: t('piece.addVariant.hint'), onSelect: () => setAdding(true) }] : []),
-        { sep: true },
-        { label: t('piece.menu.discard'), icon: 'trash', danger: true, hint: t('piece.menu.discardHint'), onSelect: () => void discard() },
-      ]
-    : [];
-
   return (
     <>
       <PageBar
@@ -542,17 +542,37 @@ export function PiecePage() {
         actions={
           <span className="pc-pb">
             {latest && (
-              <Link className="btn pc-pb-btn pc-pb-review" to={`/review/${latest.id}`} title={`${t('piece.reviewHint', { n: latest.number, variant: variantName(variant!) })} (R)`}>
-                {t('piece.reviewN', { n: latest.number })}
-              </Link>
+              <Tip label={t('piece.reviewHint', { n: latest.number, variant: variantName(variant!) })} shortcut="R">
+                <Link className="btn pc-pb-btn pc-pb-review" to={`/review/${latest.id}`}>
+                  {t('piece.reviewN', { n: latest.number })}
+                </Link>
+              </Tip>
             )}
             {canUpload && (
-              <button type="button" className="btn btn-primary pc-pb-btn" onClick={upload} title={`${t('piece.uploadVersionHint')} (U)`} aria-label={t('piece.uploadVersion')}>
-                <Icon name="upload" />
-                <span className="pc-pb-label">{t('piece.uploadVersion')}</span>
-              </button>
+              <Tip label={t('piece.uploadVersionHint')} shortcut="U">
+                <button type="button" className="btn btn-primary pc-pb-btn" onClick={upload} aria-label={t('piece.uploadVersion')}>
+                  <Icon name="upload" />
+                  <span className="pc-pb-label">{t('piece.uploadVersion')}</span>
+                </button>
+              </Tip>
             )}
-            {menu.length > 0 && <MoreMenu items={menu} label={t('piece.menu.label')} className="mm-trigger pc-pb-more" />}
+            {canEdit && (
+              <Menu
+                align="end"
+                width={260}
+                trigger={
+                  <button type="button" className="btn pc-pb-more" aria-label={t('piece.menu.label')}>
+                    <Icon name="more" />
+                  </button>
+                }
+              >
+                <MenuItem icon="pen" onSelect={() => setEditing(true)}>{t('piece.menu.edit')}</MenuItem>
+                <MenuItem icon="folder" onSelect={() => setMoving(true)}>{t('piece.menu.move')}</MenuItem>
+                {canUpload && <MenuItem icon="plus" onSelect={() => setAdding(true)}>{t('piece.addVariant.button')}</MenuItem>}
+                <MenuSeparator />
+                <MenuItem icon="trash" danger onSelect={() => void discard()}>{t('piece.menu.discard')}</MenuItem>
+              </Menu>
+            )}
           </span>
         }
       />
@@ -581,9 +601,11 @@ export function PiecePage() {
                 <h2 id="pc-variants-h">{t('piece.variants')}</h2>
                 <span className="pc-count">{piece.variants.length}</span>
                 {canUpload && (
-                  <button type="button" className="btn btn-small btn-ghost pc-section-act" onClick={() => setAdding(true)} title={t('piece.addVariant.hint')}>
-                    <Icon name="plus" />{t('piece.addVariant.button')}
-                  </button>
+                  <Tip label={t('piece.addVariant.hint')}>
+                    <button type="button" className="btn btn-small btn-ghost pc-section-act" onClick={() => setAdding(true)}>
+                      <Icon name="plus" />{t('piece.addVariant.button')}
+                    </button>
+                  </Tip>
                 )}
               </header>
               <ul className="pc-vlist">
