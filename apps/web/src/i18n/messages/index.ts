@@ -9,12 +9,13 @@ import { piece } from './piece';
 import { pieces } from './pieces';
 import { prizes } from './prizes';
 import { publish } from './publish';
+import { publications } from './publications';
 import { results } from './results';
 import { review } from './review';
 import { settings } from './settings';
 
 // One entry per area. A new area file is added here and to the Key type below.
-const AREAS = [common, labels, errors, layout, pieces, piece, review, calendar, publish, results, settings, account, prizes];
+const AREAS = [common, labels, errors, layout, pieces, piece, review, calendar, publish, publications, results, settings, account, prizes];
 
 type All = typeof common.es &
   typeof labels.es &
@@ -25,6 +26,7 @@ type All = typeof common.es &
   typeof review.es &
   typeof calendar.es &
   typeof publish.es &
+  typeof publications.es &
   typeof results.es &
   typeof settings.es &
   typeof account.es &
