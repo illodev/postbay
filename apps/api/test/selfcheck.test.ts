@@ -5,10 +5,19 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { call, setTap, type Exchange } from '../src/connectors/http.js';
 import type { Ctx } from '../src/context.js';
-import {
-  TEST_TEXT, checkAccount, checkServer, formatChecks, lifetimeOf, publishTest, runChecks, versionAgeMonths, type CheckResult,
-} from '../src/services/selfcheck.js';
+import { withLocale } from '../src/i18n/index.js';
+import * as checks from '../src/services/selfcheck.js';
+import { TEST_TEXT, formatChecks, versionAgeMonths, type CheckResult } from '../src/services/selfcheck.js';
 import { createEnv, type Env } from './helpers.js';
+
+// The checks speak the request's language (Spanish when there is none, as when a service is called directly): these tests read the
+// English, and the Spanish is tested in i18n-checks.test.ts.
+const inEnglish = <A extends unknown[], R>(f: (...a: A) => R) => (...a: A): R => withLocale('en', () => f(...a));
+const checkAccount = inEnglish(checks.checkAccount);
+const checkServer = inEnglish(checks.checkServer);
+const lifetimeOf = inEnglish(checks.lifetimeOf);
+const publishTest = inEnglish(checks.publishTest);
+const runChecks = inEnglish(checks.runChecks);
 
 let env: Env;
 let ig: string, fb: string, yt: string;
@@ -491,11 +500,11 @@ describe('from the screen', () => {
 describe('the command', () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const cli = path.join(here, '../src/cli.ts');
-  const run = (args: string[]) => new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
+  const run = (args: string[], lang = 'en_GB.UTF-8') => new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
     const p = spawn(process.execPath, ['--import', 'tsx', cli, ...args], {
       cwd: path.join(here, '..'),
       env: {
-        ...process.env, NODE_ENV: 'test', SECRET: env.ctx.config.SECRET, DATABASE_URL: env.ctx.config.DATABASE_URL, TOKEN_KEY: env.ctx.config.TOKEN_KEY!,
+        ...process.env, LANG: lang, NODE_ENV: 'test', SECRET: env.ctx.config.SECRET, DATABASE_URL: env.ctx.config.DATABASE_URL, TOKEN_KEY: env.ctx.config.TOKEN_KEY!,
         APP_URL: 'https://studio.example.com', MEDIA_URL: 'https://media.example.com', STORAGE_LOCAL_DIR: env.ctx.config.STORAGE_LOCAL_DIR,
         META_APP_ID: 'app', META_APP_SECRET: 'secret', META_GRAPH_URL: env.meta.url, META_OAUTH_URL: env.meta.url,
       },
@@ -518,6 +527,17 @@ describe('the command', () => {
     expect(bad.code).toBe(1);
     expect(bad.out).toContain('✖ Connection');
     expect(bad.out).toMatch(/→ Connect the account again/);
+  }, 60_000);
+
+  it('speaks the language the terminal is set to: Spanish unless LANG is English', async () => {
+    await env.db.query(`update social_account set status = 'active', last_error = null where id = $1`, [ig]);
+    const es = await run(['check', '--brand', 'Test brand', '--network', 'instagram'], 'es_ES.UTF-8');
+    expect(es.code).toBe(0);
+    expect(es.out).toContain('Comprobando Test brand');
+    expect(es.out).toContain('✔ La red acepta la conexión');
+    expect(es.out).toContain('No ha fallado nada.');
+    const none = await run(['check', '--brand', 'Test brand', '--network', 'instagram', '--publish'], '');
+    expect(none.err).toMatch(/Añade --yes para confirmar/);
   }, 60_000);
 
   it('prints a report as JSON, and refuses to post without --yes', async () => {

@@ -1,3 +1,4 @@
+import { english, msg } from '../../i18n/index.js';
 import { call } from '../http.js';
 import { ConnectorError, type Candidate, type OAuthProvider, type TokenSet } from '../types.js';
 import { classifyGoogle, type GoogleConfig } from './client.js';
@@ -53,7 +54,7 @@ export function createGoogleOAuth(cfg: GoogleConfig, now: () => Date = () => new
     async exchange(code, redirectUri) {
       const t = await token({ grant_type: 'authorization_code', code, redirect_uri: redirectUri });
       if (!t.refresh_token) {
-        throw new ConnectorError('auth', 'Google did not return a refresh token, so the connection would stop working within an hour. Remove this app from the Google account\'s third-party access and connect again.');
+        throw new ConnectorError('auth', english(msg('connect.google.noRefreshToken')), { text: msg('connect.google.noRefreshToken') });
       }
       const tokens = toTokenSet(t, now());
       const r = await call(`${cfg.apiUrl}/youtube/v3/channels`, {
@@ -64,7 +65,7 @@ export function createGoogleOAuth(cfg: GoogleConfig, now: () => Date = () => new
       if (err) throw err;
       const channels: { id: string; snippet?: { title?: string } }[] = r.body?.items ?? [];
       if (channels.length === 0) {
-        throw new ConnectorError('auth', 'This Google account has no YouTube channel. Create one on YouTube first, then connect again.');
+        throw new ConnectorError('auth', english(msg('connect.google.noChannel')), { text: msg('connect.google.noChannel') });
       }
       return channels.map<Candidate>((c) => ({
         key: `youtube:${c.id}`,
@@ -78,7 +79,7 @@ export function createGoogleOAuth(cfg: GoogleConfig, now: () => Date = () => new
     },
 
     async refresh(previous) {
-      if (!previous.refreshToken) throw new ConnectorError('auth', 'There is no refresh token for this connection: connect it again');
+      if (!previous.refreshToken) throw new ConnectorError('auth', english(msg('connect.noRefreshToken')), { text: msg('connect.noRefreshToken') });
       const t = await token({ grant_type: 'refresh_token', refresh_token: previous.refreshToken });
       return toTokenSet(t, now(), previous);
     },

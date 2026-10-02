@@ -3,6 +3,8 @@ import type { Ctx } from '../context.js';
 import type { Principal } from '../auth/principal.js';
 import { forbidden, unauthorized } from '../errors.js';
 import { hashToken, myInvitations } from './brand.js';
+import { msg, t } from '../i18n/index.js';
+import { personLocale } from './notify.js';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const SESSION_DAYS = 14;
@@ -35,15 +37,17 @@ export async function magicLinksSettled(ctx: Ctx): Promise<void> {
 }
 
 async function sendMagicLink(ctx: Ctx, email: string): Promise<void> {
-  const user = await ctx.db.one('select id from app_user where lower(email) = $1', [email]);
+  const user = await ctx.db.one<{ id: string }>('select id from app_user where lower(email) = $1', [email]);
   if (!user) return;
+  // Written in the person's language: their own choice, or their brands' (see personLocale).
+  const locale = await personLocale(ctx.db, user.id);
   const token = randomBytes(32).toString('base64url');
   await ctx.db.query(
     `insert into login_token (token_hash, email, expires_at) values ($1,$2, now() + make_interval(mins => $3))`,
     [sha(token), email, LINK_MINUTES],
   );
   const link = `${ctx.config.APP_URL}/auth/callback?token=${token}`;
-  await ctx.mailer.send(email, 'Your sign-in link', `Use this link to sign in (valid for ${LINK_MINUTES} minutes, works once):\n\n${link}\n`);
+  await ctx.mailer.send(email, t(locale, 'mail.signIn.subject'), t(locale, 'mail.signIn.body', { minutes: LINK_MINUTES, link }));
 }
 
 /**
@@ -125,7 +129,7 @@ export async function principalFromSession(ctx: Ctx, token: string): Promise<Pri
 export async function assertMayEnroll(ctx: Ctx, token: string): Promise<void> {
   const s = await ctx.db.one<{ via: string }>('select via from session where token_hash = $1', [sha(token)]);
   if (s && linkPastIdp(ctx, s.via)) {
-    throw forbidden(`An authenticator cannot be set up from an emailed link on this server. Sign in with ${ctx.config.sso!.label} and set it up under Your account.`);
+    throw forbidden(msg('error.twofa.notFromLink', { provider: ctx.config.sso!.label }));
   }
 }
 

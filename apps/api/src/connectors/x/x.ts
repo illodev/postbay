@@ -1,4 +1,5 @@
-import { validateAgainst } from '../validate.js';
+import { goneNote } from '../notes.js';
+import { issue, validateAgainst } from '../validate.js';
 import {
   ConnectorError,
   type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
@@ -123,20 +124,14 @@ export function createX(client: XClient, opts: XOptions = {}): Connector {
     validate(input): Issue[] {
       const issues = validateAgainst(CAPS, { ...input, text: '', firstComment: '' });
       const n = weightedLength(input.text);
-      if (n > 280) issues.push({ severity: 'error', code: 'text.length', field: 'text', message: `X counts this text as ${n} of 280 (an address counts 23, and some characters, emoji among them, count two)` });
+      if (n > 280) issues.push(issue('error', 'text.length', { variant: 'x', count: String(n) }, 'text'));
       const c = weightedLength(input.firstComment);
-      if (c > 280) issues.push({ severity: 'error', code: 'firstComment.length', field: 'firstComment', message: `X counts the first comment as ${c} of 280` });
+      if (c > 280) issues.push(issue('error', 'firstComment.length', { variant: 'x', count: String(c) }, 'firstComment'));
       if (hasLink(input.text)) {
-        issues.push({
-          severity: 'warning', code: 'x.link.cost', field: 'text',
-          message: `A post with a link costs ${COST_LINK.toFixed(2)} USD on X instead of ${COST_POST.toFixed(3)} USD, 13 times more (X also makes a link of a bare domain such as ${linksIn(input.text)[0]}). A reply with the link costs the same, so moving it to the first comment saves nothing: leave it out, or put it in the profile.`,
-        });
+        issues.push(issue('warning', 'x.link.cost', { linkCost: COST_LINK.toFixed(2), postCost: COST_POST.toFixed(3), link: linksIn(input.text)[0] }, 'text'));
       }
       if (input.firstComment && hasLink(input.firstComment)) {
-        issues.push({
-          severity: 'warning', code: 'x.link.cost.comment', field: 'firstComment',
-          message: `The first comment has a link (${linksIn(input.firstComment)[0]}): X charges a reply with a link ${COST_LINK.toFixed(2)} USD, as it does a post.`,
-        });
+        issues.push(issue('warning', 'x.link.cost.comment', { link: linksIn(input.firstComment)[0], linkCost: COST_LINK.toFixed(2) }, 'firstComment'));
       }
       return issues;
     },
@@ -251,15 +246,25 @@ export function createX(client: XClient, opts: XOptions = {}): Connector {
       return { externalId: h.postId as string, url: `https://x.com/${username}/status/${h.postId}` };
     },
 
+    /** A post an earlier try made although its answer was lost, among the account's own posts since that try (see findOwnPost). */
+    async find(input, account, handle: Handle, env: ConnectorEnv): Promise<Handle | null> {
+      if (handle.postId) return handle;
+      if (!handle.attemptedAt) return null;
+      const token = (await env.token()).accessToken;
+      const mediaIds = input.placement === 'video' ? [handle.mediaId as string] : ((handle.mediaIds as string[] | undefined) ?? []);
+      const found = await findOwnPost(token, account.externalId, input.text, mediaIds.filter(Boolean), new Date(handle.attemptedAt as string));
+      return found ? { ...handle, postId: found, recovered: true } : null;
+    },
+
     async verify(account, externalId, _handle, env): Promise<VerifyResult> {
       const token = (await env.token()).accessToken;
       const username = String(account.providerData.username ?? account.externalId);
       const url = `https://x.com/${username}/status/${externalId}`;
       try {
         const r = await client.request<{ data?: { id: string }; errors?: unknown[] }>(`/2/tweets/${externalId}`, token);
-        return r.data?.id ? { visibility: 'public', url } : { visibility: 'unknown', note: 'X does not return this post any more' };
+        return r.data?.id ? { visibility: 'public', url } : { visibility: 'unknown', ...goneNote('x', 'post') };
       } catch (err) {
-        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', note: 'X does not return this post any more' };
+        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', ...goneNote('x', 'post') };
         throw err;
       }
     },

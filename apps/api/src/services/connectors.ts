@@ -1,5 +1,6 @@
 import type { Ctx } from '../context.js';
 import { ConnectorError, type Account, type ConnectorEnv, type EventSubscription, type Handle, type Network, type TokenSet } from '../connectors/types.js';
+import { english, msg, type Localized } from '../i18n/index.js';
 import { audit } from './audit.js';
 import { notifyRoles } from './notify.js';
 
@@ -15,10 +16,10 @@ export async function loadConnectorAccount(ctx: Ctx, accountId: string): Promise
  * person has to connect again, which is recorded and told to the admins before the error goes on.
  */
 export async function accountToken(ctx: Ctx, accountId: string): Promise<TokenSet> {
-  if (!ctx.vault) throw new ConnectorError('unsupported', 'Network tokens cannot be read: TOKEN_KEY is not configured');
+  if (!ctx.vault) throw new ConnectorError('unsupported', english(msg('connect.noTokenKey')), { text: msg('connect.noTokenKey') });
   const row = await ctx.db.one('select network, status, token_encrypted from social_account where id = $1', [accountId]);
-  if (!row?.token_encrypted) throw new ConnectorError('auth', 'This account is not connected to its network');
-  if (row.status === 'reconnect_required') throw new ConnectorError('auth', 'This account has to be reconnected before it can publish');
+  if (!row?.token_encrypted) throw new ConnectorError('auth', english(msg('connect.notConnected')), { text: msg('connect.notConnected') });
+  if (row.status === 'reconnect_required') throw new ConnectorError('auth', english(msg('connect.mustReconnect')), { text: msg('connect.mustReconnect') });
   const token = ctx.vault.open<TokenSet>(row.token_encrypted, `account:${accountId}`);
   const provider = ctx.connectors.providerOf(row.network);
   const windowMs = (provider?.refreshWindowSec ?? 120) * 1000;
@@ -39,13 +40,16 @@ export async function accountToken(ctx: Ctx, accountId: string): Promise<TokenSe
       return fresh;
     });
   } catch (err) {
-    if (err instanceof ConnectorError && err.errorClass === 'auth') await markReconnectRequired(ctx, accountId, err.message);
+    if (err instanceof ConnectorError && err.errorClass === 'auth') await markReconnectRequired(ctx, accountId, err.message, err.text);
     throw err;
   }
 }
 
-/** The account's credentials stopped working: say so once, to the people who can fix it. */
-export async function markReconnectRequired(ctx: Ctx, accountId: string, message: string): Promise<void> {
+/**
+ * The account's credentials stopped working: say so once, to the people who can fix it. `text` is the message kept as a code, when it
+ * is the studio's own words (the notification then reads in each person's language); the account keeps the English.
+ */
+export async function markReconnectRequired(ctx: Ctx, accountId: string, message: string, text?: Localized | Localized[]): Promise<void> {
   await ctx.db.tx(async (db) => {
     const row = await db.one(
       `update social_account set status = 'reconnect_required', last_error = $2 where id = $1 and status = 'active' returning brand_id, display_name, network`,
@@ -53,7 +57,9 @@ export async function markReconnectRequired(ctx: Ctx, accountId: string, message
     );
     if (!row) return;
     await audit(db, null, row.brand_id, 'account.reconnect_required', 'social_account', accountId, { status: 'active' }, { status: 'reconnect_required', reason: message.slice(0, 200) });
-    await notifyRoles(db, row.brand_id, ['admin'], 'account.reconnect', { accountId, name: row.display_name, network: row.network, message: message.slice(0, 200) }, null);
+    await notifyRoles(db, row.brand_id, ['admin'], 'account.reconnect', {
+      accountId, name: row.display_name, network: row.network, message: message.slice(0, 200), ...(text ? { message_i18n: text } : {}),
+    }, null);
   });
 }
 
@@ -81,7 +87,8 @@ export async function checkHealth(ctx: Ctx, accountId: string): Promise<{ valid:
     const res = await connector.health(account, connectorEnv(ctx, accountId));
     await ctx.db.query('update social_account set last_health_at = $2, last_error = null where id = $1', [accountId, ctx.now()]);
     if (!res.valid) {
-      await markReconnectRequired(ctx, accountId, res.note ?? 'The network says this connection is no longer valid');
+      if (res.note) await markReconnectRequired(ctx, accountId, res.note);
+      else await markReconnectRequired(ctx, accountId, english(msg('connect.noLongerValid')), msg('connect.noLongerValid'));
       return { valid: false };
     }
     if (res.expiresAt) {
@@ -91,7 +98,7 @@ export async function checkHealth(ctx: Ctx, accountId: string): Promise<{ valid:
     return { valid: true };
   } catch (err) {
     if (err instanceof ConnectorError && err.errorClass === 'auth') {
-      await markReconnectRequired(ctx, accountId, err.message);
+      await markReconnectRequired(ctx, accountId, err.message, err.text);
       return { valid: false };
     }
     ctx.log.warn({ err: String(err), accountId }, 'account health check failed');
@@ -135,10 +142,13 @@ export async function subscribeEvents(ctx: Ctx, accountId: string): Promise<Even
     state = await connector.subscribeEvents(account, connectorEnv(ctx, accountId));
   } catch (err) {
     ctx.log.warn({ err: String(err), accountId }, 'could not subscribe to the account\'s events');
-    state = { subscribed: false, fields: [], note: `The network refused the subscription: ${(err as Error).message}` };
+    const noteText = msg('connect.events.refused', { error: err instanceof ConnectorError && err.text ? err.text : (err as Error).message });
+    state = { subscribed: false, fields: [], note: english(noteText), noteText };
   }
+  // The note in English, and kept as a code beside it (note_i18n), which the account list answers in the reader's language.
+  const { noteText, ...kept } = state;
   await ctx.db.query(`update social_account set provider_data = provider_data || jsonb_build_object('events', $2::jsonb) where id = $1`, [
-    accountId, JSON.stringify({ ...state, at: ctx.now().toISOString() }),
+    accountId, JSON.stringify({ ...kept, ...(noteText ? { note_i18n: noteText } : {}), at: ctx.now().toISOString() }),
   ]);
   return state;
 }
