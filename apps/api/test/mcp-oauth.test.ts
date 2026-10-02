@@ -77,11 +77,15 @@ describe('rate limits', () => {
   it('apply per address to registration and to the token endpoint', async () => {
     const from = '10.250.250.250';
     const codes: number[] = [];
+    let last: { headers: Record<string, unknown> } | null = null;
     for (let i = 0; i < 11; i++) {
-      codes.push((await env.app.inject({ method: 'POST', url: '/api/mcp/oauth/register', remoteAddress: from, payload: { redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none' } })).statusCode);
+      last = await env.app.inject({ method: 'POST', url: '/api/mcp/oauth/register', remoteAddress: from, payload: { redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none' } });
+      codes.push((last as unknown as { statusCode: number }).statusCode);
     }
     expect(codes.slice(0, 10).every((c) => c === 201)).toBe(true);
     expect(codes[10]).toBe(429);
+    // A browser-based client can read the refusal.
+    expect(last!.headers['access-control-allow-origin']).toBe('*');
     const tokenCodes: number[] = [];
     for (let i = 0; i < 31; i++) {
       tokenCodes.push((await env.app.inject({ method: 'POST', url: '/api/mcp/oauth/token', remoteAddress: from, headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: 'grant_type=refresh_token' })).statusCode);

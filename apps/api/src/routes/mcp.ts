@@ -45,6 +45,11 @@ export async function mcpRoutes(app: FastifyInstance, ctx: Ctx) {
     '/api/mcp/oauth/register', '/api/mcp/oauth/token', '/api/mcp/oauth/revoke', '/api/mcp',
   ];
   for (const path of open) app.options(path, async (_req, reply) => cors(reply).code(204).send());
+  // Set before anything else runs, so an answer that never reaches a handler (a rate limit, a body that does not parse) carries them too.
+  const openPaths = new Set(open);
+  app.addHook('onRequest', async (req, reply) => {
+    if (openPaths.has(req.url.split('?')[0]!)) cors(reply);
+  });
 
   // ───────────────────────────── discovery ─────────────────────────────
 
