@@ -423,7 +423,7 @@ export async function pollComments(ctx: Ctx, limit = 20): Promise<number> {
      where r.active and r.notice_confirmed and p.status = 'published' and p.manual = false and p.external_id is not null and a.status = 'active'
        and a.network in ('instagram','facebook') and p.published_at > $1
        and (pp.last_polled_at is null or pp.last_polled_at < $2) and (pp.lease_until is null or pp.lease_until < $3)
-     order by pp.last_polled_at nulls first limit $4`,
+     order by pp.last_polled_at nulls first, p.published_at, p.id limit $4`,
     [new Date(now.getTime() - POLL_UNTIL_MS), new Date(now.getTime() - every), now, limit],
   );
   let read = 0;
