@@ -18,6 +18,7 @@ import * as authSvc from '../services/auth.js';
 import * as brand from '../services/brand.js';
 import * as comments from '../services/comments.js';
 import * as connections from '../services/connections.js';
+import * as overview from '../services/overview.js';
 import * as pieces from '../services/pieces.js';
 import * as resumable from '../services/resumable.js';
 import * as pubs from '../services/publications.js';
@@ -376,6 +377,8 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ───────────────────────────── pieces and variants ─────────────────────────────
 
+  // "For you": what waits for this person, what goes out today, what needs a hand and what just happened.
+  app.get('/api/brands/:brandId/overview', async (req) => overview.brandOverview(ctx, userOnly(req), params(req, 'brandId').brandId));
   app.get('/api/brands/:brandId/pieces', async (req) => {
     const q = z.object({ state: z.string().optional(), q: z.string().max(200).optional() }).parse(req.query);
     return pieces.listPieces(ctx, P(req), params(req, 'brandId').brandId, q);
