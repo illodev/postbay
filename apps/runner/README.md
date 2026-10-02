@@ -5,8 +5,8 @@ signed webhooks and, for each request, runs **your agent's command** (Claude Cod
 that reads instructions and writes files), checks what came out, uploads it as a new version and answers every comment.
 
 The studio decides what the agent may do; the runner only does the work. **Every limit that matters is enforced by the
-studio, so no runner can skip it**: the agent signs in with a producer token, which can upload and reply but never approve,
-schedule or manage anything.
+studio, so no runner can skip it**: the agent signs in with a producer token, which can upload and reply but never approve or
+manage anything, and schedules only what people approved, where the brand allows it ([an approved version](#an-approved-version-scheduling-it)).
 
 ```
 studio ──signed webhook──▶ runner ──▶ asks the studio for permission to start (rounds, budgets, one run per piece)
@@ -27,7 +27,8 @@ Claude Code, Chromium and a rendering engine next to it.
 
 1. **A producer token.** In the studio, *Settings → API tokens*, make one for the agent (role: producer). It is shown once.
 2. **A webhook.** *Settings → Webhooks → Add a webhook*: address `http://<runner>:8787/webhooks/<brand key>`, events
-   `version.changes_requested` (and `slot.needs_content` if the agent should fill empty slots). The *brand key* is any short
+   `version.changes_requested` (and `slot.needs_content` if the agent should fill empty slots, `version.approved` if it should
+   [schedule what people approve](#an-approved-version-scheduling-it)). The *brand key* is any short
    name you choose in the runner's configuration. The secret is shown once. Use *Send a test*: the runner answers 200 and the
    delivery shows as delivered.
 3. **Limits.** *Settings → Agent*: rounds per piece, longest run, **budget per piece and per month** (the agent does not start
@@ -309,6 +310,7 @@ brand is the point: house style, what the agent may and may not invent, and how 
 | `input_dir`, `output_dir`, `sources_dir`, `run_dir` | Where things are, relative to the run directory |
 | `slot`, `slot_day`, `campaigns` | For an empty slot: which, when, and the campaign briefs |
 | `source`, `project_dir`, `project_branch` | For a piece made from a project: its source as the studio has it, the directory the agent works in (absolute, as the agent sees it) and, in git, the piece's branch. Empty otherwise |
+| `version_id`, `accounts`, `calendar` | For an approved version (`version.approved`): its id, the accounts it was approved for (with their ids), and their calendar for the next three weeks: free slots (with the `at` and `accountId` to use), what is already scheduled, blocked days. `result_format` then says how to ask for scheduling |
 
 [`templates/project-changes-requested.md`](templates/project-changes-requested.md) is the example for pieces made from a project
 (`project.template`): read the project's own instructions first, change the sources and not the rendered file, render again with the
@@ -323,7 +325,7 @@ project's own command, leave the result in the output directory, and never commi
   project/<key>/                   a piece made from a project in git: its own worktree, on its own branch, kept between rounds
   runs/<run id>/
     instructions.md                what the agent was told
-    input/  comments.json  people-only.json  requirements.json  brief.md  event.json
+    input/  comments.json  people-only.json  requirements.json  brief.md  event.json   (an approved version: approved.json, calendar.json)
             frames/<comment id>.jpg    the frame each comment points at
             previous/                  the files of the version being revised
     output/ ...                    what the agent leaves; result.json goes here
@@ -354,7 +356,10 @@ runner's clone of a project repository, shared by that brand's pieces.
 - Only `fixed` comments are resolved by the new version. The rest stay open, with the agent's reply on them.
 - **A comment the agent does not mention is still answered**: "the agent did not say what it did about this comment, so a person
   needs to check it". Nothing is left silent.
-- For a slot, `piece` (`title`, `kind`, `brief`, `format`, `style`) says what to create.
+- For a slot, `piece` (`title`, `kind`, `brief`, `format`, `style`) says what to create. The runner creates it **for that slot
+  occurrence** (`slot` on the piece): once people approve a version of it, the studio schedules it there, unless they untick it.
+- For an approved version, `schedule` (`versionId`, `accountId`, `at`, `text`, `firstComment`) says what to schedule, and no files are
+  made. See [below](#an-approved-version-scheduling-it).
 - **Declining is an answer.** If the agent makes no file and says, for every comment, `cannot_do` or `needs_human`, the run ends as
   *needs a person*: its replies go on the comments as written, no retry is wasted, and approvers and admins are told. Saying
   `fixed` with nothing to show for it, or saying nothing about a comment, is a failed run instead.
@@ -379,9 +384,31 @@ runner's clone of a project repository, shared by that brand's pieces.
 | `checks_failed` | The output kept failing the automatic checks |
 | `timeout` | The time allowed ran out (`SIGTERM`, then `SIGKILL`) |
 | `aborted` | The piece disappeared, or the studio closed the run |
+| `scheduled` | A run for an approved version scheduled at least one post (what the studio refused is in the run's detail) |
 
 On every outcome that makes no version, **each comment gets a reply** saying a person needs to look. Failed, timed-out and
 check-failed runs also notify approvers and admins.
+
+## An approved version: scheduling it
+
+Optional, and off unless both sides say so: the brand lets the agent schedule what is approved (*Settings → Agent*,
+`agent.can_schedule_approved` in the studio) and the runner has a template for `version.approved` (the webhook subscribed to it).
+[`templates/version-approved.md`](templates/version-approved.md) is an example.
+
+1. When a version gets the approvals it needs, the studio sends `version.approved` (the piece, the version, the accounts). The runner
+   drops it if the brand does not let the agent schedule (no run, nothing spent) or if the version is no longer approved.
+2. It starts a run on the piece with trigger `version.approved`. **Such a run is not a round of changes** (the round cap does not stop
+   it, the budgets do) **and no version can be uploaded inside it.**
+3. The agent gets `input/approved.json` (the event) and `input/calendar.json` (the brand's calendar for the next three weeks), with the
+   approved accounts and their free slots in its instructions. It makes no files: it writes `schedule` in `result.json`.
+4. The runner asks the studio to schedule each entry, one at a time. **The studio decides**: only that approved version, only on accounts
+   the approval covers, at a time a person could choose (not past, not a blocked day, not while the brand is paused, nothing the network
+   would refuse). The publication is marked as scheduled by the agent and is on record with the token. The agent cannot cancel or move
+   anything, its own posts included: people can.
+5. The run ends `scheduled` when anything was scheduled (with what was refused, and why, in its detail), `failed` when everything was
+   refused, and `needs_people` when the agent chose nothing (approvers and admins are told, and a person schedules it).
+
+What the agent writes goes out as a post's text: a result that holds one of the runner's secrets is refused whole, as for any other run.
 
 ## Claude Code as the agent
 
@@ -537,7 +564,8 @@ npm test -w @estudio/runner
 ```
 
 The tests use a real PostgreSQL, a real API, real ffmpeg and a **scripted stand-in for the agent** (`test/fake-agent.mjs`, driven by
-`FAKE_AGENT_MODE`): they prove everything around the agent, not what a model does with the instructions. `e2e/phase3.sh`
+`FAKE_AGENT_MODE`): they prove everything around the agent, not what a model does with the instructions. That includes an approved
+version scheduled by the agent in a free slot, what the studio refuses, an agent that schedules nothing, and a brand that does not allow it. `e2e/phase3.sh`
 drives the same loop in a browser, and with `AGENT=claude` runs it with Claude Code as the agent (see [e2e/README.md](../../e2e/README.md)).
 
 Pieces made from a project are tested with real git: a local repository of projects, each piece's worktree and branch, commits with
