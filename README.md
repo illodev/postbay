@@ -67,7 +67,8 @@ specific to any client: names, time zones, languages and review rules are config
   aspect ratio, loudness, weight, text under a network's interface); uploads it; and replies to every comment.
 - **Safeguards the studio enforces**, so no runner can skip them: a round cap per piece (3 by default, then a person), budgets
   per piece and per month (the agent does not start until both are set), a longest run, one run per piece, comments marked
-  *only people* that the agent cannot answer or resolve, and a token that can never approve or schedule.
+  *only people* that the agent cannot answer or resolve, and a token that can never approve (nor schedule, unless the brand allows
+  it to schedule what people approved).
 - **A ledger.** Every run, its cost and what it did, in *Settings → Agent* and on the piece page, with the month's spending
   against its budget. Approvers and admins are told when a piece goes to a person.
 - **Pieces made with code.** A piece can say where its project lives (a folder of code and material a tool renders into the video). The
@@ -102,6 +103,20 @@ specific to any client: names, time zones, languages and review rules are config
 - **Review polish.** Subtitle files are shown beside the video, the line being said is marked, and a comment can be written on a line.
   Files of 64 MB and more are sent in pieces that resume after a dropped connection or a closed tab. With one setting on, YouTube watch
   time appears in the results.
+
+## What came after the phases
+
+- **Deactivating a member.** Besides removing someone, an admin can deactivate them in a brand and reactivate them later. While
+  deactivated they cannot open the brand (and are told why), are told nothing about it, and the API tokens they made for it are revoked
+  (and stay revoked). Everything they did keeps their name. The member list says who deactivated them and when.
+- **Scheduling after approval.** A piece made for a slot (an agent filling an empty slot makes one) is scheduled at that slot when it is
+  approved, unless the approver unticks it; the approval dialog can say beforehand what will happen. A brand can let the studio put
+  approved versions into its free weekly slots by itself, and can let the agent schedule what is approved. Always after a person's
+  approval of that very version, and every post says who scheduled it.
+- **Prizes from the studio.** A prize can be a piece of the studio (the recommended kind): whoever downloads it gets the main file of
+  the piece's latest approved version at that moment.
+
+[docs/after-the-phases.md](docs/after-the-phases.md) has the details and the decisions taken.
 
 ## Languages
 
@@ -165,7 +180,7 @@ declared.
 | Rule | Where it is enforced |
 | --- | --- |
 | A version cannot change after it is created | database trigger, plus no code path edits it |
-| A version's files, approvals, the attempt log and the audit log are append-only | database triggers (also against `TRUNCATE`) |
+| A version's files, approvals, the record of when it reached its approval, the attempt log and the audit log are append-only | database triggers (also against `TRUNCATE`) |
 | An approval counts only for the exact files it was given for | fingerprint recomputed from the file records, and each stored object's size and sha256 read back from storage, on every approve, schedule and publish (`services/versions.ts`) |
 | What goes out with the files (the title, the AI label) is what was approved; a producer can add the AI label but never take it away once a version is approved | the approval records both, the publication takes them from it (`services/approvals.ts`, `services/publications.ts`, `services/pieces.ts`) |
 | Nobody approves their own upload, whatever their role. What a producer token uploads is the token's, not its maker's: the version and the approval's record name both | `services/approvals.ts` |
@@ -173,8 +188,12 @@ declared.
 | A new version voids the previous approval and puts anything scheduled on hold | `services/versions.ts` |
 | Only what is approved, for the accounts approved, can be scheduled, even while a new version is being closed | `services/publications.ts` (the variant's lock) |
 | Once a version is approved or anything is scheduled, only an approver can discard the piece | `services/pieces.ts` |
-| A producer token never approves, schedules or manages anything | role resolution in `auth/principal.ts` |
-| A producer token stops working when the admin who made it leaves the brand or stops being its admin | `services/auth.ts`, `services/brand.ts` |
+| A producer token never approves or manages anything, and never cancels or moves a post. It schedules only where the brand lets the agent schedule what is approved, from inside an agent run on that piece | role resolution in `auth/principal.ts`, `services/publications.ts` |
+| Whatever schedules without a person at that moment (the approval of a piece made for a slot, filling free slots, the agent) schedules only a version that is approved, for an account it was approved for, through every check a person's scheduling goes through; each post says who scheduled it (`scheduled_by`: person, auto or agent) | `services/scheduling.ts`, `services/publications.ts` |
+| An approver can keep a version out of all of that (`autoSchedule: false`), and the studio never fills a slot with something approved before it was asked to, or that a person cancelled | `services/approvals.ts`, `services/scheduling.ts` |
+| A slot occurrence is filled once | a unique index, and a lock per brand while free slots are filled |
+| A producer token stops working when the admin who made it leaves the brand, stops being its admin or is deactivated in it | `services/auth.ts`, `services/brand.ts` |
+| A member deactivated in a brand cannot open it, is notified of nothing in it, and keeps their name on everything they did; nobody deactivates themselves, and a brand always keeps an active admin (also on removal and demotion) | `auth/principal.ts`, `services/brand.ts`, `services/notify.ts` |
 | Times are stored in UTC with the brand's IANA zone, so 19:00 stays 19:00 after a clock change | `domain/time.ts`, tested across both clock changes |
 | The approval is re-checked from the stored files right before anything is sent to a network | `services/publisher.ts` |
 | A post that would go out after its hour plus the tolerance is not sent late. Before any repeated send the network is asked, without sending anything, whether it already has the post: if it does the send is finished from it, never made again; if it does not, past the tolerance nothing is sent | `services/publisher.ts`, each connector's `find` |
@@ -186,8 +205,9 @@ declared.
 | An event is written in the same transaction as the change it describes | `services/events.ts`, and the publisher's own steps |
 | The request log never holds a secret from a URL: query values (sign-in links, OAuth and sign-on codes and states, signed media) and prize links are redacted | `app.ts` |
 | A webhook never reaches cloud metadata or link-local addresses, and in production only public ones over https (unless allowed) | `net.ts` |
-| The agent cannot start without both budgets, past its rounds, over a budget (counting what runs in progress were given), or on a piece that already has a run | `services/agent.ts`, a unique index |
-| A producer token uploads a version only inside a run it started on that piece, and no run outlives its longest time | `services/versions.ts`, `services/agent.ts` |
+| The agent cannot start without both budgets, past its rounds, over a budget (counting what runs in progress were given), or on a piece that already has a run. A run that only schedules what is approved (`version.approved`) is not a round | `services/agent.ts`, a unique index |
+| A producer token uploads a version only inside a run it started on that piece (never one that only schedules), and no run outlives its longest time | `services/versions.ts`, `services/agent.ts` |
+| A prize made from a piece hands out only the latest approved version of it, and nothing once the piece is discarded | `services/prizes.ts` |
 | A brand's unfinished big uploads are capped (`STAGING_MAX_GB_PER_BRAND`), and dropped three days after they began | `services/resumable.ts`, `services/versions.ts` |
 | A text kept to be read later is kept as a code beside its English; a change to the English without a code drops the stale translation | `src/i18n`, a database trigger (migration 012) |
 | An agent token cannot answer, resolve or claim to fix a comment marked for people only | `services/comments.ts`, `services/versions.ts` |
@@ -196,10 +216,11 @@ declared.
 
 | Role | Can | Cannot |
 | --- | --- | --- |
-| Admin | Everything an approver can, plus manage accounts, people, rules and API tokens. Someone from another workspace is invited and joins only on accepting | Approve what they uploaded; reset the authenticator of someone who also belongs to a brand they do not manage |
+| Admin | Everything an approver can, plus manage accounts, people (add, deactivate, reactivate, remove), rules and API tokens. Someone from another workspace is invited and joins only on accepting | Approve what they uploaded; reset the authenticator of someone who also belongs to a brand they do not manage; deactivate themselves, or the brand's last active admin |
 | Approver | Everything a reviewer can, plus upload, approve or reject, schedule, move dates, pause the brand | Approve what they uploaded |
 | Reviewer | View, comment, request changes, resolve comments | Approve or schedule |
-| Producer | Create pieces, upload versions, reply to and resolve comments (a person or an API token; a token uploads inside an agent run) | Approve, schedule or touch accounts; discard a piece once something of it is approved or scheduled; take the AI label away after approval |
+| Producer | Create pieces, upload versions, reply to and resolve comments (a person or an API token; a token uploads inside an agent run, and, where the brand allows it, schedules an approved version inside one) | Approve, touch accounts, or schedule otherwise; cancel or move a post; discard a piece once something of it is approved or scheduled; take the AI label away after approval |
+| Any role, deactivated | Nothing in that brand: it is as if they were not a member, except that they are told why | Open the brand, or be notified about it |
 | Reader | View pieces, the calendar and results | Comment |
 
 ## API in brief
@@ -209,15 +230,16 @@ scripts use `Authorization: Bearer <producer token>`. Texts for people come in t
 
 | Method and path | What it does |
 | --- | --- |
-| `POST /brands/:id/pieces`, `POST /pieces/:id/variants` | Create a piece (optionally with `source`, where its project lives) and add a variant |
+| `POST /brands/:id/pieces`, `POST /pieces/:id/variants` | Create a piece (optionally with `source`, where its project lives, and `slot`: `{ id, at }`, the slot occurrence it is made for) and add a variant |
 | `POST /variants/:id/uploads` | Declare files with their sha256 and get signed upload URLs; with `resumable: true` for a big file, an upload to send in pieces instead |
 | `GET`, `PATCH /uploads/:id/resumable`, `POST /uploads/:id/resumable/finish` | Ask how much of a big file has arrived, send the next piece (`Upload-Offset`, raw bytes), and have the whole checked and stored |
 | `POST /variants/:id/versions` | Close a version: the uploaded files, notes and the comments it resolves. With a producer token, only inside a run it started on the piece |
 | `GET /versions/:id/comments?status=open&carried=true` | Open comments with their anchor and frame |
 | `POST /comments/:id/replies` | Reply: fixed, cannot do (and why), or needs a person |
 | `GET /brands/:id/slots?status=empty&from=&to=` | Calendar slots that still ask for content |
-| `POST /versions/:id/approvals`, `/request-changes` | Decide on a version |
-| `POST /versions/:id/publications` | Schedule an approved version on an account |
+| `GET /versions/:id` | A version, with `slot_schedule` (what approving it will schedule at its slot, or why not) and `auto_fill_slots` |
+| `POST /versions/:id/approvals`, `/request-changes` | Decide on a version. An approval may say `autoSchedule: false` (keep it out of anything the studio schedules by itself) and give `scheduleText`, `scheduleFirstComment`; its answer says what was scheduled (`slot_schedule`) |
+| `POST /versions/:id/publications` | Schedule an approved version on an account (a person; or a producer token inside an agent run, where the brand allows it) |
 | `GET /brands/:id/calendar`, `GET /brands/:id/publications/due` | What is planned (with how each post goes out) and what a person has to publish now |
 | `POST /versions/:id/publications/validate` | How a post would go out, and what would block it, before scheduling |
 | `POST /brands/:id/connections/:provider` and the pending-connection routes | Connect, choose accounts, reconnect (`meta`, `google`) |
@@ -227,6 +249,8 @@ scripts use `Authorization: Bearer <producer token>`. Texts for people come in t
 | `GET /brands/:id/webhooks`, `POST` and the routes under `/webhooks/:id` | Manage webhooks, send a test, rotate the secret, read deliveries and send one again |
 | `POST /comments/:id/people-only` | Mark a comment as for people only |
 | `GET`, `PUT /notifications/preferences`; `PUT /notifications/locale` | What a person is told by email and push, and the language it is written in (`es`, `en`, or `null` for the brand's) |
+| `POST /brands/:id/members/:memberId/deactivate`, `/reactivate` | Deactivate a member of the brand, or let them back in (their revoked tokens stay revoked) |
+| `GET`, `POST /brands/:id/prizes` | The prize library; a prize is a `piece` (`pieceId`), a `file` or a `link` |
 
 [docs/phase-3.md](docs/phase-3.md) has the event payloads and how to verify a signature.
 
@@ -255,6 +279,7 @@ See [`.env.example`](.env.example). The ones that matter:
 | `NOTIFY_SECONDS` | How often notifications are sent by email, Slack and push (30 by default) |
 | `META_WEBHOOK_VERIFY_TOKEN` | For prizes: the token Meta sends back when you register `$APP_URL/api/meta/webhook` |
 | `METRICS_SWEEP_SECONDS`, `PRIZE_POLL_SECONDS`, `PRIZE_PURGE_SECONDS` | How often readings are taken, comments of posts with a prize are read, and expired people are deleted (120, 180 and 3600 seconds by default) |
+| `FILL_SLOTS_SECONDS` | How often approved versions are put into free slots, for brands that ask for it (300 by default) |
 | `RUN_WORKERS` | `true` (default) runs the queue inside the API process; `false` when a separate worker runs |
 
 ## Tests

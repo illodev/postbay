@@ -157,6 +157,7 @@ development unless set. Anyone else can turn it on in *Your account*.
   (`POST /api/invitations/:id/accept` or `/decline`). Until then the brand's admins have no say over their account. An invitation lasts
   14 days; admins see the waiting ones (`GET /api/brands/:id/invitations`) and can cancel them (`DELETE …/invitations/:id`).
 - Otherwise an admin anywhere could make, say, another workspace's admin a reader of their brand without asking, and act on that account.
+- Since then a member can also be **deactivated** and reactivated, keeping their history: see [after the phases](after-the-phases.md#deactivating-a-member).
 
 ## Notifications
 
