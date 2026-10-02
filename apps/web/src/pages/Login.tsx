@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api';
+import { Logo } from '../components/Logo';
 import { useConfig } from '../App';
 import { errorMessage, ErrorBox, Field, Spinner } from '../components/ui';
 import { LOCALES, t, tMaybe, useLocale, type Locale } from '../i18n';
@@ -11,10 +12,7 @@ import '../styles/settings.css';
 export function AuthBrand() {
   return (
     <div className="auth-brand">
-      <span className="logo-mark" aria-hidden="true">
-        <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z" fill="currentColor" style={{ color: 'var(--accent-contrast)' }} /></svg>
-      </span>
-      <span>{t('layout.appName')}</span>
+      <Logo height={30} label={t('layout.appName')} />
     </div>
   );
 }

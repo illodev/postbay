@@ -8,6 +8,7 @@ import { useSession } from '../lib/session';
 import { Avatar, displayName } from './Avatar';
 import { PaletteProvider, usePalette } from './CommandPalette';
 import { Icon, type IconName } from './icons';
+import { LogoMark } from './Logo';
 import { Dialog, ErrorBox, Field, Menu, MenuItem, MenuLabel, MenuSeparator, Popover, Select, Tip, useToast, errorMessage } from './ui';
 
 export interface Campaign {
@@ -335,7 +336,7 @@ function Shell() {
     <div className={`shell ${menu ? 'menu-open' : ''}`}>
       <nav className="rail" aria-label={t('layout.nav.main')}>
         <NavLink to="/" className="rail-logo" aria-label={t('layout.home')}>
-          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1.5v9l7-4.5z" fill="#fff" /></svg>
+          <LogoMark size={26} />
         </NavLink>
         <RailLink to="/" end icon="home" label={t('layout.nav.home')} />
         <RailLink to="/pieces" icon="pieces" label={t('layout.nav.pieces')} />
