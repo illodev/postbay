@@ -185,12 +185,27 @@ export async function addVariant(ctx: Ctx, p: Principal, pieceId: string, raw: u
   });
 }
 
-/** Discarding is allowed from any state: the piece stops being live and anything scheduled is cancelled. */
+/**
+ * Discarding is allowed from any state: the piece stops being live and anything scheduled is cancelled. Cancelling what is scheduled
+ * is an approver's decision, so once a version is approved or something is scheduled, a producer (a person or a token) can no longer
+ * discard the piece: an approver has to.
+ */
 export async function discardPiece(ctx: Ctx, p: Principal, pieceId: string) {
   return ctx.db.tx(async (db) => {
     const piece = await loadPiece(db, pieceId, true);
-    await authorize(db, p, piece.brand_id, 'piece.discard');
+    const role = await authorize(db, p, piece.brand_id, 'piece.discard');
     if (piece.discarded_at) return piece;
+    if (!(p.kind === 'user' && can(role, 'publication.schedule'))) {
+      const committed = await db.one(
+        `select 1 from variant v where v.piece_id = $1 and (
+           exists (select 1 from version ver where ver.variant_id = v.id and ver.review_state = 'approved')
+           or exists (select 1 from publication pub where pub.variant_id = v.id
+                        and pub.status in ('scheduled','awaiting_reapproval','on_hold','preparing','ready','publishing')))
+         limit 1`,
+        [pieceId],
+      );
+      if (committed) throw forbidden('This piece has an approved version or something scheduled: an approver has to discard it');
+    }
     await db.query(
       `update version set review_state = 'discarded'
        where variant_id in (select id from variant where piece_id = $1) and review_state in ('in_review','changes_requested','approved')`,
