@@ -12,7 +12,7 @@ import { notifyRoles } from './notify.js';
 import { runCovering } from './agent.js';
 import { refreshPieceState } from './pieces.js';
 import { probeMeta } from './renditions.js';
-import { CHUNK_BYTES, RESUME_TTL_SEC } from './resumable.js';
+import { CHUNK_BYTES, resumeExpiry, RESUME_TTL_SEC, STAGING_LIMITS } from './resumable.js';
 
 const MAX_BYTES = 4 * 1024 ** 3;
 const UPLOAD_TTL_SEC = 3600;
@@ -72,38 +72,56 @@ export async function requestUploads(ctx: Ctx, p: Principal, variantId: string, 
   await authorize(ctx.db, p, variant.brand_id, 'version.upload');
   if (variant.piece_discarded) throw conflict('piece_discarded', 'The piece is discarded');
   const a = actorCols(p);
-  const out = [];
-  for (const f of input.files) {
-    if (f.resumable) {
-      const again = await ctx.db.one<{ id: string; received_bytes: string; completed_at: Date | null }>(
-        `update upload set expires_at = now() + make_interval(secs => $8)
-         where id = (select id from upload where variant_id = $1 and resumable and consumed_at is null and expires_at > now()
-                       and sha256 = $2 and bytes = $3 and name = $4 and mime = $5
-                       and created_by_user is not distinct from $6 and created_by_token is not distinct from $7
-                     order by created_at desc limit 1)
-         returning id, received_bytes, completed_at`,
-        [variantId, f.sha256, f.bytes, f.name, f.mime, a.user, a.token, RESUME_TTL_SEC],
+  return ctx.db.tx(async (db) => {
+    // Big files wait on this server's disk until they are whole, so what a brand may have waiting there is capped. One request at a
+    // time per brand counts it, so two at once cannot both squeeze under the cap.
+    if (input.files.some((f) => f.resumable)) await db.query(`select pg_advisory_xact_lock(hashtext('staging:' || $1::text))`, [variant.brand_id]);
+    let staged: number | null = null;
+    const out = [];
+    for (const f of input.files) {
+      if (f.resumable) {
+        const again = await db.one<{ id: string; received_bytes: string; completed_at: Date | null }>(
+          `update upload set expires_at = ${resumeExpiry('$8', '$9')}
+           where id = (select id from upload where variant_id = $1 and resumable and consumed_at is null and expires_at > now()
+                         and sha256 = $2 and bytes = $3 and name = $4 and mime = $5
+                         and created_by_user is not distinct from $6 and created_by_token is not distinct from $7
+                       order by created_at desc limit 1)
+           returning id, received_bytes, completed_at`,
+          [variantId, f.sha256, f.bytes, f.name, f.mime, a.user, a.token, RESUME_TTL_SEC, STAGING_LIMITS.maxAgeSec],
+        );
+        if (again) {
+          out.push({ uploadId: again.id, name: f.name, resumable: { offset: Number(again.received_bytes), bytes: f.bytes, complete: !!again.completed_at, chunkSize: CHUNK_BYTES } });
+          continue;
+        }
+        staged ??= Number((await db.one<{ n: string }>(
+          `select coalesce(sum(bytes), 0) as n from upload
+           where brand_id = $1 and resumable and completed_at is null and consumed_at is null and expires_at > now()`,
+          [variant.brand_id],
+        ))!.n);
+        if (staged + f.bytes > STAGING_LIMITS.maxPendingBytesPerBrand) {
+          const gb = (n: number) => `${(n / 1024 ** 3).toFixed(1)} GB`;
+          throw conflict('staging_full',
+            `This brand already has ${gb(staged)} of unfinished uploads waiting on the server (at most ${gb(STAGING_LIMITS.maxPendingBytesPerBrand)}). Finish or abandon those first: an unfinished upload is dropped a day after its last piece.`,
+            { pendingBytes: staged, maxBytes: STAGING_LIMITS.maxPendingBytesPerBrand });
+        }
+        staged += f.bytes;
+      }
+      const id = randomUUID();
+      const key = `brands/${variant.brand_id}/pieces/${variant.piece_id}/${id}/${safeName(f.name)}`;
+      await db.query(
+        `insert into upload (id, brand_id, variant_id, created_by_user, created_by_token, storage_key, name, mime, bytes, sha256, resumable, expires_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now() + make_interval(secs => $12))`,
+        [id, variant.brand_id, variantId, a.user, a.token, key, f.name, f.mime, f.bytes, f.sha256, f.resumable, f.resumable ? RESUME_TTL_SEC : UPLOAD_TTL_SEC],
       );
-      if (again) {
-        out.push({ uploadId: again.id, name: f.name, resumable: { offset: Number(again.received_bytes), bytes: f.bytes, complete: !!again.completed_at, chunkSize: CHUNK_BYTES } });
+      if (f.resumable) {
+        out.push({ uploadId: id, name: f.name, resumable: { offset: 0, bytes: f.bytes, complete: false, chunkSize: CHUNK_BYTES } });
         continue;
       }
+      const put = await ctx.storage.presignPut(key, { mime: f.mime, bytes: f.bytes, sha256: f.sha256, expiresSec: UPLOAD_TTL_SEC });
+      out.push({ uploadId: id, name: f.name, ...put });
     }
-    const id = randomUUID();
-    const key = `brands/${variant.brand_id}/pieces/${variant.piece_id}/${id}/${safeName(f.name)}`;
-    await ctx.db.query(
-      `insert into upload (id, brand_id, variant_id, created_by_user, created_by_token, storage_key, name, mime, bytes, sha256, resumable, expires_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now() + make_interval(secs => $12))`,
-      [id, variant.brand_id, variantId, a.user, a.token, key, f.name, f.mime, f.bytes, f.sha256, f.resumable, f.resumable ? RESUME_TTL_SEC : UPLOAD_TTL_SEC],
-    );
-    if (f.resumable) {
-      out.push({ uploadId: id, name: f.name, resumable: { offset: 0, bytes: f.bytes, complete: false, chunkSize: CHUNK_BYTES } });
-      continue;
-    }
-    const put = await ctx.storage.presignPut(key, { mime: f.mime, bytes: f.bytes, sha256: f.sha256, expiresSec: UPLOAD_TTL_SEC });
-    out.push({ uploadId: id, name: f.name, ...put });
-  }
-  return out;
+    return out;
+  });
 }
 
 interface Resolved {
