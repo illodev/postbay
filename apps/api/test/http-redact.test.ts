@@ -35,11 +35,13 @@ describe('removing secrets from what is recorded', () => {
 
   it('removes keys that name a credential, and anything shaped like a JWT wherever it is', () => {
     const out = JSON.stringify(redact({
-      accessJwt: JWT, refreshJwt: REFRESH, state: 'csrf-state', code: 'auth-code', client_secret: 's', sessionUrl: 'https://upload.example/s/1',
-      note: `Bearer ${JWT} was refused`, list: [{ deep: JWT }], fields: 'id,name',
+      accessJwt: JWT, refreshJwt: REFRESH, code: 'auth-code', client_secret: 's', sessionUrl: 'https://upload.example/s/1',
+      note: `Bearer ${JWT} was refused`, list: [{ deep: JWT }], fields: 'id,name', jobStatus: { state: 'JOB_STATE_FAILED' },
+      redirect: 'https://app.example/api/oauth/callback?state=csrf-state&code=c0de',
     }));
-    for (const secret of [JWT, REFRESH, 'csrf-state', 'auth-code', '"s"', 'upload.example/s/1']) expect(out).not.toContain(secret);
+    for (const secret of [JWT, REFRESH, 'csrf-state', 'auth-code', 'c0de', '"s"', 'upload.example/s/1']) expect(out).not.toContain(secret);
     expect(out).toContain('id,name');
+    expect(out).toContain('JOB_STATE_FAILED'); // a job's state is not a secret
   });
 
   it('removes every query value of a signed address, and the credentials of any other', () => {

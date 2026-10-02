@@ -185,13 +185,15 @@ function guardedFetch(u: URL, o: { method: string; headers: Record<string, strin
 
 /**
  * Secrets are found by their shape, not by a list of the names the networks happened to use when this was written (a Bluesky
- * session is `accessJwt`, Meta's is `access_token`, an OAuth `state` is as good as a password for a few minutes):
+ * session is `accessJwt`, Meta's is `access_token`, an OAuth `state` in an address is as good as a password for a few minutes):
  *  - a key that names a credential has its value removed, whatever the value looks like;
  *  - a value that looks like a JWT is removed wherever it is;
  *  - an address that is signed (it carries a signature, a policy or an expiry in its query) loses every query value, because a
  *    signed address IS the credential; any other address loses the values of the parameters whose names name a credential.
  */
-const SECRET_KEY = /token|secret|authori[sz]ation|password|passwd|jwt|cookie|session|credential|signature|api[_-]?key|code_verifier|^code$|^state$|^sig$|^key$|^policy$/i;
+const SECRET_KEY = /token|secret|authori[sz]ation|password|passwd|jwt|cookie|session|credential|signature|api[_-]?key|code_verifier|^code$|^sig$|^key$|^policy$/i;
+/** In an address, an OAuth `state` is a credential too (in a body, `state` is a job's or a post's, worth keeping). */
+const SECRET_PARAM = new RegExp(`${SECRET_KEY.source}|^state$`, 'i');
 const JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g;
 /** Query parameters that only a signed address carries (S3, Google Cloud Storage, Azure, CloudFront, Meta's CDN, this app's own media links). */
 const SIGNED_PARAM = /^(x-amz-[a-z-]+|x-goog-[a-z-]+|signature|sig|sv|se|sp|sr|skoid|policy|key-pair-id|expires|exp|oh|oe|_nc_[a-z_]+|token|hmac|hash)$/i;
@@ -214,7 +216,7 @@ function redactOneUrl(raw: string): string {
     const value = p.raw.slice(p.raw.indexOf('=') + 1);
     let decoded = value;
     try { decoded = decodeURIComponent(value.replace(/\+/g, ' ')); } catch { /* keep it as written */ }
-    return signed || SECRET_KEY.test(p.name) || new RegExp(JWT.source).test(decoded) ? `${p.raw.slice(0, p.raw.indexOf('='))}=[removed]` : p.raw;
+    return signed || SECRET_PARAM.test(p.name) || new RegExp(JWT.source).test(decoded) ? `${p.raw.slice(0, p.raw.indexOf('='))}=[removed]` : p.raw;
   });
   return `${raw.slice(0, q)}?${kept.join('&')}`;
 }
