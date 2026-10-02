@@ -179,7 +179,10 @@ export interface VersionDetail {
   author_user_id: string | null;
   by_agent: boolean;
   /** A person, or a producer token and the person who made it (who is not, for approval, its author). */
-  uploaded_by?: { kind: 'user'; id: string; name: string | null } | { kind: 'token'; id: string; name: string; created_by: { id: string; name: string | null } } | null;
+  uploaded_by?:
+    | { kind: 'user'; id: string; name: string | null; email?: string | null }
+    | { kind: 'token'; id: string; name: string; created_by: { id: string; name: string | null; email?: string | null } }
+    | null;
   variant: { id: string; format: string; style: string; piece_id: string };
   piece: { id: string; title: string; kind: string; brief: string; ai_generated: boolean; review_state: PieceState };
   brand: { name: string; timezone: string; approval_rules: BrandSettings['rules']; paused: boolean };
@@ -188,9 +191,18 @@ export interface VersionDetail {
   versions: { id: string; number: number }[];
 }
 
+/** The colours a reviewer can draw with (the API names them; the review page gives each its hue). */
+export type DrawColour = 'yellow' | 'red' | 'green' | 'blue' | 'white';
+
+/** A shape drawn over the frame or the page, in fractions of it (0..1 from the top-left corner). */
+export type Shape =
+  | { type: 'path'; points: [number, number][]; color: DrawColour }
+  | { type: 'rect'; x: number; y: number; w: number; h: number; color: DrawColour }
+  | { type: 'arrow'; x1: number; y1: number; x2: number; y2: number; color: DrawColour };
+
 export type Anchor =
-  | { type: 'time'; t: number; t_end?: number; position?: number; track?: number; cue?: number; cue_text?: string }
-  | { type: 'region'; page: number; x: number; y: number; w: number; h: number };
+  | { type: 'time'; t: number; t_end?: number; position?: number; track?: number; cue?: number; cue_text?: string; drawing?: Shape[] }
+  | { type: 'region'; page: number; x: number; y: number; w: number; h: number; drawing?: Shape[] };
 
 export interface Reply {
   id: string;

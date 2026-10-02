@@ -1,14 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, type Account, type Anchor, type CommentThread, type Integrations, type VersionDetail } from '../api';
-import { ago, CommentsPanel, numberThreads, type ComposeHint } from '../components/comments';
-import { SubtitlePanel } from '../components/Subtitles';
+import { api, type Account, type Anchor, type CommentThread, type DrawColour, type Integrations, type PieceDetail, type Shape, type VersionDetail, type VersionSummary } from '../api';
+import { Avatar, displayName } from '../components/Avatar';
+import { ago, CommentsPanel, NO_FILTER, numberThreads, type CommentFilter, type ComposeHint } from '../components/comments';
+import type { Tool } from '../components/Drawing';
+import { Icon } from '../components/icons';
 import { approvedAccountIds, ScheduleDialog } from '../components/publications';
-import { Chip, CopyButton, Dialog, ErrorBox, Field, Spinner, useToast } from '../components/ui';
-import { CompareStage, liveVideo, Stage, timecode, type Jump, type SafeZone } from '../components/viewer';
-import { t } from '../i18n';
-import { fmtBytes, fmtDateTime, NETWORK_LABEL } from '../lib/format';
+import { SubtitlePanel } from '../components/Subtitles';
+import { Chip, ConfirmDialog, CopyButton, Dialog, ErrorBox, Field, NetMark, Skeleton, useToast } from '../components/ui';
+import { CompareStage, liveVideo, shortName, Stage, timecode, type DrawProps, type Jump, type SafeZone } from '../components/viewer';
+import { t, tMaybe } from '../i18n';
+import { fmtBytes, fmtDateTime, NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import { playhead } from '../lib/playhead';
 import { useSession } from '../lib/session';
 import { useStableUrls } from '../lib/stableUrls';
@@ -16,11 +19,56 @@ import '../styles/review.css';
 
 const LIVE = ['in_review', 'changes_requested', 'approved'];
 
+/** Something kept in this browser between visits (which panel is open, the colour to draw with), and never required. */
+function useKept<T extends string>(key: string, initial: T): [T, (v: T) => void] {
+  const [v, setV] = useState<T>(() => {
+    try { return (localStorage.getItem(key) as T | null) ?? initial; } catch { return initial; }
+  });
+  const set = useCallback((x: T) => { setV(x); try { localStorage.setItem(key, x); } catch { /* not kept */ } }, [key]);
+  return [v, set];
+}
+
+/** Closes a popover when the pointer goes down outside it, or on Escape. */
+function useDismiss(open: boolean, close: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && close();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
+  }, [open, close]);
+  return ref;
+}
+
 /** "3 min ago", or "just now". */
 function agoPhrase(iso: string): string {
   const short = ago(iso);
   return short === t('review.ago.now') ? t('review.ago.justNow') : t('review.ago.phrase', { when: short });
 }
+
+const formatName = (format: string) => tMaybe(`piece.formatName.${format}`, format);
+const variantName = (v: { format: string; style: string }) => `${formatName(v.format)} · ${v.style || tMaybe(`piece.formatHint.${v.format}`, v.format)}`;
+
+/** Who uploaded a version, said for people: a person's short name, or the agent and whose token it used. */
+function uploaderOf(v: VersionDetail): { who: string; via?: string; agent: boolean; title?: string } {
+  const u = v.uploaded_by;
+  if (u?.kind === 'token') {
+    const owner = shortName(displayName(u.created_by.name, u.created_by.email ?? null));
+    const known = owner && owner !== '?';
+    return {
+      who: t('review.left.agent'),
+      via: known ? t('review.uploader.tokenOf', { owner }) : undefined,
+      agent: true,
+      title: known ? t('review.uploader.agent', { owner, name: u.name }) : t('review.uploader.agentAlone', { name: u.name }),
+    };
+  }
+  if (u?.kind === 'user') return { who: shortName(displayName(u.name, u.email ?? null)), agent: false };
+  return { who: v.author ? shortName(v.author) : t('review.decision.unknown'), agent: v.by_agent };
+}
+
+// ───────────────────────────── decisions ─────────────────────────────
 
 function DecisionDialog({ version, decision, openCount, onClose, onSeeComments }: {
   version: VersionDetail;
@@ -77,8 +125,9 @@ function DecisionDialog({ version, decision, openCount, onClose, onSeeComments }
               <div className="stack">
                 {usable.length === 0 && <span className="muted">{t('review.approve.noAccounts')}</span>}
                 {usable.map((a) => (
-                  <label key={a.id} className="check">
+                  <label key={a.id} className="check rv-acct">
                     <input type="checkbox" checked={chosen.has(a.id)} onChange={() => toggle(a.id)} />
+                    <NetMark network={a.network} size="sm" />
                     <span>{NETWORK_LABEL[a.network] ?? a.network} · {a.display_name}</span>
                   </label>
                 ))}
@@ -115,7 +164,8 @@ function DecisionDialog({ version, decision, openCount, onClose, onSeeComments }
   );
 }
 
-function RequestChangesDialog({ version, openCount, onClose }: { version: VersionDetail; openCount: number; onClose: () => void }) {
+/** Asking for changes: the open comments go back with the version; with none open, a note says what to change. */
+function RequestChanges({ version, openCount, onClose }: { version: VersionDetail; openCount: number; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [note, setNote] = useState('');
@@ -126,57 +176,201 @@ function RequestChangesDialog({ version, openCount, onClose }: { version: Versio
       toast(t('review.changes.done'));
       onClose();
     },
+    onError: () => {},
   });
   return (
-    <Dialog title={t('review.changes.title')} onClose={onClose}>
-      <form className="stack" onSubmit={(e) => { e.preventDefault(); send.mutate(); }}>
-        <p className="muted">{openCount > 0 ? t('review.changes.withOpen', { count: openCount }) : t('review.changes.noneOpen')}</p>
-        <Field label={openCount > 0 ? t('review.changes.noteOptional') : t('review.changes.what')}>
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} />
-        </Field>
-        {send.error && <ErrorBox error={send.error} />}
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
-          <button className="btn btn-primary" disabled={send.isPending || (openCount === 0 && !note.trim())}>{t('review.changes.submit')}</button>
+    <ConfirmDialog
+      title={t('review.changes.title')}
+      confirmLabel={t('review.changes.submit')}
+      busy={send.isPending || (openCount === 0 && !note.trim())}
+      onConfirm={() => send.mutate()}
+      onCancel={onClose}
+      text={
+        <div className="stack rv-changes">
+          <p className="muted">{openCount > 0 ? t('review.changes.withOpen', { count: openCount }) : t('review.changes.noneOpen')}</p>
+          <Field label={openCount > 0 ? t('review.changes.noteOptional') : t('review.changes.what')}>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} autoFocus={openCount === 0} />
+          </Field>
+          {send.error && <ErrorBox error={send.error} />}
         </div>
-      </form>
-    </Dialog>
+      }
+    />
   );
 }
 
-/** The versions of the variant as compact segments, and the version to compare with. */
-function VersionSwitch({ v, compareId, onCompare }: { v: VersionDetail; compareId: string; onCompare: (id: string) => void }) {
-  const navigate = useNavigate();
-  const sorted = [...v.versions].sort((a, b) => a.number - b.number);
-  // Many versions: the last five (and the one being looked at) as segments, the rest in a list.
-  const many = sorted.length > 6;
-  const shown = many ? sorted.filter((x, i) => i >= sorted.length - 5 || x.id === v.id) : sorted;
-  const hidden = many ? sorted.filter((x) => !shown.includes(x)) : [];
-  const others = sorted.filter((x) => x.id !== v.id);
+type DialogKind = null | 'approve' | 'reject' | 'changes' | 'schedule';
+
+/** What the person looking at a version can decide on it, and what to say when they cannot. */
+function useDecision(v: VersionDetail, openCount: number) {
+  const { me, can } = useSession();
+  const mine = v.approvals.find((a) => a.approver === (me.user.name ?? me.user.email) || a.approver === me.user.email);
+  const isAuthor = v.author_user_id === me.user.id;
+  const valid = v.approvals.filter((a) => a.decision === 'approve' && a.matches_fingerprint).length;
+  const required = v.brand.approval_rules.required_approvals;
+  const latest = [...v.versions].sort((a, b) => b.number - a.number)[0];
+  const inReview = v.review_state === 'in_review';
+  const canDecide = inReview && can('approve') && !isAuthor && !mine;
+  const approveBlocked = inReview && can('approve') ? (isAuthor ? t('review.decision.isAuthor') : mine ? (mine.decision === 'approve' ? t('review.decision.alreadyApproved') : t('review.decision.alreadyRejected')) : null) : null;
+  // What the state chip says: the state, and for an approved version, for how many accounts.
+  const stateLabel = v.review_state === 'approved' ? t('review.decision.approvedFor', { count: approvedAccountIds(v).length }) : undefined;
+  const approvals = inReview && required > 1 ? { done: valid, count: required } : null;
+  return { can, inReview, canDecide, approveBlocked, latest, mine, isAuthor, stateLabel, approvals };
+}
+
+/** The state, quietly: a dot and a word, and how many approvals it has when it needs more than one. */
+function StateLine({ v, openCount }: { v: VersionDetail; openCount: number }) {
+  const d = useDecision(v, openCount);
   return (
-    <div className="rv-versions">
-      <nav className="rv-seg" aria-label={t('review.versions.label')}>
-        {hidden.length > 0 && (
-          <select className="rv-seg-more" aria-label={t('review.versions.older')} value="" onChange={(e) => e.target.value && navigate(`/review/${e.target.value}`)}>
-            <option value="">…</option>
-            {hidden.map((x) => <option key={x.id} value={x.id}>v{x.number}</option>)}
-          </select>
+    <span className="rv-state">
+      <Chip state={v.review_state} label={d.stateLabel} />
+      {d.approvals && <span className="rv-meta-n" title={t('review.decision.approvalsOf', d.approvals)}><Icon name="check" size={13} />{d.approvals.done}/{d.approvals.count}</span>}
+    </span>
+  );
+}
+
+/** The decision buttons: in the top bar on a wide screen, at the bottom of the screen on a phone. */
+function DecisionButtons({ v, openCount, onDialog, compact }: { v: VersionDetail; openCount: number; onDialog: (d: DialogKind) => void; compact?: boolean }) {
+  const d = useDecision(v, openCount);
+  if (d.inReview) {
+    return (
+      <>
+        {d.can('requestChanges') && <button type="button" className="btn rv-btn" onClick={() => onDialog('changes')}>{t('review.decision.requestChanges')}</button>}
+        {d.can('approve') && (
+          <button type="button" className="btn btn-primary rv-btn" onClick={() => onDialog('approve')} disabled={!!d.approveBlocked} title={d.approveBlocked ?? undefined}>
+            {!compact && <Icon name="check" size={15} />}{t('review.decision.approve')}
+          </button>
         )}
-        {shown.map((x) => x.id === v.id ? (
-          <span key={x.id} className="on" aria-current="page" title={t('review.versions.current', { n: x.number })}>v{x.number}</span>
-        ) : (
-          <Link key={x.id} to={`/review/${x.id}`} title={t('review.versions.open', { n: x.number })}>v{x.number}</Link>
-        ))}
-      </nav>
-      {others.length > 0 && (
-        <div className={`rv-cmp ${compareId ? 'on' : ''}`}>
-          {compareId && <span className="rv-cmp-l">{t('review.compare.against')}</span>}
-          <select aria-label={t('review.compare.with')} value={compareId} onChange={(e) => onCompare(e.target.value)}>
-            <option value="">{compareId ? t('review.compare.none') : t('review.compare.button')}</option>
-            {others.map((x) => <option key={x.id} value={x.id}>v{x.number}</option>)}
-          </select>
-          {compareId && (
-            <button type="button" className="rv-cmp-x" onClick={() => onCompare('')} aria-label={t('review.compare.stop')} title={t('review.compare.stop')}>×</button>
+      </>
+    );
+  }
+  if (v.review_state === 'changes_requested' && d.can('upload')) {
+    return <Link className="btn rv-btn" to={`/pieces/${v.piece.id}`}><Icon name="upload" size={15} />{t('review.decision.uploadNew')}</Link>;
+  }
+  if (v.review_state === 'approved' && d.can('schedule')) {
+    return <button type="button" className="btn btn-primary rv-btn" onClick={() => onDialog('schedule')}><Icon name="calendar" size={15} />{t('review.decision.schedule')}</button>;
+  }
+  if (v.review_state === 'superseded' && d.latest && d.latest.id !== v.id) {
+    return <Link className="btn rv-btn" to={`/review/${d.latest.id}`}>{t('review.decision.toLatest', { n: d.latest.number })}</Link>;
+  }
+  return null;
+}
+
+/** The "⋯" menu: rejecting (the decision nobody should press by mistake), the piece, and the link to this review. */
+function MoreMenu({ v, openCount, onDialog }: { v: VersionDetail; openCount: number; onDialog: (d: DialogKind) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss(open, () => setOpen(false));
+  const toast = useToast();
+  const d = useDecision(v, openCount);
+  return (
+    <div ref={ref} className="rv-menu-wrap">
+      <button type="button" className="rv-ic" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} aria-label={t('review.decision.menu')} title={t('review.decision.menu')}>
+        <Icon name="more" size={18} />
+      </button>
+      {open && (
+        <div className="rv-pop rv-pop-right" role="menu">
+          {d.canDecide && (
+            <button type="button" role="menuitem" className="rv-pop-item danger" onClick={() => { setOpen(false); onDialog('reject'); }}>
+              <Icon name="ban" size={15} />{t('review.decision.reject')}
+            </button>
+          )}
+          <Link role="menuitem" className="rv-pop-item" to={`/pieces/${v.piece.id}`} onClick={() => setOpen(false)}><Icon name="external" size={15} />{t('review.decision.toPiece')}</Link>
+          <button
+            type="button"
+            role="menuitem"
+            className="rv-pop-item"
+            onClick={async () => {
+              setOpen(false);
+              try { await navigator.clipboard.writeText(window.location.href); toast(t('common.copied')); } catch { toast(t('common.copyFailed'), 'error'); }
+            }}
+          >
+            <Icon name="link" size={15} />{t('review.decision.copyLink')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────────── top bar ─────────────────────────────
+
+/** The version being looked at, as a button: its menu lists every version of the variant, who made it and when. */
+function VersionMenu({ v, versions }: { v: VersionDetail; versions: VersionSummary[] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss(open, () => setOpen(false));
+  const navigate = useNavigate();
+  const list: (Partial<VersionSummary> & { id: string; number: number })[] = [...(versions.length ? versions : v.versions)].sort((a, b) => b.number - a.number);
+  return (
+    <div ref={ref} className="rv-menu-wrap">
+      <button type="button" className="rv-vbtn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} title={t('review.versions.button', { n: v.number })}>
+        <span className="mono">V{v.number}</span><Icon name="chevronDown" size={14} />
+      </button>
+      {open && (
+        <div className="rv-pop rv-vmenu" role="menu" aria-label={t('review.versions.label')}>
+          <div className="rv-pop-h">{t('review.versions.label')}</div>
+          {list.map((x) => (
+            <button
+              key={x.id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={x.id === v.id}
+              className="rv-pop-item rv-vrow"
+              onClick={() => { setOpen(false); if (x.id !== v.id) navigate(`/review/${x.id}`); }}
+            >
+              <span className="rv-vrow-n mono">V{x.number}</span>
+              <span className={`rv-vrow-who ${x.by_agent ? 'agent' : ''}`}>{x.by_agent ? t('review.left.agent') : x.author ? shortName(x.author) : ''}</span>
+              <span className="grow" />
+              {x.review_state && <Chip state={x.review_state} />}
+              {x.created_at && <span className="rv-vrow-when">{ago(x.created_at)}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Comparing with another version: the previous one at a click, any other from the menu, and off again. */
+function CompareControl({ v, compareId, onCompare }: { v: VersionDetail; compareId: string; onCompare: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss(open, () => setOpen(false));
+  const others = [...v.versions].filter((x) => x.id !== v.id).sort((a, b) => b.number - a.number);
+  if (!others.length) return null;
+  const previous = others.find((x) => x.number < v.number) ?? others[0]!;
+  const on = others.find((x) => x.id === compareId);
+  return (
+    <div ref={ref} className={`rv-menu-wrap rv-cmpctl ${on ? 'on' : ''}`}>
+      {on ? (
+        <>
+          <button type="button" className="rv-cmp-on" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} title={t('review.compare.pick')}>
+            <Icon name="compare" size={15} /><span className="rv-cmp-label">{t('review.compare.comparing', { n: on.number })}</span><Icon name="chevronDown" size={13} />
+          </button>
+          <button type="button" className="rv-cmp-x" onClick={() => onCompare('')} aria-label={t('review.compare.stop')} title={t('review.compare.stop')}><Icon name="x" size={14} /></button>
+        </>
+      ) : (
+        <>
+          <button type="button" className="rv-ghost" onClick={() => onCompare(previous.id)} title={t('review.compare.withN', { n: previous.number })}>
+            <Icon name="compare" size={15} /><span className="rv-cmp-label">{t('review.compare.withN', { n: previous.number })}</span>
+          </button>
+          {others.length > 1 && (
+            <button type="button" className="rv-ghost rv-ghost-ic" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} aria-label={t('review.compare.pick')} title={t('review.compare.pick')}>
+              <Icon name="chevronDown" size={13} />
+            </button>
+          )}
+        </>
+      )}
+      {open && (
+        <div className="rv-pop" role="menu" aria-label={t('review.compare.pick')}>
+          <div className="rv-pop-h">{t('review.compare.with')}</div>
+          {others.map((x) => (
+            <button key={x.id} type="button" role="menuitemradio" aria-checked={x.id === compareId} className="rv-pop-item" onClick={() => { setOpen(false); onCompare(x.id); }}>
+              <span className="mono">V{x.number}</span>
+            </button>
+          ))}
+          {on && (
+            <>
+              <div className="rv-pop-sep" />
+              <button type="button" role="menuitem" className="rv-pop-item" onClick={() => { setOpen(false); onCompare(''); }}>{t('review.compare.stop')}</button>
+            </>
           )}
         </div>
       )}
@@ -184,7 +378,34 @@ function VersionSwitch({ v, compareId, onCompare }: { v: VersionDetail; compareI
   );
 }
 
-/** What this version brings, three lines at most until asked for the rest. */
+/** Everyone who took part in this version: who uploaded it, who commented or answered, who decided. */
+function Participants({ v, threads }: { v: VersionDetail; threads: CommentThread[] }) {
+  const people = new Map<string, number>();
+  let agent = v.by_agent;
+  const add = (name: string | null | undefined) => { if (name) people.set(shortName(name), (people.get(shortName(name)) ?? 0) + 1); };
+  if (!v.by_agent) add(v.author);
+  for (const c of threads) {
+    add(c.author);
+    for (const r of c.replies) if (r.by_agent) agent = true; else add(r.author);
+  }
+  for (const a of v.approvals) add(a.approver);
+  const names = [...people].sort((a, b) => b[1] - a[1]).map(([n]) => n);
+  const shown = names.slice(0, agent ? 3 : 4);
+  const more = names.length - shown.length;
+  if (!names.length && !agent) return null;
+  const all = [...names, ...(agent ? [t('review.left.agent')] : [])].join(', ');
+  return (
+    <span className="avatars rv-people" title={all} role="group" aria-label={`${t('review.people.label')}: ${all}`}>
+      {shown.map((n) => <Avatar key={n} name={n} size={26} title="" />)}
+      {agent && <Avatar agent size={26} title="" />}
+      {more > 0 && <span className="avatar rv-people-more">+{more}</span>}
+    </span>
+  );
+}
+
+// ───────────────────────────── left pane ─────────────────────────────
+
+/** What this version brings, a few lines until asked for the rest. */
 function Notes({ text }: { text: string }) {
   const ref = useRef<HTMLParagraphElement>(null);
   const [long, setLong] = useState(false);
@@ -194,85 +415,110 @@ function Notes({ text }: { text: string }) {
     if (el && !open) setLong(el.scrollHeight > el.clientHeight + 1);
   }, [text, open]);
   return (
-    <div className="rv-notes">
-      <span className="rv-notes-h">{t('review.decision.notes')}</span>
-      <p ref={ref} className={open ? '' : 'clamp'}>{text}</p>
+    <>
+      <p ref={ref} className={`rv-notes ${open ? '' : 'clamp'}`}>{text}</p>
       {(long || open) && <button type="button" className="rv-link" onClick={() => setOpen(!open)}>{open ? t('review.decision.less') : t('review.decision.more')}</button>}
-    </div>
+    </>
   );
 }
 
-function DecisionCard({ v, threads, openCount, onDialog }: {
-  v: VersionDetail;
-  threads: CommentThread[];
-  openCount: number;
-  onDialog: (d: 'approve' | 'reject' | 'changes' | 'schedule') => void;
-}) {
-  const { me, can } = useSession();
-  const mine = v.approvals.find((a) => a.approver === (me.user.name ?? me.user.email) || a.approver === me.user.email);
-  const isAuthor = v.author_user_id === me.user.id;
-  const validApprovals = v.approvals.filter((a) => a.decision === 'approve' && a.matches_fingerprint).length;
-  const required = v.brand.approval_rules.required_approvals;
-  // What this version answers: the comments from earlier versions, and how many of them it resolved.
+/** Who uploaded the version and when, as a meta line: the agent's mark and whose token, or the person. */
+function Uploader({ v, full }: { v: VersionDetail; full?: boolean }) {
+  const up = uploaderOf(v);
+  return (
+    <p className="rv-up" title={up.title}>
+      {up.agent ? <Avatar agent size={18} /> : <Avatar name={up.who} size={18} />}
+      <span>
+        <b className={up.agent ? 'agent' : ''}>{up.who}</b>
+        {up.via && <> · {up.via}</>}
+        {' · '}<time dateTime={v.created_at} title={fmtDateTime(v.created_at, v.brand.timezone)}>{full ? fmtDateTime(v.created_at, v.brand.timezone) : agoPhrase(v.created_at)}</time>
+      </span>
+    </p>
+  );
+}
+
+function VariantThumb({ versionId }: { versionId?: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!versionId || failed) return <span className="rv-vthumb ph" aria-hidden="true"><Icon name="image" size={16} /></span>;
+  return <img className="rv-vthumb" src={`/api/versions/${versionId}/thumb?w=240`} alt="" loading="lazy" onError={() => setFailed(true)} />;
+}
+
+/** The left pane: the piece's variants, the versions of this one, and what this version changes. */
+function LeftPane({ v, piece, threads, onShowResolved }: { v: VersionDetail; piece: PieceDetail | undefined; threads: CommentThread[]; onShowResolved: () => void }) {
+  const variant = piece?.variants.find((x) => x.id === v.variant.id);
+  const versions = [...(variant?.versions ?? [])].sort((a, b) => b.number - a.number);
   const carried = threads.filter((c) => c.version_id !== v.id);
   const fixedHere = carried.filter((c) => c.status === 'resolved' && c.resolved_in_number === v.number).length;
-  const latest = [...v.versions].sort((a, b) => b.number - a.number)[0];
-  const accounts = approvedAccountIds(v).length;
-
   return (
-    <section className={`rv-decide ${v.by_agent ? 'agent' : ''}`} aria-label={t('review.decision.title')}>
-      <p className="rv-who">
-        <span className="mono">v{v.number}</span> {t('review.decision.uploadedBy')}{' '}
-        <b className={v.by_agent ? 'rv-agent' : ''}>{v.author ?? t('review.decision.unknown')}</b>
-        {v.by_agent && <span className="sr-only"> {t('review.decision.agentSuffix')}</span>}
-        {' · '}<time dateTime={v.created_at} title={fmtDateTime(v.created_at, v.brand.timezone)}>{agoPhrase(v.created_at)}</time>
-        {carried.length > 0 && <>{' · '}{t('review.decision.resolves', { done: fixedHere, count: carried.length })}</>}
-      </p>
-
-      {v.review_state === 'in_review' && (
-        <>
-          {required > 1 && <p className="rv-approvals"><span className="mono">{validApprovals}/{required}</span> {t('review.decision.approvals', { count: required })}</p>}
-          {(can('requestChanges') || can('approve')) && (
-            <div className="rv-acts">
-              {can('requestChanges') && <button type="button" className="btn" onClick={() => onDialog('changes')}>{t('review.decision.requestChanges')}</button>}
-              {can('approve') && (
+    <aside className="rv-left" aria-label={t('review.left.label')}>
+      <div className="rv-left-scroll">
+        <h2 className="rv-lab">{t('review.left.variants')}</h2>
+        {!piece ? (
+          <div className="rv-vlist"><Skeleton height={64} radius={10} /><Skeleton height={64} radius={10} /></div>
+        ) : (
+          <nav className="rv-vlist" aria-label={t('review.left.variants')}>
+            {piece.variants.map((x) => {
+              const latest = [...x.versions].sort((a, b) => b.number - a.number)[0];
+              const here = x.id === v.variant.id;
+              const open = x.versions.reduce((n, y) => n + (y.open_comments ?? 0), 0);
+              const body = (
                 <>
-                  <button type="button" className="btn btn-primary" onClick={() => onDialog('approve')} disabled={isAuthor || !!mine}>{t('review.decision.approve')}</button>
-                  <button type="button" className="btn btn-danger rv-reject" onClick={() => onDialog('reject')} disabled={isAuthor || !!mine}>{t('review.decision.reject')}</button>
+                  <VariantThumb versionId={latest?.id} />
+                  <span className="rv-vtext">
+                    <b title={variantName(x)}>{variantName(x)}</b>
+                    <span>
+                      {latest ? `V${latest.number}` : t('review.left.noVersion')}
+                      {open > 0 && <span className="rv-meta-n" title={t('review.left.openCount', { count: open })}><Icon name="bubble" size={12} />{open}</span>}
+                      {latest && latest.review_state !== 'in_review' && <Chip state={latest.review_state} />}
+                    </span>
+                  </span>
                 </>
-              )}
-            </div>
+              );
+              return here || !latest ? (
+                <div key={x.id} className={`rv-vitem ${here ? 'on' : ''}`} aria-current={here ? 'true' : undefined}>{body}</div>
+              ) : (
+                <Link key={x.id} className="rv-vitem" to={`/review/${latest.id}`}>{body}</Link>
+              );
+            })}
+          </nav>
+        )}
+
+        <h2 className="rv-lab">{t('review.left.versions')}</h2>
+        <nav className="rv-vers" aria-label={t('review.left.versions')}>
+          {(versions.length ? versions : [...v.versions].sort((a, b) => b.number - a.number)).map((x) => {
+            const s = x as Partial<VersionSummary> & { id: string; number: number };
+            const here = s.id === v.id;
+            const row = (
+              <>
+                <span className="rv-vn mono">V{s.number}</span>
+                <span className={`rv-vwho ${s.by_agent ? 'agent' : ''}`}>{s.by_agent ? t('review.left.agent') : s.author ? shortName(s.author) : ''}</span>
+                <span className="rv-vwhen">{s.created_at ? ago(s.created_at) : ''}</span>
+              </>
+            );
+            return here ? (
+              <div key={s.id} className="rv-vr on" aria-current="page">{row}</div>
+            ) : (
+              <Link key={s.id} className="rv-vr" to={`/review/${s.id}`} title={s.review_state ? STATE_LABEL[s.review_state] : undefined}>{row}</Link>
+            );
+          })}
+        </nav>
+
+        <h2 className="rv-lab">{t('review.left.changes', { n: v.number })}</h2>
+        <div className="rv-changes-box">
+          {v.notes ? <Notes text={v.notes} /> : <p className="rv-notes muted">{t('review.left.noNotes')}</p>}
+          {carried.length > 0 && (
+            <button type="button" className="rv-resolves" onClick={onShowResolved} title={t('review.left.resolvesHint')}>
+              <Icon name="check" size={13} />{t('review.left.resolves', { done: fixedHere, count: carried.length })}
+            </button>
           )}
-          {openCount > 0 && can('approve') && !isAuthor && !mine && <p className="rv-say warn">{t('review.decision.openBlock', { count: openCount })}</p>}
-          {can('approve') && isAuthor && <p className="rv-say">{t('review.decision.isAuthor')}</p>}
-          {can('approve') && mine && <p className="rv-say">{mine.decision === 'approve' ? t('review.decision.alreadyApproved') : t('review.decision.alreadyRejected')}</p>}
-          {!can('requestChanges') && !can('approve') && <p className="rv-say">{t('review.decision.waiting')}</p>}
-        </>
-      )}
-      {v.review_state === 'changes_requested' && (
-        <p className="rv-say">
-          <Chip state="changes_requested" /> {can('upload') ? t('review.decision.changesUpload') : t('review.decision.changesWait')}{' '}
-          {can('upload') && <Link to={`/pieces/${v.piece.id}`}>{t('review.decision.toPiece')}</Link>}
-        </p>
-      )}
-      {v.review_state === 'approved' && (
-        <>
-          <p className="rv-say good">{t('review.decision.approvedFor', { count: accounts })}</p>
-          {can('schedule') && <div className="rv-acts"><button type="button" className="btn btn-primary" onClick={() => onDialog('schedule')}>{t('review.decision.schedule')}</button></div>}
-          {!can('schedule') && <p className="rv-say">{t('review.decision.approverSchedules')}</p>}
-        </>
-      )}
-      {v.review_state === 'superseded' && (
-        <p className="rv-say">
-          {t('review.decision.superseded')}{' '}
-          {latest && latest.id !== v.id && <Link to={`/review/${latest.id}`}>{t('review.decision.toLatest', { n: latest.number })}</Link>}
-        </p>
-      )}
-      {v.review_state === 'discarded' && <p className="rv-say">{t('review.decision.discarded')}</p>}
-      {v.notes && <Notes text={v.notes} />}
-    </section>
+          <Uploader v={v} />
+        </div>
+      </div>
+    </aside>
   );
 }
+
+// ───────────────────────────── details ─────────────────────────────
 
 const ASSET_KIND: Record<string, () => string> = {
   video: () => t('review.asset.video'),
@@ -288,10 +534,12 @@ function Details({ v }: { v: VersionDetail }) {
       <section className="rv-block">
         <h3>{t('review.details.version')}</h3>
         <p className="rv-meta">
-          <span className="tag">{[v.variant.format, v.variant.style].filter(Boolean).join(' · ')}</span>
+          <span className="tag">{variantName(v.variant)}</span>
+          <span className="tag">V{v.number}</span>
           {v.piece.ai_generated && <span className="tag">{t('review.meta.ai')}</span>}
         </p>
-        <p className="muted small">{t('review.meta.uploaded', { date: fmtDateTime(v.created_at, v.brand.timezone) })}</p>
+        <Uploader v={v} full />
+        {v.notes && <p className="rv-prose">{v.notes}</p>}
       </section>
       <section className="rv-block">
         <h3>{t('review.details.approvals')}</h3>
@@ -299,8 +547,9 @@ function Details({ v }: { v: VersionDetail }) {
         {v.approvals.map((a) => (
           <div key={a.id} className="rv-approval">
             <div className="rv-approval-h">
+              <Avatar name={shortName(a.approver)} size={22} />
+              <strong>{shortName(a.approver)}</strong>
               <Chip state={a.decision === 'approve' ? 'approved' : 'rejected'} label={a.decision === 'approve' ? t('review.details.approved') : t('review.details.rejected')} />
-              <strong>{a.approver}</strong>
               <span className="grow" />
               <time className="muted small" dateTime={a.created_at}>{fmtDateTime(a.created_at, v.brand.timezone)}</time>
             </div>
@@ -324,10 +573,9 @@ function Details({ v }: { v: VersionDetail }) {
                 {ASSET_KIND[a.kind]?.() ?? a.kind} · <span className="mono">{fmtBytes(a.bytes)}</span>
                 {a.width && a.height ? <> · <span className="mono">{a.width}×{a.height}</span></> : null}
                 {a.kind === 'video' && Number(a.duration_ms) > 0 ? <> · <span className="mono">{timecode(Number(a.duration_ms) / 1000)}</span></> : null}
-                {' · '}<span className="mono">{a.sha256.slice(0, 10)}</span>
               </span>
             </div>
-            <a className="btn btn-small" href={a.url} download={a.name}>{t('common.download')}</a>
+            <a className="rv-ic rv-ic-filled" href={a.url} download={a.name} aria-label={`${t('common.download')} ${a.name}`} title={t('common.download')}><Icon name="download" size={16} /></a>
           </div>
         ))}
       </section>
@@ -341,6 +589,8 @@ function Details({ v }: { v: VersionDetail }) {
   );
 }
 
+// ───────────────────────────── the page ─────────────────────────────
+
 export function ReviewPage() {
   const { versionId = '' } = useParams();
   // Another version is another review: the place being commented, the comparison and the open tab start afresh.
@@ -349,18 +599,45 @@ export function ReviewPage() {
 
 type Tab = 'comments' | 'subtitles' | 'details';
 
+/** Whether two places are on the same picture (the same video, or the same page), so a drawing made on one fits the other. */
+function samePicture(a: Anchor | null, b: Anchor | null) {
+  if (!a || !b || a.type !== b.type) return false;
+  return a.type === 'time' ? (a.position ?? 0) === ((b as typeof a).position ?? 0) : a.page === (b as typeof a).page;
+}
+
+function ReviewSkeleton() {
+  return (
+    <div className="rv rv-loading" aria-busy="true">
+      <header className="rv-top"><Skeleton width={260} height={18} /><span className="grow" /><Skeleton width={200} height={32} radius={8} /></header>
+      <div className="rv-body">
+        <div className="rv-left"><div className="rv-left-scroll"><Skeleton height={64} radius={10} /><Skeleton height={140} radius={10} /></div></div>
+        <div className="rv-center"><Skeleton className="rv-skel-stage" /></div>
+        <div className="rv-side"><div className="rv-scroll"><Skeleton height={96} radius={12} /><Skeleton height={96} radius={12} /><Skeleton height={96} radius={12} /></div></div>
+      </div>
+    </div>
+  );
+}
+
 /**
- * The review: a full-height workspace. On a wide screen the picture, its controls and its timeline never move, and only the
- * panel on the right scrolls; on a phone the picture sticks to the top while the panel scrolls under it.
+ * The review: a full-height workspace, Frame.io's way. A top bar with where this is, the version, the comparison, who took part
+ * and the decision; under it three panels: the piece's variants and versions (it folds away), the picture with its controls and
+ * timeline, and the comments. Only the lists scroll. On a phone the picture sticks to the top, the comments scroll under it and
+ * the decision waits at the bottom.
  */
 function Review({ versionId }: { versionId: string }) {
   const { me, brand, can } = useSession();
-  const [draft, setDraft] = useState<Anchor | null>(null);
+  const [draft, setDraftState] = useState<Anchor | null>(null);
+  const [sketch, setSketch] = useState<Shape[]>([]);
+  const [tool, setTool] = useState<Tool | null>(null);
+  const [colour, setColour] = useKept<DrawColour>('studio.review.colour', 'yellow');
+  const [left, setLeft] = useKept<'open' | 'closed'>('studio.review.left', 'open');
+  const sketchOwnsDraft = useRef(false);
   const [focus, setFocus] = useState<string | null>(null);
   const [jump, setJump] = useState<Jump | null>(null);
   const [tab, setTab] = useState<Tab>('comments');
+  const [filter, setFilter] = useState<CommentFilter>(NO_FILTER);
   const [compareId, setCompareId] = useState('');
-  const [dialog, setDialog] = useState<null | 'approve' | 'reject' | 'changes' | 'schedule'>(null);
+  const [dialog, setDialog] = useState<DialogKind>(null);
   const [zoneId, setZoneId] = useState('');
   const root = useRef<HTMLDivElement>(null);
   const stick = useRef<HTMLDivElement>(null);
@@ -377,6 +654,14 @@ function Review({ versionId }: { versionId: string }) {
     enabled: !!compareId,
     queryFn: () => api.get<VersionDetail>(`/api/versions/${compareId}`),
   });
+  const pieceId = v?.piece.id;
+  const { data: piece } = useQuery({
+    queryKey: ['piece', pieceId],
+    enabled: !!pieceId,
+    queryFn: () => api.get<PieceDetail & { campaign_id?: string | null }>(`/api/pieces/${pieceId}`),
+  });
+  const campaignId = (piece as (PieceDetail & { campaign_id?: string | null }) | undefined)?.campaign_id;
+  const { data: campaigns } = useQuery({ queryKey: ['campaigns', brand.id], enabled: !!campaignId, queryFn: () => api.get<{ id: string; name: string }[]>(`/api/brands/${brand.id}/campaigns`) });
 
   // On a phone the stage sticks to the top: the comments brought into view leave room for it.
   useEffect(() => {
@@ -385,10 +670,44 @@ function Review({ versionId }: { versionId: string }) {
     const ro = new ResizeObserver(() => top.style.setProperty('--rv-stick', `${el.offsetHeight}px`));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [v?.id]);
+  }, [v?.id, compareId]);
 
-  if (isLoading) return <Spinner />;
-  if (error) return <ErrorBox error={error} />;
+  // A place chosen by hand (a click, a drag, a subtitle line) keeps the drawing only if it is on the same picture.
+  const setDraft = useCallback((a: Anchor | null) => {
+    sketchOwnsDraft.current = false;
+    setDraftState((before) => {
+      if (!a || !samePicture(a, before)) setSketch([]);
+      return a;
+    });
+    if (!a) setTool(null);
+  }, []);
+  const clearAll = useCallback(() => { sketchOwnsDraft.current = false; setDraftState(null); setSketch([]); setTool(null); }, []);
+  const draw: DrawProps = {
+    tool,
+    onTool: setTool,
+    colour,
+    onColour: setColour,
+    sketch,
+    onSketch: (shapes, base) => {
+      setSketch(shapes);
+      setTab('comments');
+      setDraftState((d) => {
+        // The first stroke places the comment (the moment, or the box the drawing covers); after that a drawn box follows the drawing.
+        if (!d) { sketchOwnsDraft.current = true; return base; }
+        if (sketchOwnsDraft.current && d.type === 'region' && base.type === 'region') return base;
+        return d;
+      });
+    },
+    onUndo: () => setSketch((s) => {
+      const next = s.slice(0, -1);
+      if (!next.length && sketchOwnsDraft.current) { sketchOwnsDraft.current = false; setDraftState(null); }
+      return next;
+    }),
+    onClear: () => { setSketch([]); if (sketchOwnsDraft.current) { sketchOwnsDraft.current = false; setDraftState(null); } },
+  };
+
+  if (isLoading) return <ReviewSkeleton />;
+  if (error) return <div className="rv-error"><ErrorBox error={error} /></div>;
   if (!v) return null;
 
   const assets = v.assets.map((a) => ({ ...a, url: stable(a.id, a.url) }));
@@ -400,13 +719,16 @@ function Review({ versionId }: { versionId: string }) {
   const hasVideo = assets.some((a) => a.kind === 'video');
   const hasImage = assets.some((a) => a.kind === 'image');
   const hasSubtitles = assets.some((a) => a.kind === 'subtitles');
-  const hint: ComposeHint = compareId ? 'none' : hasPdf ? 'pdf' : hasImage ? 'image' : hasVideo ? 'video' : 'none';
+  const hint: ComposeHint = compareId ? 'none' : hasPdf ? 'pdf' : hasImage && !hasVideo ? 'image' : hasVideo ? 'video' : 'none';
   // Every placement that knows what its network draws over the picture, for the "what the network covers" overlay.
   const safeZones: (SafeZone & { id: string })[] = Object.values(integ?.capabilities ?? {}).flatMap((c) =>
     c.placements.flatMap((pl) => (pl.safeZones ? [{ id: `${c.network}:${pl.id}`, label: `${NETWORK_LABEL[c.network] ?? c.network} · ${pl.label}`, ...pl.safeZones }] : [])));
   const openCount = stableThreads.filter((c) => c.status === 'open').length;
   const canAnnotate = can('comment') && live;
   const shownTab: Tab = tab === 'subtitles' && (!hasSubtitles || compareId) ? 'comments' : tab;
+  const variantVersions = piece?.variants.find((x) => x.id === v.variant.id)?.versions ?? [];
+  const campaign = campaigns?.find((c) => c.id === campaignId);
+  const leftOpen = left === 'open';
   // A comment takes the stage to its place: the moment (paused there) or the page, and lights up its mark.
   const jumpTo = (c: CommentThread) => {
     setFocus(c.id);
@@ -415,6 +737,7 @@ function Review({ versionId }: { versionId: string }) {
     else if (a?.type === 'region') setJump({ nonce: Date.now(), page: a.page });
   };
   const toComments = (id?: string) => { if (id) setFocus(id); setTab('comments'); };
+  const onDialog = (d: DialogKind) => setDialog(d);
 
   const zoneTools = !compareId && !hasPdf && safeZones.length > 0 ? (
     <label className={`rv-zone ${zoneId ? 'on' : ''}`} title={t('review.zone.hint')}>
@@ -427,93 +750,118 @@ function Review({ versionId }: { versionId: string }) {
   ) : null;
 
   return (
-    <div ref={root} className="rv">
-      <div className="rv-main">
-        <header className="rv-top">
-          <nav className="rv-crumbs" aria-label={t('review.crumbs.label')}>
-            <Link to="/pieces">{t('review.crumbs.pieces')}</Link>
-            <span aria-hidden="true">/</span>
-          </nav>
-          <h1 title={v.piece.title}><Link to={`/pieces/${v.piece.id}`}>{v.piece.title}</Link></h1>
-          <Chip state={v.review_state} />
-          <VersionSwitch v={v} compareId={compareId} onCompare={setCompareId} />
-        </header>
-
-        <div ref={stick} className="rv-stick">
-          {compareId && other && otherAssets ? (
-            <CompareStage left={otherAssets} right={assets} leftLabel={`v${other.number}`} rightLabel={t('review.compare.thisOne', { n: v.number })} />
-          ) : compareId ? (
-            <Spinner />
-          ) : (
-            <Stage
-              assets={assets}
-              threads={stableThreads}
-              numbers={numbers}
-              draft={draft}
-              onDraft={(a) => { setDraft(a); if (a) setTab('comments'); }}
-              canAnnotate={canAnnotate}
-              focus={focus}
-              onFocus={(id) => toComments(id)}
-              jump={jump}
-              safeZone={safeZones.find((z) => z.id === zoneId) ?? null}
-              tools={zoneTools}
-            />
-          )}
+    <div ref={root} className={`rv ${leftOpen ? 'left-open' : 'left-closed'}`}>
+      <header className="rv-top">
+        <button type="button" className="rv-ic rv-left-toggle" aria-pressed={leftOpen} onClick={() => setLeft(leftOpen ? 'closed' : 'open')} aria-label={t('review.left.toggle')} title={t('review.left.toggle')}>
+          <Icon name="panel" size={17} />
+        </button>
+        <Link to={`/pieces/${v.piece.id}`} className="rv-ic rv-back" aria-label={t('review.back')} title={t('review.back')}><Icon name="arrowLeft" size={17} /></Link>
+        <nav className="rv-crumbs" aria-label={t('review.crumbs.label')}>
+          {campaign ? <Link to={`/pieces?campaign=${campaign.id}`} className="rv-crumb">{campaign.name}</Link> : <Link to="/pieces" className="rv-crumb">{t('review.crumbs.pieces')}</Link>}
+          <span className="rv-crumb-sep" aria-hidden="true">/</span>
+          <h1 className="rv-title" title={v.piece.title}><Link to={`/pieces/${v.piece.id}`}>{v.piece.title}</Link></h1>
+        </nav>
+        <VersionMenu v={v} versions={variantVersions} />
+        <CompareControl v={v} compareId={compareId} onCompare={setCompareId} />
+        <span className="grow" />
+        <StateLine v={v} openCount={openCount} />
+        <Participants v={v} threads={stableThreads} />
+        <div className="rv-decide">
+          <DecisionButtons v={v} openCount={openCount} onDialog={onDialog} />
         </div>
-      </div>
+        <MoreMenu v={v} openCount={openCount} onDialog={onDialog} />
+      </header>
 
-      <aside className="rv-side" aria-label={t('review.side.label')}>
-        <DecisionCard v={v} threads={stableThreads} openCount={openCount} onDialog={setDialog} />
-        <div className="rv-tabs" role="tablist" aria-label={t('review.tabs.label')}>
-          <button type="button" role="tab" aria-selected={shownTab === 'comments'} onClick={() => setTab('comments')}>
-            {t('review.tabs.comments')}
-            {openCount > 0 && <span className="rv-tab-n">{openCount}</span>}
-          </button>
-          {hasSubtitles && !compareId && (
-            <button type="button" role="tab" aria-selected={shownTab === 'subtitles'} onClick={() => setTab('subtitles')}>{t('review.tabs.subtitles')}</button>
-          )}
-          <button type="button" role="tab" aria-selected={shownTab === 'details'} onClick={() => setTab('details')}>{t('review.tabs.details')}</button>
-        </div>
-        {shownTab === 'comments' ? (
-          <CommentsPanel
-            versionId={v.id}
-            threads={stableThreads}
-            numbers={numbers}
-            me={me.user.name ?? me.user.email}
-            draft={draft}
-            onDraft={setDraft}
-            onClearDraft={() => setDraft(null)}
-            onHold={() => setJump({ nonce: Date.now(), t: playhead.t, position: liveVideo.position })}
-            canComment={can('comment')}
-            canReply={can('reply')}
-            canResolve={can('resolve')}
-            canReopen={can('comment')}
-            focus={focus}
-            onJump={jumpTo}
-            commentable={live}
-            hint={hint}
-          />
-        ) : shownTab === 'subtitles' ? (
-          <div className="rv-scroll rv-subs-tab">
-            <SubtitlePanel
+      <div className="rv-body">
+        {leftOpen && <LeftPane v={v} piece={piece} threads={stableThreads} onShowResolved={() => { setTab('comments'); setFilter({ ...NO_FILTER, status: 'resolved' }); }} />}
+
+        <main className="rv-center" aria-label={t('review.stage.label')}>
+          <div ref={stick} className="rv-stick">
+            {compareId && other && otherAssets ? (
+              <CompareStage left={otherAssets} right={assets} leftLabel={`V${other.number}`} rightLabel={t('review.compare.thisOne', { n: v.number })} />
+            ) : compareId ? (
+              <div className="rv-stage"><Skeleton className="rv-skel-stage" /></div>
+            ) : (
+              <Stage
+                assets={assets}
+                threads={stableThreads}
+                numbers={numbers}
+                draft={draft}
+                onDraft={(a) => { setDraft(a); if (a) setTab('comments'); }}
+                canAnnotate={canAnnotate}
+                focus={focus}
+                onFocus={(id) => toComments(id)}
+                jump={jump}
+                safeZone={safeZones.find((z) => z.id === zoneId) ?? null}
+                tools={zoneTools}
+                draw={draw}
+              />
+            )}
+          </div>
+        </main>
+
+        <aside className="rv-side" aria-label={t('review.side.label')}>
+          <div className="rv-tabs" role="tablist" aria-label={t('review.tabs.label')}>
+            <button type="button" role="tab" aria-selected={shownTab === 'comments'} onClick={() => setTab('comments')}>
+              {t('review.tabs.comments')}
+              {stableThreads.length > 0 && <span className="rv-tab-n">{stableThreads.length}</span>}
+            </button>
+            {hasSubtitles && !compareId && (
+              <button type="button" role="tab" aria-selected={shownTab === 'subtitles'} onClick={() => setTab('subtitles')}>{t('review.tabs.subtitles')}</button>
+            )}
+            <button type="button" role="tab" aria-selected={shownTab === 'details'} onClick={() => setTab('details')}>{t('review.tabs.details')}</button>
+          </div>
+          {shownTab === 'comments' ? (
+            <CommentsPanel
               versionId={v.id}
               threads={stableThreads}
-              canAnnotate={canAnnotate}
-              firstVideoPosition={assets.find((a) => a.kind === 'video')?.position ?? 0}
-              onDraft={(a) => { setDraft(a); setTab('comments'); }}
-              onSeek={(s, position) => setJump({ nonce: Date.now(), t: s, position })}
-              onFocus={(id) => toComments(id)}
+              numbers={numbers}
+              me={me.user.name ?? me.user.email}
+              draft={draft}
+              onDraft={setDraft}
+              onClearDraft={clearAll}
+              onHold={() => setJump({ nonce: Date.now(), t: playhead.t, position: liveVideo.position })}
+              canComment={can('comment')}
+              canReply={can('reply')}
+              canResolve={can('resolve')}
+              canReopen={can('comment')}
+              focus={focus}
+              onJump={jumpTo}
+              commentable={live}
+              hint={hint}
+              filter={filter}
+              onFilter={setFilter}
+              sketch={sketch}
+              tool={tool}
+              onTool={canAnnotate && !compareId ? setTool : undefined}
+              onPosted={() => { setSketch([]); setTool(null); sketchOwnsDraft.current = false; }}
             />
-          </div>
-        ) : (
-          <div className="rv-scroll"><Details v={v} /></div>
-        )}
-      </aside>
+          ) : shownTab === 'subtitles' ? (
+            <div className="rv-scroll rv-subs-tab">
+              <SubtitlePanel
+                versionId={v.id}
+                threads={stableThreads}
+                canAnnotate={canAnnotate}
+                firstVideoPosition={assets.find((a) => a.kind === 'video')?.position ?? 0}
+                onDraft={(a) => { setDraft(a); setTab('comments'); }}
+                onSeek={(s, position) => setJump({ nonce: Date.now(), t: s, position })}
+                onFocus={(id) => toComments(id)}
+              />
+            </div>
+          ) : (
+            <div className="rv-scroll"><Details v={v} /></div>
+          )}
+        </aside>
+      </div>
+
+      <footer className="rv-phone-decide">
+        <DecisionButtons v={v} openCount={openCount} onDialog={onDialog} compact />
+      </footer>
 
       {(dialog === 'approve' || dialog === 'reject') && (
-        <DecisionDialog version={v} decision={dialog} openCount={openCount} onClose={() => setDialog(null)} onSeeComments={() => setTab('comments')} />
+        <DecisionDialog version={v} decision={dialog} openCount={openCount} onClose={() => setDialog(null)} onSeeComments={() => { setTab('comments'); setFilter({ ...NO_FILTER, status: 'open' }); }} />
       )}
-      {dialog === 'changes' && <RequestChangesDialog version={v} openCount={openCount} onClose={() => setDialog(null)} />}
+      {dialog === 'changes' && <RequestChanges version={v} openCount={openCount} onClose={() => setDialog(null)} />}
       {dialog === 'schedule' && <ScheduleDialog version={v} brandId={brand.id} zone={v.brand.timezone} onClose={() => setDialog(null)} />}
     </div>
   );
