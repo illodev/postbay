@@ -30,7 +30,7 @@ export const features = define({
     'deactivated.banner': 'Te han desactivado en {brand}: no puedes abrirla hasta que un administrador te reactive.',
 
     // The bell.
-    'notif.kind.publication.auto_scheduled': 'El estudio ha programado algo aprobado',
+    'notif.kind.publication.auto_scheduled': 'Postbay ha programado algo aprobado',
     'notif.kind.publication.handed_over': 'Una publicación ha pasado a hacerse a mano',
     'notif.kind.agent.timed_out': 'Una ejecución del agente se ha quedado sin tiempo',
 
@@ -55,8 +55,8 @@ export const features = define({
     'fx.styles.define': 'Definirlos en Ajustes',
 
     // Who scheduled a post, and the slot a piece was made for.
-    'fx.by.auto': 'Programada por el estudio en un hueco libre',
-    'fx.by.autoShort': 'Estudio',
+    'fx.by.auto': 'Programada por Postbay en un hueco libre',
+    'fx.by.autoShort': 'Postbay',
     'fx.by.agent': 'Programada por el agente',
     'fx.by.agentNamed': 'Programada por el agente ({name})',
     'fx.by.agentShort': 'Agente',
@@ -118,7 +118,7 @@ export const features = define({
     'deactivated.switcher': 'Deactivated in',
     'deactivated.banner': 'You were deactivated in {brand}: you cannot open it until an admin reactivates you.',
 
-    'notif.kind.publication.auto_scheduled': 'The studio scheduled something approved',
+    'notif.kind.publication.auto_scheduled': 'Postbay scheduled something approved',
     'notif.kind.publication.handed_over': 'A post was handed over to be published by hand',
     'notif.kind.agent.timed_out': 'An agent run ran out of time',
 
@@ -139,8 +139,8 @@ export const features = define({
     'fx.styles.none': 'The brand has no styles',
     'fx.styles.define': 'Set them in Settings',
 
-    'fx.by.auto': 'Scheduled by the studio in a free slot',
-    'fx.by.autoShort': 'Studio',
+    'fx.by.auto': 'Scheduled by Postbay in a free slot',
+    'fx.by.autoShort': 'Postbay',
     'fx.by.agent': 'Scheduled by the agent',
     'fx.by.agentNamed': 'Scheduled by the agent ({name})',
     'fx.by.agentShort': 'Agent',
