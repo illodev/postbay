@@ -44,6 +44,8 @@ export interface Me {
   brands: { id: string; name: string; timezone: string; paused: boolean; role: Role; workspace: string }[];
   /** Brands of other workspaces that asked this person to join; nothing changes until they accept. */
   invitations?: MyInvitation[];
+  /** Brands this person was deactivated in: they cannot open them until an admin reactivates them. */
+  deactivated_in?: { id: string; name: string; workspace: string; deactivated_at: string }[];
 }
 
 export interface MyInvitation {
@@ -74,7 +76,13 @@ export interface BrandSettings {
   locale: string;
   paused: boolean;
   role: Role;
-  rules: { required_approvals: number; reapprove_on_move: boolean; checklist: string[] };
+  rules: {
+    required_approvals: number; reapprove_on_move: boolean; checklist: string[];
+    /** Approved versions nobody scheduled go into the free weekly slots; since when it is on. */
+    auto_fill_slots?: boolean; auto_fill_since?: string | null;
+    /** The styles a variant can have, in order. */
+    variant_styles?: string[];
+  };
   publishing: { prepare_lead_minutes: number; late_tolerance_minutes: number };
   agent: AgentSettings;
   prizes: PrizeSettings;
@@ -93,6 +101,8 @@ export interface AgentSettings {
   max_run_minutes: number;
   slot_alert_days: number;
   currency: string;
+  /** Whether the agent, inside one of its runs, may schedule what people approved. */
+  can_schedule_approved?: boolean;
 }
 
 export interface PieceSummary {
@@ -492,7 +502,7 @@ export interface WebhookDeliveryDetail {
   attempts: { at: string; http_status: number | null; error: string | null; duration_ms: number | null }[];
 }
 
-export type AgentOutcome = 'uploaded' | 'needs_people' | 'failed' | 'checks_failed' | 'timeout' | 'aborted' | 'blocked';
+export type AgentOutcome = 'uploaded' | 'needs_people' | 'failed' | 'checks_failed' | 'timeout' | 'aborted' | 'blocked' | 'scheduled';
 
 export interface AgentRun {
   id: string;

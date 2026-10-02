@@ -1,0 +1,44 @@
+/* What came after the phases: deactivated members, scheduling after approval, piece prizes, variant styles. Tone, not lines. */
+
+/* Settings › Miembros: a deactivated member is there, quieter. */
+.set-gone .avatar, .set-gone > :first-child { opacity: .45; filter: grayscale(1); }
+.set-gone .ent-title { color: var(--muted); }
+.set-gone-role { color: var(--faint); font-size: .75rem; }
+
+/* The brand switcher: a brand one was deactivated in. */
+.menu-item[data-disabled] .menu-text { color: var(--faint); }
+.menu-item .fx-off { color: var(--faint); font-size: .75rem; }
+
+/* A person deactivated in the brand they had open. */
+.fx-banner { display: flex; align-items: center; gap: 10px; padding: .55rem var(--gutter); background: var(--surface); color: var(--muted); font-size: .8125rem; border-radius: 12px 12px 0 0; }
+.fx-banner svg { width: 15px; height: 15px; color: var(--bad); flex: none; }
+
+/* Who put a publication on the calendar, when it was not a person: a quiet line, the agent in teal. */
+.fx-by { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.fx-by svg { width: 13px; height: 13px; flex: none; }
+.fx-by-agent { color: var(--agent); }
+
+/* The approval dialog: scheduling it by itself. */
+.fx-sched { display: grid; gap: 10px; padding: 12px; border-radius: var(--radius-sm); background: var(--surface); }
+.fx-sched-why { display: flex; gap: 8px; align-items: flex-start; color: var(--muted); font-size: .8125rem; line-height: 1.45; }
+.fx-sched-why svg { width: 15px; height: 15px; flex: none; margin-top: 2px; color: var(--faint); }
+.fx-sched-fields { display: grid; gap: 10px; }
+.fx-sched-fields textarea { min-height: 64px; }
+.fx-result { display: grid; gap: 12px; }
+.fx-result-head { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.fx-result-head svg { width: 18px; height: 18px; color: var(--good); flex: none; }
+.fx-result-head.is-off svg { color: var(--faint); }
+.fx-result p { margin: 0; color: var(--muted); font-size: .8125rem; line-height: 1.5; }
+
+/* The slot a piece was made for. */
+.fx-slot { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .75rem; }
+.fx-slot svg { width: 13px; height: 13px; flex: none; }
+.fx-slot-gone { color: var(--faint); text-decoration: line-through; }
+
+/* Prizes: a piece with its thumbnail, in the picker and the list. */
+.fx-thumb { width: 28px; height: 28px; border-radius: 6px; object-fit: cover; background: var(--surface-2); flex: none; display: inline-grid; place-items: center; color: var(--faint); overflow: hidden; }
+.fx-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.fx-prize-piece { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.fx-prize-piece .grow { min-width: 0; }
+.fx-prize-meta { color: var(--muted); font-size: .75rem; }
+.fx-prize-off { color: var(--warn); font-size: .75rem; }

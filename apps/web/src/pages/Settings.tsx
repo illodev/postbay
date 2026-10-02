@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Info } from 'luxon';
+import { DateTime, Info } from 'luxon';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, type Account, type BrandInvitation, type BrandSettings, type Integrations, type PendingConnection, type Provider, type Role, type SlackSettings, type Webhook } from '../api';
@@ -16,6 +16,7 @@ import { PrizesSettings } from '../components/PrizesSettings';
 import { SlackSettingsCard } from '../components/SlackSettings';
 import { Webhooks } from '../components/Webhooks';
 import '../styles/settings.css';
+import '../styles/features.css';
 
 /** The sections. "notifications" is the Slack section: the key stays as it was so old links keep working. */
 type Tab = 'general' | 'members' | 'accounts' | 'schedule' | 'agent' | 'webhooks' | 'prizes' | 'notifications' | 'tokens' | 'audit';
@@ -148,7 +149,11 @@ function General({ brandId }: { brandId: string }) {
 
 // ───────────────────────────── members ─────────────────────────────
 
-interface Member { id: string; role: Role; user_id: string; email: string; name: string | null; second_factor: boolean; can_reset_second_factor?: boolean }
+interface Member {
+  id: string; role: Role; user_id: string; email: string; name: string | null; second_factor: boolean; can_reset_second_factor?: boolean;
+  /** Deactivated: out of the brand, with their history kept; who did it (a name or an email) and when. */
+  active?: boolean; deactivated_at?: string | null; deactivated_by?: string | null;
+}
 
 function Members({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
@@ -191,18 +196,35 @@ function Members({ brandId }: { brandId: string }) {
     onSuccess: () => { refresh(); toast(t('settings.members.invitationCancelled')); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
+  const deactivate = useMutation({
+    mutationFn: (id: string) => api.post<{ tokensRevoked: number }>(`/api/brands/${brandId}/members/${id}/deactivate`),
+    onSuccess: (r) => { refresh(); toast(t('members.deactivatedToast', { count: r.tokensRevoked })); },
+    onError: (e) => toast(errorMessage(e), 'error'),
+  });
+  const reactivate = useMutation({
+    mutationFn: (id: string) => api.post(`/api/brands/${brandId}/members/${id}/reactivate`),
+    onSuccess: () => { refresh(); toast(t('members.reactivatedToast')); },
+    onError: (e) => toast(errorMessage(e), 'error'),
+  });
   const pending = invitations.data ?? [];
+  const active = (data ?? []).filter((m) => m.active !== false);
+  const gone = (data ?? []).filter((m) => m.active === false);
+  const activeAdmins = active.filter((m) => m.role === 'admin').length;
+  const askRemove = async (m: Member, who: string, isMe: boolean) => {
+    const text = isMe ? t('settings.members.removeSelfConfirm') : t('settings.members.removeConfirm', { email: m.email });
+    if (await confirm({ title: t('settings.members.removeTitle', { name: who }), text, confirmLabel: t('settings.members.remove'), danger: true })) remove.mutate(m.id);
+  };
   return (
     <>
       <section className="card set-card" aria-labelledby="set-members">
         <header className="set-card-top">
-          <h3 id="set-members">{data ? t('settings.members.count', { count: data.length }) : t('settings.members.title')}</h3>
+          <h3 id="set-members">{data ? t('settings.members.count', { count: active.length }) : t('settings.members.title')}</h3>
         </header>
         {error && <ErrorBox error={error} />}
         {!data && !error && <ListSkeleton />}
         {data && (
           <ul className="ent-list">
-            {data.map((m) => {
+            {active.map((m) => {
               const isMe = m.user_id === me.user.id;
               const who = displayName(m.name, m.email);
               // The server says who may reset whose authenticator (an admin of every brand that person is in, never their own).
@@ -230,12 +252,16 @@ function Members({ brandId }: { brandId: string }) {
                           },
                         },
                         {
-                          label: t('settings.members.remove'), icon: 'trash', danger: true,
+                          label: t('members.deactivate'), icon: 'ban',
                           onSelect: async () => {
-                            const text = isMe ? t('settings.members.removeSelfConfirm') : t('settings.members.removeConfirm', { email: m.email });
-                            if (await confirm({ title: t('settings.members.removeTitle', { name: who }), text, confirmLabel: t('settings.members.remove'), danger: true })) remove.mutate(m.id);
+                            // Said here rather than refused by the server: nobody deactivates themselves, and the brand keeps an active admin.
+                            if (isMe) return toast(t('members.cannotSelf'), 'error');
+                            if (m.role === 'admin' && activeAdmins <= 1) return toast(t('members.lastAdmin'), 'error');
+                            const text = <><p>{t('members.deactivateText')}</p><p>{t('members.deactivateTokens')}</p></>;
+                            if (await confirm({ title: t('members.deactivateTitle', { name: who }), text, confirmLabel: t('members.deactivate'), danger: true })) deactivate.mutate(m.id);
                           },
                         },
+                        { label: t('settings.members.remove'), icon: 'trash', danger: true, onSelect: () => askRemove(m, who, isMe) },
                       ]}
                     />
                   </div>
@@ -245,6 +271,47 @@ function Members({ brandId }: { brandId: string }) {
           </ul>
         )}
       </section>
+
+      {gone.length > 0 && (
+        <section className="card set-card" aria-labelledby="set-deactivated">
+          <header className="set-card-top">
+            <h3 id="set-deactivated">{t('members.deactivatedSection')}</h3>
+            <span className="set-count">{gone.length}</span>
+          </header>
+          <ul className="ent-list">
+            {gone.map((m) => {
+              const who = displayName(m.name, m.email);
+              const when = m.deactivated_at ? DateTime.fromISO(m.deactivated_at).toFormat('d LLL yyyy') : '';
+              return (
+                <li key={m.id} className="ent ent-person set-gone">
+                  <Avatar name={m.name || m.email} size={32} />
+                  <div className="ent-main">
+                    <div className="ent-title">{who}</div>
+                    <div className="ent-sub">
+                      {m.deactivated_by ? t('members.deactivatedBy', { who: displayName(null, m.deactivated_by), date: when }) : t('members.deactivatedOn', { date: when })}
+                    </div>
+                  </div>
+                  <div className="ent-side">
+                    <span className="set-gone-role">{ROLE_LABEL[m.role] ?? m.role}</span>
+                    <MoreMenu
+                      label={t('settings.members.actionsOf', { name: who })}
+                      items={[
+                        {
+                          label: t('members.reactivate'), icon: 'undo',
+                          onSelect: async () => {
+                            if (await confirm({ title: t('members.reactivateTitle', { name: who }), text: t('members.reactivateText', { role: ROLE_LABEL[m.role] ?? m.role }), confirmLabel: t('members.reactivate') })) reactivate.mutate(m.id);
+                          },
+                        },
+                        { label: t('settings.members.remove'), icon: 'trash', danger: true, onSelect: () => askRemove(m, who, false) },
+                      ]}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       {pending.length > 0 && (
         <section className="card set-card" aria-labelledby="set-invitations">
