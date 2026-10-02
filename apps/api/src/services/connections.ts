@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { authorize, type Principal } from '../auth/principal.js';
 import { allCapabilities } from '../connectors/registry.js';
+import type { Network } from '../connectors/types.js';
 import { ConnectorError, type Candidate, type ProviderId, type TokenSet } from '../connectors/types.js';
 import type { Ctx } from '../context.js';
 import { sha256Hex } from '../crypto.js';
@@ -9,7 +10,7 @@ import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.j
 import { isKnown, msg, render, requestLocale, tr, type Key, type Localized } from '../i18n/index.js';
 import { audit } from './audit.js';
 import { connectorEnv, loadConnectorAccount, subscribeEvents, unsubscribeEvents } from './connectors.js';
-import { localizeOptions } from '../connectors/labels.js';
+import { localizeOptions, localizePlacements } from '../connectors/labels.js';
 
 const STATE_TTL_MINUTES = 15;
 export const PROVIDER_INFO: Record<ProviderId, { label: string; networks: string[] }> = {
@@ -50,7 +51,10 @@ export async function integrations(ctx: Ctx, p: Principal, brandId: string) {
       const label = id === 'meta' ? tr('connect.provider.meta') : PROVIDER_INFO[id].label;
       return { id, ...PROVIDER_INFO[id], label, configured: provider !== null, signIn: provider?.credentials ? 'credentials' : 'redirect', fields };
     }),
-    capabilities: allCapabilities(ctx.config),
+    // The placements in the reader's language too: the review names its safe zones with them ("Instagram · Foto del feed").
+    capabilities: Object.fromEntries(
+      Object.entries(allCapabilities(ctx.config)).map(([network, c]) => [network, { ...c, placements: localizePlacements(network as Network, c.placements) }]),
+    ),
   };
 }
 
