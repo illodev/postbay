@@ -161,7 +161,8 @@ details > summary { cursor: pointer; color: var(--muted); }
 .menu-label { font-size: .75rem; font-weight: 500; color: var(--faint); padding: .45rem .6rem .2rem; }
 .notif-item { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: var(--radius-sm); padding: .55rem .6rem; color: var(--text); font: inherit; cursor: pointer; }
 .notif-item:hover { background: var(--surface-2); }
-.notif-item.unread { box-shadow: inset 2px 0 0 var(--accent); }
+.notif-item { position: relative; padding-right: 1.7rem; }
+.notif-item.unread::after { content: ''; position: absolute; right: .75rem; top: 1rem; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 
 /* command palette */
 .palette-scrim { position: fixed; inset: 0; z-index: 90; background: rgb(5 6 9 / 62%); backdrop-filter: blur(3px); }

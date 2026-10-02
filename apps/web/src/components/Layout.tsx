@@ -8,7 +8,7 @@ import { useSession } from '../lib/session';
 import { Avatar, displayName } from './Avatar';
 import { PaletteProvider, usePalette } from './CommandPalette';
 import { Icon, type IconName } from './icons';
-import { Dialog, ErrorBox, Field, Menu, MenuItem, MenuLabel, MenuSeparator, Popover, Tip, useToast, errorMessage } from './ui';
+import { Dialog, ErrorBox, Field, Menu, MenuItem, MenuLabel, MenuSeparator, Popover, Select, Tip, useToast, errorMessage } from './ui';
 
 export interface Campaign {
   id: string;
@@ -197,14 +197,20 @@ function NewBrand({ onClose }: { onClose: () => void }) {
           <input type="text" required autoFocus maxLength={200} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         </Field>
         <Field label={t('layout.brandTimezone')} hint={t('layout.brandTimezoneHint')}>
-          <select value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })}>
-            {(zones.includes(form.timezone) ? zones : [form.timezone, ...zones]).map((z) => <option key={z} value={z}>{z}</option>)}
-          </select>
+          <Select
+            label={t('layout.brandTimezone')}
+            value={form.timezone}
+            onChange={(timezone) => setForm({ ...form, timezone })}
+            options={(zones.includes(form.timezone) ? zones : [form.timezone, ...zones]).map((z) => ({ value: z, label: z }))}
+          />
         </Field>
         <Field label={t('layout.brandLanguage')} hint={t('layout.brandLanguageHint')}>
-          <select value={form.locale} onChange={(e) => setForm({ ...form, locale: e.target.value })}>
-            {LOCALES.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
-          </select>
+          <Select
+            label={t('layout.brandLanguage')}
+            value={form.locale}
+            onChange={(locale) => setForm({ ...form, locale })}
+            options={LOCALES.map((l) => ({ value: l.value, label: l.label }))}
+          />
         </Field>
         {create.error && <ErrorBox error={create.error} />}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
@@ -278,7 +284,7 @@ function Sidebar() {
       </nav>
       <div className="sb-section">
         <span>{t('layout.nav.pieces')}</span>
-        {can('createPiece') && <button onClick={() => setCreating(true)} title={t('layout.newCampaign')} aria-label={t('layout.newCampaign')}><Icon name="plus" /></button>}
+        {can('createPiece') && <Tip label={t('layout.newCampaign')}><button onClick={() => setCreating(true)} aria-label={t('layout.newCampaign')}><Icon name="plus" /></button></Tip>}
       </div>
       <nav className="nav">
         <NavLink to="/pieces" className={() => (current('') ? 'active' : '')}><Icon name="pieces" /><span className="label">{t('layout.allPieces')}</span><span className="nav-count">{live.length || ''}</span></NavLink>
@@ -336,7 +342,7 @@ function Shell() {
         <RailLink to="/calendar" icon="calendar" label={t('layout.nav.calendar')} />
         <RailLink to="/today" icon="send" label={t('layout.nav.publish')} dot={(due.data?.length ?? 0) > 0} />
         <RailLink to="/results" icon="chart" label={t('layout.nav.results')} />
-        <button className="rail-btn" onClick={palette.open} title={`${t('common.search')} (⌘K)`} aria-label={t('common.search')}><Icon name="search" /></button>
+        <Tip label={t('common.search')} shortcut="⌘K" side="right"><button className="rail-btn" onClick={palette.open} aria-label={t('common.search')}><Icon name="search" /></button></Tip>
         <Notifications />
         <div className="rail-spacer" />
         {(can('manage') || can('audit')) && <RailLink to="/settings" icon="settings" label={t('layout.nav.settings')} />}

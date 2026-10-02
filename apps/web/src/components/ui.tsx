@@ -229,15 +229,16 @@ export const netMark = (network: string) => NET_MARK[network] ?? network.slice(0
  */
 export function NetMark({ network, size = 'md', labelled, className = '' }: { network: string; size?: 'xs' | 'sm' | 'md' | 'lg'; labelled?: boolean; className?: string }) {
   const name = NETWORK_LABEL[network] ?? network;
-  return (
+  const mark = (
     <span
       className={`net ${size === 'md' ? '' : `net-${size}`} ${className}`.trim()}
       data-network={network}
-      {...(labelled ? { role: 'img', 'aria-label': name, title: name } : { 'aria-hidden': true })}
+      {...(labelled ? { role: 'img', 'aria-label': name } : { 'aria-hidden': true })}
     >
       {HAS_LOGO.has(network) ? <NetLogo network={network} /> : netMark(network)}
     </span>
   );
+  return labelled ? <Tip label={name}>{mark}</Tip> : mark;
 }
 
 /** A shimmering block where something is loading, in the shape of what will come. */
@@ -283,9 +284,11 @@ export function Segmented<T extends string>({ label, value, options, onChange }:
   return (
     <div className="segmented" role="radiogroup" aria-label={label}>
       {options.map((o, i) => (
-        <button key={o.value} type="button" role="radio" aria-checked={o.value === value} tabIndex={o.value === value ? 0 : -1} title={o.title} onClick={() => onChange(o.value)} onKeyDown={(e) => move(e, i)}>
-          {o.label}
-        </button>
+        <Tipped key={o.value} label={o.title}>
+          <button type="button" role="radio" aria-checked={o.value === value} tabIndex={o.value === value ? 0 : -1} onClick={() => onChange(o.value)} onKeyDown={(e) => move(e, i)}>
+            {o.label}
+          </button>
+        </Tipped>
       ))}
     </div>
   );
@@ -403,4 +406,9 @@ export function Tip({ label, shortcut, side = 'top', children }: { label: ReactN
       </RTooltip.Portal>
     </RTooltip.Root>
   );
+}
+
+/** A Tip when there is something to say, the element alone when not. */
+export function Tipped({ label, shortcut, side, children }: { label?: ReactNode; shortcut?: string; side?: Side; children: ReactElement }) {
+  return label || shortcut ? <Tip label={label} shortcut={shortcut} side={side}>{children}</Tip> : children;
 }
