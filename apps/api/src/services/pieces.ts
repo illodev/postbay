@@ -11,6 +11,17 @@ import { loadPiece, loadVariant } from './loaders.js';
 export const KINDS = ['video', 'carousel', 'post', 'story', 'pdf'] as const;
 export const FORMATS = ['9:16', '4:5', '1:1', '16:9', 'carousel', 'document'] as const;
 
+/**
+ * Where the piece's project lives (the code and material it is made from), as an opaque reference a runner resolves with its own
+ * configuration, e.g. "videos:2026-09-29-quarterly-taxes/telenovela". One line, no control characters; empty clears it.
+ */
+const pieceSource = z
+  .string()
+  .trim()
+  .max(500)
+  .refine((s) => !/[\u0000-\u001f\u007f-\u009f]/.test(s), 'The project source is one line of text, with no control characters')
+  .transform((s) => s || null);
+
 export const pieceInput = z.object({
   title: z.string().trim().min(1).max(200),
   kind: z.enum(KINDS),
@@ -18,6 +29,7 @@ export const pieceInput = z.object({
   campaignId: z.string().uuid().nullish(),
   targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   aiGenerated: z.boolean().default(false),
+  source: pieceSource.nullish(),
 });
 
 /**
@@ -30,6 +42,7 @@ export const piecePatch = z.object({
   campaignId: z.string().uuid().nullish(),
   targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   aiGenerated: z.boolean().optional(),
+  source: pieceSource.nullish(),
 });
 
 export const variantInput = z.object({
@@ -64,11 +77,11 @@ export async function createPiece(ctx: Ctx, p: Principal, brandId: string, raw: 
     await assertCampaign(db, brandId, input.campaignId);
     const a = actorCols(p);
     const piece = (await db.one(
-      `insert into piece (brand_id, campaign_id, title, kind, brief, target_date, ai_generated, created_by_user, created_by_token)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
-      [brandId, input.campaignId ?? null, input.title, input.kind, input.brief, input.targetDate ?? null, input.aiGenerated, a.user, a.token],
+      `insert into piece (brand_id, campaign_id, title, kind, brief, target_date, ai_generated, created_by_user, created_by_token, source)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`,
+      [brandId, input.campaignId ?? null, input.title, input.kind, input.brief, input.targetDate ?? null, input.aiGenerated, a.user, a.token, input.source ?? null],
     ))!;
-    await audit(db, p, brandId, 'piece.created', 'piece', piece.id, null, { title: input.title, kind: input.kind });
+    await audit(db, p, brandId, 'piece.created', 'piece', piece.id, null, { title: input.title, kind: input.kind, source: piece.source });
     return piece;
   });
 }
@@ -151,7 +164,8 @@ export async function updatePiece(ctx: Ctx, p: Principal, pieceId: string, raw: 
       `update piece set title = coalesce($2, title), brief = coalesce($3, brief),
          campaign_id = case when $4::boolean then $5 else campaign_id end,
          target_date = case when $6::boolean then $7 else target_date end,
-         ai_generated = coalesce($8, ai_generated)
+         ai_generated = coalesce($8, ai_generated),
+         source = case when $9::boolean then $10 else source end
        where id = $1 returning *`,
       [
         pieceId,
@@ -162,11 +176,13 @@ export async function updatePiece(ctx: Ctx, p: Principal, pieceId: string, raw: 
         input.targetDate !== undefined,
         input.targetDate ?? null,
         input.aiGenerated ?? null,
+        input.source !== undefined,
+        input.source ?? null,
       ],
     ))!;
     await audit(db, p, before.brand_id, 'piece.updated', 'piece', pieceId,
-      { title: before.title, brief: before.brief, target_date: before.target_date, ai_generated: before.ai_generated },
-      { title: after.title, brief: after.brief, target_date: after.target_date, ai_generated: after.ai_generated });
+      { title: before.title, brief: before.brief, target_date: before.target_date, ai_generated: before.ai_generated, source: before.source },
+      { title: after.title, brief: after.brief, target_date: after.target_date, ai_generated: after.ai_generated, source: after.source });
     return after;
   });
 }

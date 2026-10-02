@@ -193,7 +193,7 @@ scripts use `Authorization: Bearer <producer token>`.
 
 | Method and path | What it does |
 | --- | --- |
-| `POST /brands/:id/pieces`, `POST /pieces/:id/variants` | Create a piece and add a variant |
+| `POST /brands/:id/pieces`, `POST /pieces/:id/variants` | Create a piece (optionally with `source`, where its project lives) and add a variant |
 | `POST /variants/:id/uploads` | Declare files with their sha256 and get signed upload URLs; with `resumable: true` for a big file, an upload to send in pieces instead |
 | `GET`, `PATCH /uploads/:id/resumable`, `POST /uploads/:id/resumable/finish` | Ask how much of a big file has arrived, send the next piece (`Upload-Offset`, raw bytes), and have the whole checked and stored |
 | `POST /variants/:id/versions` | Close a version: the uploaded files, notes and the comments it resolves. With a producer token, only inside a run it started on the piece |
