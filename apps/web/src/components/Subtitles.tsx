@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { api, type Anchor, type CommentThread, type SubtitleCue, type SubtitleTrack } from '../api';
 import { t } from '../i18n';
 import { playhead } from '../lib/playhead';
-import { ErrorBox } from './ui';
+import { ErrorBox, Select } from './ui';
 import { timecode } from './viewer';
 
 /** The line on screen at a moment: the last that has started and not ended, as the server's cueAt does. */
@@ -60,17 +60,16 @@ export function SubtitlePanel({ versionId, threads, canAnnotate, firstVideoPosit
     <section className="rv-subs" aria-label={t('review.subs.title')}>
       <header className="rv-subs-head">
         <h2>{t('review.subs.title')}</h2>
-        <span className="muted small mono">{t('review.subs.lines', { count: cues.length })}</span>
+        <span className="rv-meta-n">{t('review.subs.lines', { count: cues.length })}</span>
         <span className="grow" />
         {tracks.length > 1 && (
-          <select
-            className="rv-select"
-            aria-label={t('review.subs.file')}
-            value={track.position}
-            onChange={(e) => setWhich(tracks.findIndex((x) => x.position === Number(e.target.value)))}
-          >
-            {tracks.map((x) => <option key={x.assetId} value={x.position}>{x.name}</option>)}
-          </select>
+          <Select
+            className="rv-kind"
+            label={t('review.subs.file')}
+            value={String(track.position)}
+            onChange={(v) => setWhich(tracks.findIndex((x) => x.position === Number(v)))}
+            options={tracks.map((x) => ({ value: String(x.position), label: x.name }))}
+          />
         )}
       </header>
       {track.problem && <div className="notice notice-warn">{t('review.subs.problem', { name: track.name, problem: track.problem })}</div>}

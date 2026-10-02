@@ -14,12 +14,21 @@ export class StudioError extends Error {
   }
 }
 
+/** A shape the reviewer drew over the frame or the page, in fractions of it (0..1 from the top-left corner). */
+export type Shape =
+  | { type: 'path'; points: [number, number][]; color?: string }
+  | { type: 'rect'; x: number; y: number; w: number; h: number; color?: string }
+  | { type: 'arrow'; x1: number; y1: number; x2: number; y2: number; color?: string };
+
 export interface Comment {
   id: string;
   version_id: string;
   version_number: number;
   body: string;
-  anchor: { type: 'time'; t: number; t_end?: number; position?: number; track?: number; cue?: number; cue_text?: string } | { type: 'region'; page: number; x: number; y: number; w: number; h: number } | null;
+  anchor:
+    | { type: 'time'; t: number; t_end?: number; position?: number; track?: number; cue?: number; cue_text?: string; drawing?: Shape[] }
+    | { type: 'region'; page: number; x: number; y: number; w: number; h: number; drawing?: Shape[] }
+    | null;
   status: 'open' | 'resolved';
   author: string;
   carried: boolean;

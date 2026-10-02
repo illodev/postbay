@@ -114,6 +114,75 @@ describe('comments', () => {
     expect(page.body.error.code).toBe('invalid_anchor');
   });
 
+  it('keeps a drawing over the frame with the comment, and gives it back as it was drawn', async () => {
+    const { users, call, makePiece, newVersion } = env;
+    const { variantId } = await makePiece(users.producer);
+    const v = await newVersion(users.producer, variantId);
+    const drawing = [
+      { type: 'path', points: [[0.1, 0.2], [0.15, 0.25], [0.2, 0.22]], color: 'red' },
+      { type: 'rect', x: 0.4, y: 0.5, w: 0.2, h: 0.15, color: 'yellow' },
+      { type: 'arrow', x1: 0.9, y1: 0.1, x2: 0.6, y2: 0.45 },
+    ];
+    const c = await call(users.reviewer, 'POST', `/api/versions/${v.body.id}/comments`, {
+      body: 'The shadow is missing under his feet', anchor: { type: 'time', t: 4, t_end: 6, drawing },
+    });
+    expect(c.status).toBe(201);
+    const list = await call(users.producer, 'GET', `/api/versions/${v.body.id}/comments`);
+    // The arrow had no colour: it takes the default one.
+    expect(list.body[0].anchor).toEqual({ type: 'time', t: 4, t_end: 6, drawing: [drawing[0], drawing[1], { ...drawing[2], color: 'yellow' }] });
+  });
+
+  it('refuses a drawing outside the frame, in another colour, or too big to be a sketch', async () => {
+    const { users, call, makePiece, newVersion } = env;
+    const { variantId } = await makePiece(users.producer);
+    const v = await newVersion(users.producer, variantId);
+    const post = (drawing: unknown) => call(users.reviewer, 'POST', `/api/versions/${v.body.id}/comments`, { body: 'x', anchor: { type: 'time', t: 1, drawing } });
+    const outside = await post([{ type: 'arrow', x1: 0.5, y1: 0.5, x2: 1.4, y2: 0.5 }]);
+    expect(outside.status).toBe(400);
+    expect(outside.body.error.code).toBe('validation_error');
+    expect((await post([{ type: 'rect', x: 0.8, y: 0.1, w: 0.5, h: 0.1 }])).status).toBe(400);
+    expect((await post([{ type: 'arrow', x1: 0, y1: 0, x2: 1, y2: 1, color: 'magenta' }])).status).toBe(400);
+    expect((await post([{ type: 'circle', x: 0.5, y: 0.5 }])).status).toBe(400);
+    expect((await post([])).status).toBe(400);
+    expect((await post(Array.from({ length: 31 }, () => ({ type: 'arrow', x1: 0, y1: 0, x2: 1, y2: 1 })))).status).toBe(400);
+    const long = Array.from({ length: 501 }, (_, i) => [i / 501, 0.5]);
+    expect((await post([{ type: 'path', points: long }])).status).toBe(400);
+    const many = Array.from({ length: 5 }, () => ({ type: 'path', points: long.slice(0, 450) }));
+    expect((await post(many)).status).toBe(400);
+    expect((await call(users.reviewer, 'GET', `/api/versions/${v.body.id}/comments`)).body).toHaveLength(0);
+  });
+
+  it('keeps a drawing on a subtitle line, whose times and words still come from the file', async () => {
+    const { users, call, makePiece, newVersion } = env;
+    const { variantId } = await makePiece(users.producer);
+    const vtt = Buffer.from('WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nHello there\n');
+    const v = await newVersion(users.producer, variantId, [
+      { name: 'reel.mp4', mime: 'video/mp4', kind: 'video', position: 0 },
+      { name: 'subs.vtt', mime: 'text/vtt', kind: 'subtitles', position: 0, data: vtt },
+    ]);
+    expect(v.status).toBe(201);
+    const drawing = [{ type: 'rect', x: 0.1, y: 0.8, w: 0.8, h: 0.1, color: 'blue' }];
+    const c = await call(users.reviewer, 'POST', `/api/versions/${v.body.id}/comments`, {
+      body: 'This line covers the logo', anchor: { type: 'time', t: 0, cue: 0, track: 0, cue_text: 'made up', drawing },
+    });
+    expect(c.status).toBe(201);
+    const list = await call(users.reviewer, 'GET', `/api/versions/${v.body.id}/comments`);
+    expect(list.body[0].anchor).toMatchObject({ t: 1, t_end: 2.5, cue: 0, cue_text: 'Hello there', drawing });
+  });
+
+  it('keeps a drawing on a page of a carousel or a document', async () => {
+    const { users, call, makePiece, newVersion } = env;
+    const { variantId } = await makePiece(users.producer);
+    const v = await newVersion(users.producer, variantId);
+    const drawing = [{ type: 'path', points: [[0.2, 0.2], [0.3, 0.3]], color: 'green' }];
+    // A video has no pages: a region on page 1 is the first item, and a drawing goes with it.
+    const c = await call(users.reviewer, 'POST', `/api/versions/${v.body.id}/comments`, {
+      body: 'Circled', anchor: { type: 'region', page: 1, x: 0.2, y: 0.2, w: 0.1, h: 0.1, drawing },
+    });
+    expect(c.status).toBe(201);
+    expect(c.body.anchor).toEqual({ type: 'region', page: 1, x: 0.2, y: 0.2, w: 0.1, h: 0.1, drawing });
+  });
+
   it('only reviewers and approvers start threads; producers reply and resolve; readers do neither', async () => {
     const { users, call, makePiece, newVersion } = env;
     const { variantId } = await makePiece(users.producer);

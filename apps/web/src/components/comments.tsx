@@ -1,14 +1,19 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { api, type Anchor, type CommentThread } from '../api';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { api, type Anchor, type CommentThread, type Shape } from '../api';
 import { t } from '../i18n';
 import { playhead } from '../lib/playhead';
-import { Dialog, ErrorBox, errorMessage, useToast } from './ui';
-import { liveVideo, round2, shortName, shortTimecode, timecode } from './viewer';
+import { Avatar } from './Avatar';
+import type { Tool } from './Drawing';
+import { Icon } from './icons';
+import { Dialog, ErrorBox, errorMessage, Popover, Select, Tip, useToast } from './ui';
+import { agentInThread, liveVideo, round2, shortName, shortTimecode, threadAt, timecode } from './viewer';
 
-export function anchorLabel(a: Anchor | null): string {
+export function anchorLabel(a: Anchor | null, drawn = false): string {
   if (!a) return t('review.anchor.general');
+  // A place marked by a drawing is just its page: the drawing says where on it.
+  if (a.type === 'region' && (drawn || a.drawing?.length)) return t('review.anchor.page', { page: a.page });
   if (a.type === 'time' && a.cue !== undefined) return t('review.anchor.cue', { n: a.cue + 1, time: shortTimecode(a.t) });
   if (a.type === 'time') return a.t_end !== undefined ? `${shortTimecode(a.t)}–${shortTimecode(a.t_end)}` : shortTimecode(a.t);
   return a.w === 0 && a.h === 0 ? t('review.anchor.point', { page: a.page }) : t('review.anchor.area', { page: a.page });
@@ -43,34 +48,31 @@ export function orderThreads(threads: CommentThread[]) {
 }
 
 /**
- * The number each open thread with a place carries, on its card and on its mark over the picture or the timeline. Numbers are
- * for what still needs doing, in the order of the list; resolved threads keep their mark, dimmed and without a number.
+ * The number each thread carries, #1, #2…, on its card and on its pin over the picture: by moment and by when it was written,
+ * the way the list shows them, open or resolved, so a number never changes when a thread is resolved.
  */
 export function numberThreads(threads: CommentThread[]): Map<string, number> {
   const m = new Map<string, number>();
-  for (const c of orderThreads(threads).open) if (c.anchor) m.set(c.id, m.size + 1);
+  const ordered = [...threads].sort((a, b) => {
+    const ta = a.anchor?.type === 'time' ? a.anchor.t : a.anchor?.type === 'region' ? a.anchor.page * 1000 : Infinity;
+    const tb = b.anchor?.type === 'time' ? b.anchor.t : b.anchor?.type === 'region' ? b.anchor.page * 1000 : Infinity;
+    return a.version_number - b.version_number || ta - tb || a.created_at.localeCompare(b.created_at);
+  });
+  for (const c of ordered) m.set(c.id, m.size + 1);
   return m;
-}
-
-/** The thread being said right now: the latest whose moment (or span) holds the playhead. */
-function threadAt(threads: CommentThread[], now: number): string | null {
-  let best: CommentThread | null = null;
-  for (const c of threads) {
-    const a = c.anchor;
-    if (a?.type !== 'time') continue;
-    const end = a.t_end ?? a.t + 2.5;
-    if (a.t <= now + 0.05 && now < end && (!best || (best.anchor as { t: number }).t <= a.t)) best = c;
-  }
-  return best?.id ?? null;
 }
 
 const REPLY_KINDS = ['fixed', 'cannot_do', 'needs_human'] as const;
 const replyKindLabel = (k: (typeof REPLY_KINDS)[number]) =>
   k === 'fixed' ? t('review.reply.kind.fixed') : k === 'cannot_do' ? t('review.reply.kind.cannotDo') : t('review.reply.kind.needsHuman');
 
-const IconPeople = () => (
-  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6" />
+/** Lower case and without accents, for a search that finds "Álvaro" when "alvaro" is typed. */
+const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+
+const ResolveMark = () => (
+  <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
+    <circle cx="10" cy="10" r="8.25" className="rv-res-ring" />
+    <path d="M6.4 10.3l2.4 2.4 4.8-5" className="rv-res-check" />
   </svg>
 );
 
@@ -122,6 +124,8 @@ function Thread({ c, n, focus, playing, canReply, canResolve, canReopen, onJump,
   const canMark = open && canReopen;
   const canAnswer = canReply && open;
   const peopleLabel = c.people_only ? t('review.thread.letAgent') : t('review.thread.makePeopleOnly');
+  const drawn = !!c.anchor?.drawing?.length;
+  const resolveLabel = open ? t('review.thread.resolve') : t('review.thread.reopen');
 
   return (
     <article
@@ -130,33 +134,47 @@ function Thread({ c, n, focus, playing, canReply, canResolve, canReopen, onJump,
       className={`thread rv-thread ${c.status} ${focus === c.id ? 'focus' : ''} ${playing ? 'now' : ''}`}
       onClick={() => onJump(c)}
     >
-      <header className="thread-head">
-        {n !== undefined && <span className="rv-num" aria-label={t('review.thread.number', { n })}>{n}</span>}
-        {c.anchor ? (
-          <button type="button" className="anchor-chip" onClick={(e) => { e.stopPropagation(); onJump(c); }} title={t('review.thread.goTo')}>{anchorLabel(c.anchor)}</button>
-        ) : (
-          <span className="tag">{t('review.anchor.general')}</span>
-        )}
-        <strong className="rv-author" title={c.author}>{shortName(c.author)}</strong>
-        <span className="rv-ver mono">v{c.version_number}</span>
+      <header className="rv-th-h">
+        <Avatar name={shortName(c.author)} size={24} />
+        <strong className="rv-th-name" title={c.author}>{shortName(c.author)}</strong>
+        <time className="rv-th-when" dateTime={c.created_at} title={fullDate(c.created_at)}>{ago(c.created_at)}</time>
         <span className="grow" />
-        <time className="rv-when" dateTime={c.created_at} title={fullDate(c.created_at)}>{ago(c.created_at)}</time>
+        {canMark && (
+          <Tip label={`${peopleLabel}. ${t('review.thread.peopleOnlyHint')}`}>
+            <button
+              type="button"
+              className={`rv-th-act ${c.people_only ? 'on' : ''}`}
+              onClick={(e) => { e.stopPropagation(); mark.mutate(); }}
+              disabled={mark.isPending}
+              aria-label={peopleLabel}
+            >
+              <Icon name="users" size={15} />
+            </button>
+          </Tip>
+        )}
+        <Tip label={canToggle ? resolveLabel : open ? t('review.thread.openState') : t('review.thread.resolved')}>
+          <button
+            type="button"
+            className={`rv-resolve ${open ? '' : 'done'} ${canToggle ? '' : 'locked'}`}
+            onClick={(e) => { e.stopPropagation(); if (canToggle && !toggle.isPending) toggle.mutate(); }}
+            aria-disabled={!canToggle}
+            aria-label={resolveLabel}
+            aria-pressed={!open}
+          >
+            <ResolveMark />
+          </button>
+        </Tip>
       </header>
-      {(canAnswer || canToggle || canMark) && (
-        <div className="rv-actions" onClick={(e) => e.stopPropagation()}>
-          {canAnswer && <button type="button" className="rv-act" onClick={() => setReplying(true)}>{t('review.thread.reply')}</button>}
-          {canToggle && (
-            <button type="button" className="rv-act" onClick={() => toggle.mutate()} disabled={toggle.isPending}>
-              {open ? t('review.thread.resolve') : t('review.thread.reopen')}
-            </button>
-          )}
-          {canMark && (
-            <button type="button" className={`rv-act rv-act-ic ${c.people_only ? 'on' : ''}`} onClick={() => mark.mutate()} disabled={mark.isPending} aria-label={peopleLabel} title={`${peopleLabel}. ${t('review.thread.peopleOnlyHint')}`}>
-              <IconPeople />
-            </button>
-          )}
-        </div>
-      )}
+      <p className="rv-th-body">
+        {c.anchor ? (
+          <button type="button" className="tc rv-th-tc" onClick={(e) => { e.stopPropagation(); onJump(c); }} title={t('review.thread.goTo')}>
+            {anchorLabel(c.anchor)}
+          </button>
+        ) : null}
+        {drawn && <span className="rv-th-ink" title={t('review.thread.drawn')} aria-label={t('review.thread.drawn')}><Icon name="pen" size={11} /></span>}
+        {c.body}
+      </p>
+      <CueQuote anchor={c.anchor} />
       {(c.people_only || (c.carried && open) || !open) && (
         <div className="rv-flags">
           {c.people_only && <span className="chip chip-on_hold" title={t('review.thread.peopleOnlyHint')}>{t('review.thread.peopleOnly')}</span>}
@@ -168,30 +186,24 @@ function Thread({ c, n, focus, playing, canReply, canResolve, canReopen, onJump,
           )}
         </div>
       )}
-      <CueQuote anchor={c.anchor} />
-      <div className="rv-body-row">
-        <p className="rv-body">{c.body}</p>
-        {c.frame_url && (
-          <img
-            className="frame-thumb"
-            src={c.frame_url}
-            alt={t('review.thread.frameAlt')}
-            title={t('review.thread.frameZoom')}
-            loading="lazy"
-            onClick={(e) => { e.stopPropagation(); setZoom(true); }}
-          />
-        )}
-      </div>
+      {c.carried && open && c.frame_url && (
+        <button type="button" className="rv-th-frame" onClick={(e) => { e.stopPropagation(); setZoom(true); }} title={t('review.thread.frameZoom')}>
+          <img className="frame-thumb" src={c.frame_url} alt={t('review.thread.frameAlt')} loading="lazy" />
+          <span>{t('review.thread.frameOf', { n: c.version_number })}</span>
+        </button>
+      )}
       {c.replies.map((r) => (
-        <p key={r.id} className={`reply ${r.by_agent ? 'agent' : ''}`}>
-          <span className="who" title={`${r.author} · ${fullDate(r.created_at)}`}>{shortName(r.author)}</span>
-          {r.by_agent && <span className="sr-only"> {t('review.thread.agentSuffix')}</span>}
-          {r.reply_kind && <> <span className={`chip ${r.reply_kind === 'fixed' ? 'chip-approved' : 'chip-changes_requested'}`}>{replyKindLabel(r.reply_kind)}</span></>}
-          <span className="rv-sep" aria-hidden="true"> · </span>
-          <span className="rv-reply-body">{r.body}</span>
-        </p>
+        <div key={r.id} className={`reply rv-reply ${r.by_agent ? 'agent' : ''}`}>
+          <div className="rv-reply-h">
+            {r.by_agent ? <Avatar agent size={18} /> : <Avatar name={shortName(r.author)} size={18} />}
+            <span className="who" title={`${r.author} · ${fullDate(r.created_at)}`}>{r.by_agent ? t('review.thread.agent') : shortName(r.author)}</span>
+            <time className="rv-th-when" dateTime={r.created_at}>{ago(r.created_at)}</time>
+            {r.reply_kind && <span className={`chip ${r.reply_kind === 'fixed' ? 'chip-approved' : 'chip-changes_requested'}`}>{replyKindLabel(r.reply_kind)}</span>}
+          </div>
+          <p className="rv-reply-body">{r.body}</p>
+        </div>
       ))}
-      {replying && canAnswer && (
+      {replying && canAnswer ? (
         <form
           className="rv-reply-form"
           onClick={(e) => e.stopPropagation()}
@@ -205,18 +217,27 @@ function Thread({ c, n, focus, playing, canReply, canResolve, canReopen, onJump,
             placeholder={t('review.reply.placeholder')}
             value={reply}
             onChange={(e) => setReply(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setReplying(false); } }}
+            onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setReplying(false); } }}
           />
           <div className="rv-reply-row">
-            <select className="rv-select" aria-label={t('review.reply.typeLabel')} value={kind} onChange={(e) => setKind(e.target.value)}>
-              <option value="">{t('review.reply.kind.plain')}</option>
-              {REPLY_KINDS.map((k) => <option key={k} value={k}>{replyKindLabel(k)}</option>)}
-            </select>
+            <Select
+              className="rv-kind"
+              label={t('review.reply.typeLabel')}
+              value={kind || 'plain'}
+              onChange={(k) => setKind(k === 'plain' ? '' : k)}
+              options={[{ value: 'plain', label: t('review.reply.kind.plain') }, ...REPLY_KINDS.map((k) => ({ value: k, label: replyKindLabel(k) }))]}
+            />
             <span className="grow" />
             <button type="button" className="btn btn-ghost btn-small" onClick={() => setReplying(false)}>{t('common.cancel')}</button>
             <button className="btn btn-primary btn-small" disabled={!reply.trim() || send.isPending}>{t('review.reply.send')}</button>
           </div>
         </form>
+      ) : (
+        <footer className="rv-th-foot">
+          {canAnswer && <button type="button" className="rv-th-reply" onClick={(e) => { e.stopPropagation(); setReplying(true); }}>{t('review.thread.reply')}</button>}
+          <span className="grow" />
+          {n !== undefined && <span className="rv-th-n" aria-label={t('review.thread.number', { n })}>#{n}</span>}
+        </footer>
       )}
       {zoom && c.frame_url && (
         <Dialog title={t('review.thread.frameTitle')} onClose={() => setZoom(false)} wide>
@@ -229,14 +250,126 @@ function Thread({ c, n, focus, playing, canReply, canResolve, canReopen, onJump,
 
 /** What the comment box suggests, by what is on the stage. */
 export type ComposeHint = 'video' | 'image' | 'pdf' | 'none';
-type Filter = 'all' | 'open' | 'resolved' | 'mine';
+
+/** Which comments the list shows: by state, and narrowed by whatever else is ticked (all must hold) and the search. */
+export interface CommentFilter {
+  status: 'all' | 'open' | 'resolved';
+  mine: boolean;
+  drawn: boolean;
+  agent: boolean;
+  people: string[];
+  q: string;
+}
+export const NO_FILTER: CommentFilter = { status: 'all', mine: false, drawn: false, agent: false, people: [], q: '' };
+
+/** The filter menu, Frame.io style: the state as a choice, then what to narrow by, then people. */
+function FilterMenu({ filter, onFilter, threads, isMine, count }: {
+  filter: CommentFilter;
+  onFilter: (f: CommentFilter) => void;
+  threads: CommentThread[];
+  isMine: (c: CommentThread) => boolean;
+  count: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const people = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of threads) m.set(c.author, (m.get(c.author) ?? 0) + 1);
+    return [...m].sort((a, b) => b[1] - a[1]);
+  }, [threads]);
+  const statuses: [CommentFilter['status'], string, number][] = [
+    ['all', t('review.filter.all'), threads.length],
+    ['open', t('review.filter.open'), threads.filter((c) => c.status === 'open').length],
+    ['resolved', t('review.filter.resolved'), threads.filter((c) => c.status === 'resolved').length],
+  ];
+  const narrows: ['mine' | 'drawn' | 'agent', string, number][] = [
+    ['mine', t('review.filter.mine'), threads.filter(isMine).length],
+    ['drawn', t('review.filter.drawn'), threads.filter((c) => c.anchor?.drawing?.length).length],
+    ['agent', t('review.filter.agent'), threads.filter(agentInThread).length],
+  ];
+  const extra = (filter.mine ? 1 : 0) + (filter.drawn ? 1 : 0) + (filter.agent ? 1 : 0) + filter.people.length;
+  const label = filter.status === 'open' ? t('review.filter.open') : filter.status === 'resolved' ? t('review.filter.resolved') : t('review.filter.allComments');
+  return (
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      width={270}
+      label={t('review.filter.label')}
+      className="rv-fmenu-pop"
+      trigger={
+        <button type="button" className="rv-fmenu-btn" aria-haspopup="dialog" aria-label={t('review.filter.label')}>
+          <span className="rv-fmenu-l">{label}</span>
+          <span className="rv-fmenu-n">({count})</span>
+          {extra > 0 && <span className="rv-fmenu-x">+{extra}</span>}
+          <Icon name="chevronDown" size={14} />
+        </button>
+      }
+    >
+      <div role="radiogroup" aria-label={t('review.filter.show')}>
+        <div className="rv-pop-h">{t('review.filter.show')}</div>
+        {statuses.map(([st, l, n]) => (
+          <button key={st} type="button" role="radio" aria-checked={filter.status === st} className="rv-pop-item" onClick={() => onFilter({ ...filter, status: st })}>
+            <span className={`rv-radio ${filter.status === st ? 'on' : ''}`} aria-hidden="true" />
+            <span className="grow">{l}</span>
+            <span className="rv-pop-n">{n}</span>
+          </button>
+        ))}
+      </div>
+      <div className="rv-pop-sep" />
+      <div role="group" aria-label={t('review.filter.narrow')}>
+        <div className="rv-pop-h">{t('review.filter.narrow')}</div>
+        {narrows.map(([k, l, n]) => (
+          <button key={k} type="button" role="checkbox" aria-checked={filter[k]} className="rv-pop-item" onClick={() => onFilter({ ...filter, [k]: !filter[k] })}>
+            <Icon name={k === 'mine' ? 'user' : k === 'drawn' ? 'pen' : 'bot'} size={15} />
+            <span className="grow">{l}</span>
+            <span className="rv-pop-n">{n}</span>
+            <span className={`rv-box ${filter[k] ? 'on' : ''}`} aria-hidden="true" />
+          </button>
+        ))}
+      </div>
+      {people.length > 1 && (
+        <>
+          <div className="rv-pop-sep" />
+          <div role="group" aria-label={t('review.filter.people')}>
+            <div className="rv-pop-h">{t('review.filter.people')}</div>
+            {people.map(([name, n]) => {
+              const on = filter.people.includes(name);
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  role="checkbox"
+                  aria-checked={on}
+                  className="rv-pop-item"
+                  onClick={() => onFilter({ ...filter, people: on ? filter.people.filter((x) => x !== name) : [...filter.people, name] })}
+                >
+                  <Avatar name={shortName(name)} size={20} title="" />
+                  <span className="grow rv-pop-name">{shortName(name)}</span>
+                  <span className="rv-pop-n">{n}</span>
+                  <span className={`rv-box ${on ? 'on' : ''}`} aria-hidden="true" />
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+      {(extra > 0 || filter.status !== 'all') && (
+        <>
+          <div className="rv-pop-sep" />
+          <button type="button" className="rv-pop-item rv-pop-clear" onClick={() => { onFilter({ ...NO_FILTER, q: filter.q }); setOpen(false); }}>
+            {t('review.filter.clear')}
+          </button>
+        </>
+      )}
+    </Popover>
+  );
+}
 
 /**
- * The comment threads of a version and the box to start a new one. It renders three blocks — the filters, the list (which
- * scrolls) and the box (which the review page pins under it) — so the page decides where each goes. While a video plays, the
- * thread at the playhead lights up and comes into view.
+ * The comment threads of a version and the box to start a new one: the filters and the search, the list (which scrolls) and the
+ * box (pinned under it). While a video plays, the thread at the playhead lights up and comes into view; the box follows the
+ * playhead, so writing is commenting on the moment on screen unless it is made general.
  */
-export function CommentsPanel({ versionId, threads, numbers, me, draft, onDraft, onClearDraft, onHold, canComment, canReply, canResolve, canReopen, focus, onJump, commentable, hint }: {
+export function CommentsPanel({ versionId, threads, numbers, me, draft, onDraft, onClearDraft, onHold, canComment, canReply, canResolve, canReopen, focus, onJump, commentable, hint, filter, onFilter, sketch, tool, onTool, onPosted }: {
   versionId: string;
   threads: CommentThread[];
   numbers: Map<string, number>;
@@ -256,26 +389,42 @@ export function CommentsPanel({ versionId, threads, numbers, me, draft, onDraft,
   /** False once the version is superseded: it no longer takes new comments. */
   commentable: boolean;
   hint: ComposeHint;
+  filter: CommentFilter;
+  onFilter: (f: CommentFilter) => void;
+  /** The drawing that goes with the comment being written, and the tool drawing it. */
+  sketch: Shape[];
+  tool: Tool | null;
+  onTool?: (t: Tool | null) => void;
+  /** A comment was posted: it becomes the one in focus. */
+  onPosted: (id?: string) => void;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [body, setBody] = useState('');
   const [peopleOnly, setPeopleOnly] = useState(false);
-  const [filter, setFilter] = useState<Filter>('all');
   const [showResolved, setShowResolved] = useState(false);
+  // With nothing open, the resolved threads are what there is to see: they start unfolded (once, when the list arrives).
+  const unfolded = useRef(false);
+  useEffect(() => {
+    if (unfolded.current || !threads.length) return;
+    unfolded.current = true;
+    if (threads.every((c) => c.status === 'resolved')) setShowResolved(true);
+  }, [threads]);
+  const [searching, setSearching] = useState(!!filter.q);
   // On a video, a new comment goes to the current moment unless it is made general.
   const [anchorMode, setAnchorMode] = useState<'moment' | 'general'>('moment');
   const box = useRef<HTMLTextAreaElement>(null);
   const video = hint === 'video';
   const now = useSyncExternalStore(playhead.subscribe, () => (video ? Math.round(playhead.t * 10) / 10 : 0));
-  const atMoment = !draft && video && anchorMode === 'moment' && now > 0;
+  const atMoment = !draft && video && anchorMode === 'moment';
 
   const post = useMutation({
-    mutationFn: (anchor: Anchor | null) => api.post(`/api/versions/${versionId}/comments`, { body, anchor, peopleOnly }),
-    onSuccess: () => {
+    mutationFn: (anchor: Anchor | null) => api.post<{ id: string }>(`/api/versions/${versionId}/comments`, { body, anchor, peopleOnly }),
+    onSuccess: (row) => {
       setBody('');
       setPeopleOnly(false);
       onClearDraft();
+      onPosted(row?.id);
       qc.invalidateQueries({ queryKey: ['comments', versionId] });
       qc.invalidateQueries({ queryKey: ['version', versionId] });
       qc.invalidateQueries({ queryKey: ['piece'] });
@@ -283,23 +432,23 @@ export function CommentsPanel({ versionId, threads, numbers, me, draft, onDraft,
   });
 
   const isMine = (c: CommentThread) => c.author === me;
-  const { open, resolved } = orderThreads(filter === 'mine' ? threads.filter(isMine) : threads);
-  const counts = {
-    open: threads.filter((c) => c.status === 'open').length,
-    resolved: threads.filter((c) => c.status === 'resolved').length,
-    all: threads.length,
-    mine: threads.filter(isMine).length,
-  };
-  const listed = filter === 'resolved' ? resolved : filter === 'open' ? open : [...open, ...(showResolved ? resolved : [])];
+  const q = fold(filter.q.trim());
+  const matches = (c: CommentThread) =>
+    (!filter.mine || isMine(c))
+    && (!filter.drawn || !!c.anchor?.drawing?.length)
+    && (!filter.agent || agentInThread(c))
+    && (!filter.people.length || filter.people.includes(c.author))
+    && (!q || fold([c.body, c.author, ...c.replies.map((r) => `${r.body} ${r.author}`)].join(' ')).includes(q));
+  const narrowed = threads.filter(matches);
+  const { open, resolved } = orderThreads(narrowed);
+  const count = filter.status === 'open' ? open.length : filter.status === 'resolved' ? resolved.length : narrowed.length;
+  const listed = filter.status === 'resolved' ? resolved : filter.status === 'open' ? open : [...open, ...(showResolved || q ? resolved : [])];
   const current = useSyncExternalStore(playhead.subscribe, () => (video ? threadAt(listed, playhead.t) : null));
 
-  // A new place to comment on puts the cursor in the box, ready to write.
+  // A new place to comment on puts the cursor in the box, ready to write. (The box is always in view: nothing scrolls.)
   const hadDraft = useRef(false);
   useEffect(() => {
-    if (draft && !hadDraft.current) {
-      box.current?.focus({ preventScroll: true });
-      box.current?.closest('form')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }
+    if (draft && !hadDraft.current) box.current?.focus({ preventScroll: true });
     hadDraft.current = !!draft;
   }, [draft]);
 
@@ -308,119 +457,161 @@ export function CommentsPanel({ versionId, threads, numbers, me, draft, onDraft,
     if (!focus) return;
     const c = threads.find((x) => x.id === focus);
     if (!c) return;
-    if (c.status === 'resolved' && filter === 'open') setFilter('all');
-    if (c.status === 'open' && filter === 'resolved') setFilter('all');
-    if (filter === 'mine' && !isMine(c)) setFilter('all');
+    const wrongState = (c.status === 'resolved' && filter.status === 'open') || (c.status === 'open' && filter.status === 'resolved');
+    if (wrongState || !matches(c)) onFilter({ ...NO_FILTER });
     if (c.status === 'resolved') setShowResolved(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus]);
 
+  // The box grows with what is written, up to a few lines.
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [body]);
+
   const card = (c: CommentThread) => (
     <Thread key={c.id} c={c} n={numbers.get(c.id)} focus={focus} playing={current === c.id} canReply={canReply} canResolve={canResolve} canReopen={canReopen} onJump={onJump} versionId={versionId} />
   );
-  const placeholder = draft || atMoment
+  const placeholder = draft
     ? t('review.compose.placeholderAnchored')
-    : video ? t('review.compose.placeholderVideo')
+    : atMoment ? t('review.compose.placeholderMoment')
+    : video ? t('review.compose.placeholderGeneral')
     : hint === 'image' ? t('review.compose.placeholderImage')
     : hint === 'pdf' ? t('review.compose.placeholderPdf')
     : t('review.compose.placeholderGeneral');
   const submit = () => {
     if (!body.trim() || post.isPending) return;
     if (post.error) toast(t('review.compose.retrying'));
-    post.mutate(draft ?? (atMoment ? { type: 'time', t: round2(playhead.t), position: liveVideo.position } : null));
+    const base: Anchor | null = draft ?? (atMoment ? { type: 'time', t: round2(playhead.t), position: liveVideo.position } : null);
+    post.mutate(base && sketch.length ? { ...base, drawing: sketch } : base);
   };
-  const chips: [Filter, string, number][] = [
-    ['all', t('review.filter.all'), counts.all],
-    ['open', t('review.filter.open'), counts.open],
-    ['resolved', t('review.filter.resolved'), counts.resolved],
-    ['mine', t('review.filter.mine'), counts.mine],
-  ];
-  const empty = filter === 'open' ? t('review.list.nothingOpen')
-    : filter === 'resolved' ? t('review.list.nothingResolved')
-    : filter === 'mine' ? t('review.list.nothingMine')
+  const empty = filter.status === 'open' ? t('review.list.nothingOpen')
+    : filter.status === 'resolved' ? t('review.list.nothingResolved')
+    : filter.mine && !filter.drawn && !filter.agent && !filter.people.length && !q ? t('review.list.nothingMine')
+    : narrowed.length < threads.length || q ? t('review.list.nothingMatches')
     : t('review.list.nothing');
+  const filtered = filter.mine || filter.drawn || filter.agent || filter.people.length > 0 || !!q;
 
   return (
     <>
-      <div className="rv-filters" role="group" aria-label={t('review.filter.label')}>
-        {chips.map(([f, label, count]) => (
-          <button key={f} type="button" className="rv-filter" aria-pressed={filter === f} onClick={() => setFilter(f)}>
-            {label} <span className="rv-filter-n">{count}</span>
+      <div className="rv-filterbar">
+        <FilterMenu filter={filter} onFilter={onFilter} threads={threads} isMine={isMine} count={count} />
+        <span className="grow" />
+        {filtered && (
+          <button type="button" className="rv-ic rv-ic-sm" onClick={() => { onFilter({ ...NO_FILTER, status: filter.status }); setSearching(false); }} aria-label={t('review.filter.clear')} title={t('review.filter.clear')}>
+            <Icon name="x" size={15} />
           </button>
-        ))}
+        )}
+        <button type="button" className={`rv-ic rv-ic-sm ${searching ? 'on' : ''}`} aria-pressed={searching} onClick={() => { if (searching) onFilter({ ...filter, q: '' }); setSearching((s) => !s); }} aria-label={t('review.filter.search')} title={t('review.filter.search')}>
+          <Icon name="search" size={15} />
+        </button>
       </div>
+      {searching && (
+        <div className="rv-search">
+          <Icon name="search" size={14} />
+          <input
+            type="search"
+            autoFocus
+            aria-label={t('review.filter.search')}
+            placeholder={t('review.filter.searchPlaceholder')}
+            value={filter.q}
+            onChange={(e) => onFilter({ ...filter, q: e.target.value })}
+            onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onFilter({ ...filter, q: '' }); setSearching(false); } }}
+          />
+        </div>
+      )}
       <div className="rv-scroll rv-threads">
-        {filter === 'resolved'
-          ? (resolved.length ? resolved.map(card) : <p className="muted rv-none">{empty}</p>)
+        {filter.status === 'resolved'
+          ? (resolved.length ? resolved.map(card) : <p className="rv-none">{empty}</p>)
           : (
             <>
-              {open.length ? open.map(card) : <p className="muted rv-none">{resolved.length && filter !== 'open' ? t('review.list.nothingOpen') : empty}</p>}
-              {filter !== 'open' && resolved.length > 0 && (
-                <details className="rv-resolved" open={showResolved} onToggle={(e) => setShowResolved(e.currentTarget.open)}>
-                  <summary>{t('review.list.resolved', { count: resolved.length })}</summary>
-                  <div className="rv-resolved-list">{resolved.map(card)}</div>
-                </details>
+              {open.length ? open.map(card) : <p className="rv-none">{resolved.length && filter.status !== 'open' ? t('review.list.nothingOpen') : empty}</p>}
+              {filter.status === 'all' && resolved.length > 0 && (
+                q ? resolved.map(card) : (
+                  <details className="rv-resolved" open={showResolved} onToggle={(e) => setShowResolved(e.currentTarget.open)}>
+                    <summary><Icon name="chevronRight" size={14} />{t('review.list.resolved', { count: resolved.length })}</summary>
+                    <div className="rv-resolved-list">{resolved.map(card)}</div>
+                  </details>
+                )
               )}
             </>
           )}
       </div>
       {canComment && commentable && (
-        <form className={`rv-compose ${body.trim() || draft ? 'active' : ''}`} onSubmit={(e) => { e.preventDefault(); submit(); }}>
-          <div className="rv-anchor-row">
+        <form className={`rv-compose ${body.trim() || draft || sketch.length ? 'active' : ''}`} onSubmit={(e) => { e.preventDefault(); submit(); }}>
+          <div className="rv-compose-in">
             {draft ? (
-              <>
-                <span className="anchor-chip static">{anchorLabel(draft)}</span>
-                <button type="button" className="rv-x" onClick={onClearDraft} aria-label={t('review.compose.removeAnchor')} title={t('review.compose.removeAnchor')}>×</button>
-              </>
+              <span className="rv-anchor">
+                <span className="tc">{anchorLabel(draft, sketch.length > 0)}</span>
+                <button type="button" className="rv-x" onClick={onClearDraft} aria-label={t('review.compose.removeAnchor')} title={t('review.compose.removeAnchor')}><Icon name="x" size={12} /></button>
+              </span>
             ) : atMoment ? (
-              <>
-                <button type="button" className="anchor-chip live" onClick={() => setAnchorMode('general')} title={t('review.compose.momentHint')}>{timecode(now)}</button>
-                <button type="button" className="rv-x" onClick={() => setAnchorMode('general')} aria-label={t('review.compose.makeGeneral')} title={t('review.compose.makeGeneral')}>×</button>
-              </>
-            ) : video ? (
-              <button
-                type="button"
-                className="tag rv-general"
-                onClick={() => {
-                  setAnchorMode('moment');
-                  if (now === 0) onDraft({ type: 'time', t: 0, position: liveVideo.position });
-                }}
-                title={t('review.compose.toMoment')}
-              >
-                {t('review.anchor.general')}
-              </button>
-            ) : (
-              <span className="tag">{t('review.anchor.general')}</span>
+              <button type="button" className="tc rv-tc-live" onClick={() => setAnchorMode('general')} title={t('review.compose.momentHint')}>{timecode(now, false)}</button>
+            ) : null}
+            {sketch.length > 0 && (
+              <span className="rv-anchor rv-ink-chip" title={t('review.compose.drawingHint')}>
+                <Icon name="pen" size={11} />{t('review.compose.drawing', { count: sketch.length })}
+              </span>
             )}
-            {(draft || atMoment) && <span className="rv-anchor-say">{t('review.compose.anchored')}</span>}
-            <span className="grow" />
-            <span className="rv-keyhint">{t('review.compose.keys')}</span>
+            <textarea
+              ref={box}
+              aria-label={t('review.compose.label')}
+              value={body}
+              rows={1}
+              onChange={(e) => setBody(e.target.value)}
+              onFocus={() => { if (atMoment) onHold(); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); }
+                if (e.key === 'Escape') { e.preventDefault(); if (draft) onClearDraft(); else e.currentTarget.blur(); }
+              }}
+              placeholder={placeholder}
+            />
           </div>
           <CueQuote anchor={draft} />
-          <textarea
-            ref={box}
-            aria-label={t('review.compose.label')}
-            value={body}
-            rows={2}
-            onChange={(e) => setBody(e.target.value)}
-            onFocus={() => { if (atMoment) onHold(); }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); }
-              if (e.key === 'Escape') { e.preventDefault(); if (draft) onClearDraft(); else e.currentTarget.blur(); }
-            }}
-            placeholder={placeholder}
-          />
-          <div className="rv-compose-extra">
-            <label className="check small">
-              <input type="checkbox" checked={peopleOnly} onChange={(e) => setPeopleOnly(e.target.checked)} />
-              <span>{t('review.compose.peopleOnly')} <span className="muted">{t('review.compose.peopleOnlyHint')}</span></span>
-            </label>
-            <button className="btn btn-primary btn-small" disabled={!body.trim() || post.isPending}>{t('review.compose.post')}</button>
+          <div className="rv-compose-bar">
+            {video && (
+              <Tip label={atMoment || draft ? t('review.compose.makeGeneral') : t('review.compose.toMoment')}>
+                <button
+                  type="button"
+                  className={`rv-cb ${atMoment || draft?.type === 'time' ? 'on' : ''}`}
+                  aria-pressed={atMoment || draft?.type === 'time'}
+                  onClick={() => {
+                    if (draft) { onClearDraft(); setAnchorMode('general'); return; }
+                    setAnchorMode((m) => (m === 'moment' ? 'general' : 'moment'));
+                  }}
+                  aria-label={atMoment || draft ? t('review.compose.makeGeneral') : t('review.compose.toMoment')}
+                >
+                  <Icon name="clock" size={16} />
+                </button>
+              </Tip>
+            )}
+            {onTool && (
+              <Tip label={t('review.draw.toggle')} shortcut="D">
+                <button type="button" className="rv-cb rv-cb-pen" aria-pressed={!!tool} onClick={() => onTool(tool ? null : 'pen')} aria-label={t('review.draw.toggle')}>
+                  <Icon name="pen" size={16} />
+                </button>
+              </Tip>
+            )}
+            <Tip label={`${t('review.compose.peopleOnly')} ${t('review.compose.peopleOnlyHint')}`}>
+              <label className={`rv-cb rv-cb-check ${peopleOnly ? 'on warn' : ''}`}>
+                <input type="checkbox" className="sr-only" checked={peopleOnly} onChange={(e) => setPeopleOnly(e.target.checked)} aria-label={`${t('review.compose.peopleOnly')} ${t('review.compose.peopleOnlyHint')}`} />
+                <Icon name="users" size={16} />
+              </label>
+            </Tip>
+            {peopleOnly && <span className="rv-cb-say">{t('review.compose.peopleOnly')}</span>}
+            <span className="grow" />
+            <Tip label={t('review.compose.post')} shortcut={t('review.keys.enter')}>
+              <button className="rv-send" disabled={!body.trim() || post.isPending} aria-label={t('review.compose.post')}>
+                <Icon name="send" size={15} />
+              </button>
+            </Tip>
           </div>
           {post.error && <ErrorBox error={post.error} />}
         </form>
       )}
-      {canComment && !commentable && <p className="rv-compose rv-closed muted small">{t('review.compose.closed')}</p>}
+      {canComment && !commentable && <p className="rv-compose rv-closed">{t('review.compose.closed')}</p>}
     </>
   );
 }
