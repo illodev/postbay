@@ -70,8 +70,36 @@ A failed post can be **tried again** (same approved version, new time optional),
 appears under *Due now* on the Publish page), or cancelled. The Publish page lists failed and private posts under
 *Needs attention*.
 
-Uploading a new version while a post is still waiting puts it on hold, as before. If the post is already held by the
-network (Facebook, YouTube), the worker takes it down there; cancelling does the same.
+Uploading a new version while a post is still waiting puts it on hold, as before. If the network already holds anything of
+the post (a Facebook post or video held for its hour, a YouTube upload, and also a Facebook video that is still processing,
+before preparation has finished), the worker takes it down there; cancelling, discarding the piece and a failure do the same.
+
+### Pausing, blocked dates and dependencies
+
+- **While the brand is paused, nothing is prepared or published.** The worker holds each automatic post back where it is; a
+  post the network already holds (Facebook, YouTube) is taken down from the network first, because it would otherwise go
+  out at its hour by itself. Pausing wakes those at once. On resume they are prepared again, and go out at their hour (or
+  within the tolerance, if it has just passed); one whose hour plus the tolerance passed during the pause is handed to a
+  person, with the reason, and shows under *Due now* once the brand is no longer paused.
+- **A date blocked after something was scheduled on it** is treated the same way: the worker's sweep notices the block, takes
+  down what a network holds for that day, and looks again every few minutes, so unblocking it lets the posts carry on.
+- **A post that depends on another** is not prepared until that one is out (published by the app or marked published by a
+  person), so a network cannot be holding it while the first is still in doubt. If the first is cancelled, fails or is put on
+  hold, or is still not out at the dependent's hour, the dependent is put on hold with the reason. Moving either of them
+  past the other is refused.
+
+### When the worker dies in the middle
+
+A worker holds a publication through a short lease (two minutes) that it renews every 30 seconds while it works, however long
+a conversion or an upload takes, and every write it makes names that lease: a worker that lost it (stalled for minutes, say)
+cannot overwrite what the one that took over did. A worker that dies lets go within two minutes, including across a restart.
+
+What a connector records while it publishes (an id, or that a call was about to be made) is kept on the publication. A pass
+that finds a send already begun finishes it through the connector's own recovery (Instagram and Threads remember the published
+id, X and LinkedIn recognise their own duplicate, Pinterest looks on the board, Bluesky's write is idempotent), even past the
+tolerance, because that is the end of a send that began on time. If nothing was recorded, the usual late rule applies and the
+team is told the send was interrupted and to check the network. Trying a failed post again keeps that record, so a post the
+network already has is not made twice.
 
 ### YouTube until Google audits the project
 
@@ -143,19 +171,24 @@ use their current documentation for anything that disagrees. Register the redire
 - **The database is the source of truth, the queue only a doorbell.** pg-boss delivers "look at publication X"; the
   state machine, retries, leases and the attempt log live in ordinary rows, so they can be read, audited and repaired
   with SQL, and the queue can be dropped and rebuilt without losing anything.
-- **A worker holds a publication through a lease** (45 minutes), and every state change is a compare-and-set. If a worker
-  dies, the lease runs out and another picks the publication up from the saved progress.
+- **A worker holds a publication through a lease** (two minutes, renewed while it works), and every state change is a
+  compare-and-set fenced by that lease. If a worker dies, the lease runs out and another picks the publication up from the
+  saved progress (see [When the worker dies in the middle](#when-the-worker-dies-in-the-middle)).
 - **The approval is checked again right before anything is sent.** The worker recomputes the version's fingerprint from
-  the stored files and confirms the approval still counts for that account, the same check scheduling makes. If it does
-  not, the post is put on hold and the approvers are told. A post a network is already holding is covered by the hold
+  the stored files (the file records and the objects in storage) and confirms the approval still counts for that account, the
+  same check scheduling makes. If it does not, the post is put on hold and the approvers are told. The title and the AI label
+  sent with it are the ones the version was approved with (the label is also sent if it was added later), not whatever the
+  piece says at the time. A post a network is already holding is covered by the hold
   that a new version triggers, which takes it down.
 - **A file that fits the network's profile goes out untouched.** Only files that do not fit are converted, and the
   copy is cached per file and profile, and the files themselves cannot change after a version exists (database trigger).
 - **Scheduling asks the same question the worker will ask later.** The schedule dialog and the scheduling endpoint run
   the connector's validator, and the worker runs it again before preparing, so a rule changing in between is caught
   before anything is sent.
-- **Natively held posts are cancelled on the network too.** Cancelling, putting on hold (a new version arrived) or
-  discarding a piece sets the post to be taken down, and the worker deletes it there.
+- **Natively held posts are cancelled on the network too.** Cancelling, putting on hold (a new version arrived), discarding
+  a piece, a failure, a pause or a blocked date sets the post to be taken down, and the worker deletes it there. This covers
+  anything the network holds, not only a post whose preparation finished: a Facebook video is held for its hour from the
+  moment it is created, while Facebook is still processing it.
 - **Reconnecting must be the same account.** A broken connection can only be repaired by signing in as the same Page,
   Instagram account or channel, so history and anything scheduled stay attached to it.
 - **Late means late.** A post that would go out after its hour plus the tolerance is not published: a Reel meant for a
@@ -188,6 +221,11 @@ use their current documentation for anything that disagrees. Register the redire
   parts, in my order of doubt: the Facebook Reels three-phase upload, Instagram's AI-label parameter, the exact error
   codes mapped to each failure class, the Graph API version (`META_GRAPH_VERSION`, v23.0 by default), and the numeric
   limits in `connectors/profiles.ts` and each connector's capabilities (marked for re-verification in the code).
+- **A lost answer is only found again as well as each connector can.** Finishing an interrupted send relies on what the
+  connector wrote down. If Instagram or Threads publish and the worker dies in the instant before the id is saved, the next
+  pass cannot tell: within the tolerance it publishes again (a duplicate), past it the post fails with a note to check the
+  network. X, LinkedIn and Pinterest look for their own post first and, finding none, post then (a little late, since a dead
+  worker lets go within two minutes). A lookup-only call in the connector interface would close both gaps.
 - **Safe zones are approximate.** The percentages drawn over the picture are my estimate of what each network covers,
   not a published specification. Use them as a guide.
 - **Nothing here has run against H.264 playback in a browser.** The converted files are checked with ffprobe, not played.

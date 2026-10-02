@@ -150,20 +150,28 @@ declared.
 | Rule | Where it is enforced |
 | --- | --- |
 | A version cannot change after it is created | database trigger, plus no code path edits it |
-| A version's files, approvals and the audit log are append-only | database triggers (also against `TRUNCATE`) |
-| An approval counts only for the exact files it was given for | fingerprint recomputed from the stored files on every approve, schedule and publish |
-| Nobody approves their own upload, whatever their role | `services/approvals.ts` |
+| A version's files, approvals, the attempt log and the audit log are append-only | database triggers (also against `TRUNCATE`) |
+| An approval counts only for the exact files it was given for | fingerprint recomputed from the file records, and each stored object's size and sha256 read back from storage, on every approve, schedule and publish (`services/versions.ts`) |
+| What goes out with the files (the title, the AI label) is what was approved; a producer can add the AI label but never take it away once a version is approved | the approval records both, the publication takes them from it (`services/approvals.ts`, `services/publications.ts`, `services/pieces.ts`) |
+| Nobody approves their own upload, whatever their role. What a producer token uploads is the token's, not its maker's: the version and the approval's record name both | `services/approvals.ts` |
 | No approval with open comments, an incomplete checklist or no accounts | `services/approvals.ts` |
 | A new version voids the previous approval and puts anything scheduled on hold | `services/versions.ts` |
-| Only what is approved, for the accounts approved, can be scheduled | `services/publications.ts` |
+| Only what is approved, for the accounts approved, can be scheduled, even while a new version is being closed | `services/publications.ts` (the variant's lock) |
+| Once a version is approved or anything is scheduled, only an approver can discard the piece | `services/pieces.ts` |
 | A producer token never approves, schedules or manages anything | role resolution in `auth/principal.ts` |
 | Times are stored in UTC with the brand's IANA zone, so 19:00 stays 19:00 after a clock change | `domain/time.ts`, tested across both clock changes |
 | The approval is re-checked from the stored files right before anything is sent to a network | `services/publisher.ts` |
-| A post that would go out after its hour plus the tolerance is not sent late | `services/publisher.ts` |
+| A post that would go out after its hour plus the tolerance is not sent late; a send that had begun is finished through the connector's own recovery, never started again | `services/publisher.ts` |
+| While a brand is paused or a date is blocked nothing is prepared or published; what a network holds is taken down, and prepared again afterwards (or handed to a person if its hour passed) | `services/publisher.ts`, the worker's sweep |
+| A post that depends on another is not prepared before that one is out, and is held if it will not go out | `services/publisher.ts`, `services/publications.ts` |
+| Whatever a network holds for a post that is cancelled, held or failed is taken down, also while it is still being prepared | `services/publisher.ts`, `services/publications.ts`, `services/versions.ts` |
+| One worker at a time per post: its lease is renewed while it works and every write it makes is fenced by it | `services/publisher.ts` |
 | Network tokens are sealed, bound to their account, and never returned, logged or stored in the attempt history | `crypto.ts`, `connectors/http.ts` |
-| An event is written in the same transaction as the change it describes | `services/events.ts` |
+| An event is written in the same transaction as the change it describes | `services/events.ts`, and the publisher's own steps |
 | A webhook never reaches cloud metadata or link-local addresses, and in production only public ones over https (unless allowed) | `net.ts` |
-| The agent cannot start without both budgets, past its rounds, over a budget, or on a piece that already has a run | `services/agent.ts`, a unique index |
+| The agent cannot start without both budgets, past its rounds, over a budget (counting what runs in progress were given), or on a piece that already has a run | `services/agent.ts`, a unique index |
+| A producer token uploads a version only inside a run it started on that piece, and no run outlives its longest time | `services/versions.ts`, `services/agent.ts` |
+| A brand's unfinished big uploads are capped, and dropped three days after they began | `services/resumable.ts`, `services/versions.ts` |
 | An agent token cannot answer, resolve or claim to fix a comment marked for people only | `services/comments.ts`, `services/versions.ts` |
 
 ### Roles
@@ -173,7 +181,7 @@ declared.
 | Admin | Everything an approver can, plus manage accounts, people, rules and API tokens | Approve what they uploaded |
 | Approver | Everything a reviewer can, plus upload, approve or reject, schedule, move dates, pause the brand | Approve what they uploaded |
 | Reviewer | View, comment, request changes, resolve comments | Approve or schedule |
-| Producer | Create pieces, upload versions, reply to and resolve comments (a person or an API token) | Approve, schedule or touch accounts |
+| Producer | Create pieces, upload versions, reply to and resolve comments (a person or an API token; a token uploads inside an agent run) | Approve, schedule or touch accounts; discard a piece once something of it is approved or scheduled; take the AI label away after approval |
 | Reader | View pieces, the calendar and results | Comment |
 
 ## API in brief
@@ -186,7 +194,7 @@ scripts use `Authorization: Bearer <producer token>`.
 | `POST /brands/:id/pieces`, `POST /pieces/:id/variants` | Create a piece and add a variant |
 | `POST /variants/:id/uploads` | Declare files with their sha256 and get signed upload URLs; with `resumable: true` for a big file, an upload to send in pieces instead |
 | `GET`, `PATCH /uploads/:id/resumable`, `POST /uploads/:id/resumable/finish` | Ask how much of a big file has arrived, send the next piece (`Upload-Offset`, raw bytes), and have the whole checked and stored |
-| `POST /variants/:id/versions` | Close a version: the uploaded files, notes and the comments it resolves |
+| `POST /variants/:id/versions` | Close a version: the uploaded files, notes and the comments it resolves. With a producer token, only inside a run it started on the piece |
 | `GET /versions/:id/comments?status=open&carried=true` | Open comments with their anchor and frame |
 | `POST /comments/:id/replies` | Reply: fixed, cannot do (and why), or needs a person |
 | `GET /brands/:id/slots?status=empty&from=&to=` | Calendar slots that still ask for content |
@@ -223,6 +231,7 @@ See [`.env.example`](.env.example). The ones that matter:
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_ALLOWED_DOMAINS` (and `OIDC_LABEL`, `OIDC_SECOND_FACTOR`, `OIDC_TRUST_EMAIL`) | Single sign-on. The allowed domains are required |
 | `GOOGLE_ANALYTICS` | Also ask YouTube for its Analytics permission, so watch time can be read. Off by default: Google treats it as sensitive |
 | `STAGING_DIR` | Where big uploads wait while they arrive in pieces (a volume in the compose file) |
+| `STAGING_MAX_GB_PER_BRAND` | How much a brand may have waiting there in unfinished uploads (20 by default); past it a new big upload is refused |
 | `NOTIFY_SECONDS` | How often notifications are sent by email, Slack and push (30 by default) |
 | `META_WEBHOOK_VERIFY_TOKEN` | For prizes: the token Meta sends back when you register `$APP_URL/api/meta/webhook` |
 | `METRICS_SWEEP_SECONDS`, `PRIZE_POLL_SECONDS`, `PRIZE_PURGE_SECONDS` | How often readings are taken, comments of posts with a prize are read, and expired people are deleted (120, 180 and 3600 seconds by default) |
@@ -231,7 +240,7 @@ See [`.env.example`](.env.example). The ones that matter:
 ## Tests
 
 ```sh
-npm test                 # 717 API tests and 53 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
+npm test                 # 750 API tests and 53 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
 npm run typecheck
 ```
 
