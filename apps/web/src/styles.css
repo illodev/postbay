@@ -58,7 +58,7 @@ p { margin: 0 0 .5rem; }
 .stack { display: flex; flex-direction: column; gap: .75rem; }
 .grow { flex: 1; min-width: 0; }
 .mono { font-family: var(--mono); font-size: .8125rem; }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 hr { border: 0; border-top: 1px solid var(--border); margin: 1rem 0; }
 code { font-family: var(--mono); font-size: .85em; background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 0 .3em; }
 details > summary { cursor: pointer; color: var(--muted); }

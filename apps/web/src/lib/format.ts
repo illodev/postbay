@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import { t, tMaybe } from '../i18n';
+import { getLocale, t, tMaybe } from '../i18n';
 
 /**
  * A label map that translates on read: `STATE_LABEL[code]` gives the text for the current language, falling back to
@@ -146,5 +146,6 @@ export const EVENT_LABEL: Record<string, string> = labelMap('event', {
 });
 
 export function fmtMoney(n: number, currency: string): string {
-  return `${n.toFixed(2).replace(/\.00$/, '')} ${currency}`;
+  const amount = new Intl.NumberFormat(getLocale(), { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(n);
+  return `${amount} ${currency}`;
 }

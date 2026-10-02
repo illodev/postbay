@@ -1,3 +1,5 @@
+import { getLocale } from './i18n';
+
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public details?: any) {
     super(message);
@@ -7,7 +9,8 @@ export class ApiError extends Error {
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
-    headers: { ...(body !== undefined ? { 'content-type': 'application/json' } : {}), 'x-requested-by': 'studio' },
+    // The API writes what a person reads (reasons, checks, errors) in the language the interface is in.
+    headers: { ...(body !== undefined ? { 'content-type': 'application/json' } : {}), 'x-requested-by': 'studio', 'accept-language': getLocale() },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: 'same-origin',
   });

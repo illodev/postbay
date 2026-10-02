@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { Settings } from 'luxon';
 import { Fragment, createContext, useContext, useState, type ReactNode } from 'react';
 import { MESSAGES, type Key } from './messages';
@@ -72,6 +73,7 @@ export const useLocale = () => useContext(LocaleCtx);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setState] = useState<Locale>(current);
+  const queryClient = useQueryClient();
   const setLocale = (l: Locale) => {
     current = l;
     apply(l);
@@ -81,6 +83,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       // Without storage the choice lasts until the page is reloaded.
     }
     setState(l);
+    // What the server wrote (reasons, checks) came in the old language: ask for it again.
+    queryClient.invalidateQueries();
   };
   return (
     <LocaleCtx.Provider value={{ locale, setLocale }}>
