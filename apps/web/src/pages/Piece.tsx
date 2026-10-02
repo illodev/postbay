@@ -1,47 +1,33 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, type BrandSettings, type PieceDetail, type PublicationRow, type Variant, type VersionSummary } from '../api';
+import { api, type BrandSettings, type PieceDetail, type PublicationRow, type Variant, type VersionDetail, type VersionSummary } from '../api';
+import { Avatar } from '../components/Avatar';
+import { Icon } from '../components/icons';
+import { MoreMenu, type MenuEntry } from '../components/MoreMenu';
+import { PageBar } from '../components/PageBar';
+import { PieceActivity } from '../components/PieceActivity';
 import { PieceAgentCard } from '../components/PieceAgentCard';
-import { PrizeDialog } from '../components/PrizeDialog';
-import { AttemptsDialog, MarkPublishedDialog, MoveDialog, PackDialog, PublicationBadges, PublicationNote, RescheduleDialog, RetryDialog } from '../components/publications';
+import { ago, authorName, formatHint, formatName, PieceFacts, PieceStage, variantName } from '../components/PieceHero';
+import { PublicationList } from '../components/publications';
 import { UploadDialog } from '../components/UploadDialog';
-import { Chip, Dialog, Empty, ErrorBox, Field, NetMark, Spinner, errorMessage, useToast } from '../components/ui';
-import { t, tMaybe, type Key } from '../i18n';
-import { fmtDateTime, fmtDay, fmtShort, NETWORK_LABEL, STATE_LABEL } from '../lib/format';
+import { Chip, Dialog, Empty, ErrorBox, errorMessage, Field, Skeleton, SkeletonText, Switch, useConfirm, useToast } from '../components/ui';
+import { t, type Key } from '../i18n';
+import { fmtDateTime, fmtShort, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
 import '../styles/piece.css';
 
 const FORMATS = ['9:16', '4:5', '1:1', '16:9', 'carousel', 'document'] as const;
 
-/** The format as a short tag: the ratio itself, or a word for the carousel and the document. */
-const formatName = (format: string) => tMaybe(`piece.formatName.${format}`, format);
-/** What a variant is called when it has no style of its own. */
-const formatHint = (format: string) => tMaybe(`piece.formatHint.${format}`, format);
-
-/** The API sends the campaign's id with the piece; the type shared with the rest of the app does not list it. */
-type WithCampaign = PieceDetail & { campaign_id?: string | null };
+/** What the API sends with a piece beyond the type shared with the rest of the app. */
+type FullPiece = PieceDetail & {
+  campaign_id?: string | null;
+  source?: string | null;
+  publications: (PublicationRow & { published_at?: string | null })[];
+};
 
 /** Publications that are still going to happen, and so are cancelled if the piece is discarded. */
 const PENDING = ['scheduled', 'awaiting_reapproval', 'on_hold', 'preparing', 'ready'];
-
-function Icon({ d }: { d: string }) {
-  return (
-    <svg className="pc-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={d} />
-    </svg>
-  );
-}
-const ICON = {
-  calendar: 'M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z',
-  flag: 'M5 21V4M5 4h11l-2 4 2 4H5',
-  upload: 'M12 16V4M7 9l5-5 5 5M5 20h14',
-  comment: 'M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z',
-  arrow: 'M5 12h14M13 6l6 6-6 6',
-  pdf: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h4',
-  image: 'M4 5h16v14H4zM4 15l4-4 4 4 3-3 5 5',
-  link: 'M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
-};
 
 // ───────────────────────────── dialogs ─────────────────────────────
 
@@ -62,17 +48,24 @@ function AddVariant({ pieceId, kind, onClose }: { pieceId: string; kind: string;
   return (
     <Dialog title={t('piece.addVariant.title')} onClose={onClose}>
       <form className="stack" onSubmit={(e) => { e.preventDefault(); add.mutate(); }}>
-        <p className="muted">{t('piece.addVariant.intro')}</p>
-        <Field label={t('piece.addVariant.format')}>
-          <select value={format} onChange={(e) => setFormat(e.target.value)}>
-            {FORMATS.map((f) => <option key={f} value={f}>{t(`piece.formatOption.${f}` as Key)}</option>)}
-          </select>
-        </Field>
+        <fieldset className="pc-formats">
+          <legend className="field-label">{t('piece.addVariant.format')}</legend>
+          <div className="pc-format-grid">
+            {FORMATS.map((f) => (
+              <label key={f} className="pc-format" data-on={format === f || undefined}>
+                <input type="radio" className="sr-only" name="pc-format" value={f} checked={format === f} onChange={() => setFormat(f)} />
+                <span className={`pc-format-shape is-${f.replace(':', 'x')}`} aria-hidden="true" />
+                <span className="pc-format-name">{formatName(f)}</span>
+                <span className="pc-format-hint">{t(`piece.formatUse.${f}` as Key)}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <Field label={t('piece.addVariant.style')} hint={t('piece.addVariant.styleHint')}>
-          <input type="text" maxLength={80} value={style} onChange={(e) => setStyle(e.target.value)} />
+          <input type="text" maxLength={80} value={style} placeholder={t('piece.addVariant.stylePlaceholder')} onChange={(e) => setStyle(e.target.value)} />
         </Field>
         {add.error && <ErrorBox error={add.error} />}
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
+        <div className="row pc-dialog-foot">
           <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
           <button className="btn btn-primary" disabled={add.isPending}>{t('piece.addVariant.submit')}</button>
         </div>
@@ -81,12 +74,19 @@ function AddVariant({ pieceId, kind, onClose }: { pieceId: string; kind: string;
   );
 }
 
-function EditPiece({ piece, onClose }: { piece: PieceDetail; onClose: () => void }) {
+function EditPiece({ piece, campaigns, onClose }: { piece: FullPiece; campaigns: { id: string; name: string }[] | undefined; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const [form, setForm] = useState({ title: piece.title, brief: piece.brief, targetDate: piece.target_date ?? '', aiGenerated: piece.ai_generated });
+  const [form, setForm] = useState({
+    title: piece.title, brief: piece.brief, targetDate: piece.target_date ?? '', aiGenerated: piece.ai_generated,
+    campaignId: piece.campaign_id ?? '', source: piece.source ?? '',
+  });
   const save = useMutation({
-    mutationFn: () => api.patch(`/api/pieces/${piece.id}`, { title: form.title, brief: form.brief, targetDate: form.targetDate || null, aiGenerated: form.aiGenerated }),
+    mutationFn: () =>
+      api.patch(`/api/pieces/${piece.id}`, {
+        title: form.title, brief: form.brief, targetDate: form.targetDate || null, aiGenerated: form.aiGenerated,
+        campaignId: form.campaignId || null, source: form.source.trim() || null,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['piece', piece.id] });
       qc.invalidateQueries({ queryKey: ['pieces'] });
@@ -95,59 +95,109 @@ function EditPiece({ piece, onClose }: { piece: PieceDetail; onClose: () => void
     },
   });
   return (
-    <Dialog title={t('piece.edit.title')} onClose={onClose}>
-      <form className="stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+    <Dialog title={t('piece.edit.title')} onClose={onClose} wide>
+      <form className="pc-edit" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
         <Field label={t('piece.edit.fieldTitle')}>
           <input type="text" required maxLength={200} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
         </Field>
-        <Field label={t('piece.edit.brief')} hint={t('piece.edit.briefHint')}>
-          <textarea rows={8} value={form.brief} onChange={(e) => setForm({ ...form, brief: e.target.value })} />
+        <Field label={t('piece.edit.brief')}>
+          <textarea rows={9} value={form.brief} onChange={(e) => setForm({ ...form, brief: e.target.value })} />
         </Field>
-        <Field label={t('piece.edit.target')}>
-          <input type="date" value={form.targetDate} onChange={(e) => setForm({ ...form, targetDate: e.target.value })} />
+        <div className="pc-edit-row">
+          <Field label={t('piece.fields.campaign')}>
+            <select value={form.campaignId} onChange={(e) => setForm({ ...form, campaignId: e.target.value })}>
+              <option value="">{t('piece.fields.noCampaign')}</option>
+              {campaigns?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </Field>
+          <Field label={t('piece.edit.target')}>
+            <input type="date" value={form.targetDate} onChange={(e) => setForm({ ...form, targetDate: e.target.value })} />
+          </Field>
+        </div>
+        <Field label={t('piece.fields.source')} hint={t('piece.edit.sourceHint')}>
+          <input type="text" className="pc-mono-input" maxLength={500} value={form.source} placeholder={t('piece.fields.sourcePlaceholder')} onChange={(e) => setForm({ ...form, source: e.target.value })} />
         </Field>
-        <label className="check">
-          <input type="checkbox" checked={form.aiGenerated} onChange={(e) => setForm({ ...form, aiGenerated: e.target.checked })} />
-          <span>{t('piece.edit.ai')}<br /><span className="muted small">{t('piece.edit.aiHint')}</span></span>
-        </label>
+        <Switch label={t('piece.edit.ai')} checked={form.aiGenerated} onChange={(aiGenerated) => setForm({ ...form, aiGenerated })} />
         {save.error && <ErrorBox error={save.error} />}
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
+        <div className="row pc-dialog-foot">
           <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
-          <button className="btn btn-primary" disabled={save.isPending || !form.title.trim()}>{t('common.save')}</button>
+          <button className="btn btn-primary" disabled={save.isPending || !form.title.trim()}>{save.isPending ? t('common.saving') : t('common.save')}</button>
         </div>
       </form>
     </Dialog>
   );
 }
 
-function DiscardPiece({ piece, onClose }: { piece: PieceDetail; onClose: () => void }) {
+function MoveToCampaign({ piece, campaigns, onClose }: { piece: FullPiece; campaigns: { id: string; name: string }[] | undefined; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [chosen, setChosen] = useState(piece.campaign_id ?? '');
+  const move = useMutation({
+    mutationFn: () => api.patch(`/api/pieces/${piece.id}`, { campaignId: chosen || null }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['piece', piece.id] });
+      qc.invalidateQueries({ queryKey: ['pieces'] });
+      const name = campaigns?.find((c) => c.id === chosen)?.name;
+      toast(name ? t('piece.move.done', { name }) : t('piece.move.doneNone'));
+      onClose();
+    },
+  });
+  const options = [{ id: '', name: t('piece.fields.noCampaign') }, ...(campaigns ?? [])];
+  return (
+    <Dialog title={t('piece.move.title')} onClose={onClose}>
+      <form className="stack" onSubmit={(e) => { e.preventDefault(); move.mutate(); }}>
+        <div className="pc-choices" role="radiogroup" aria-label={t('piece.fields.campaign')}>
+          {options.map((c) => (
+            <label key={c.id || 'none'} className="pc-choice" data-on={chosen === c.id || undefined}>
+              <input type="radio" name="pc-campaign" className="sr-only" checked={chosen === c.id} onChange={() => setChosen(c.id)} />
+              <Icon name={c.id ? 'folder' : 'x'} />
+              <span className="grow">{c.name}</span>
+              {piece.campaign_id === c.id && c.id && <span className="pc-choice-now">{t('piece.move.now')}</span>}
+              {chosen === c.id && <Icon name="check" className="pc-choice-check" />}
+            </label>
+          ))}
+        </div>
+        {move.error && <ErrorBox error={move.error} />}
+        <div className="row pc-dialog-foot">
+          <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
+          <button className="btn btn-primary" disabled={move.isPending || chosen === (piece.campaign_id ?? '')}>{t('piece.move.submit')}</button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+/** Discarding asks first, in the app's confirm dialog: it cannot be undone and it cancels what is scheduled. */
+function useDiscard(piece: FullPiece | undefined) {
+  const ask = useConfirm();
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
-  const pending = piece.publications.filter((p) => PENDING.includes(p.status)).length;
-  const discard = useMutation({
-    mutationFn: () => api.post(`/api/pieces/${piece.id}/discard`),
-    onSuccess: () => {
+  return async () => {
+    if (!piece) return;
+    const pending = piece.publications.filter((p) => PENDING.includes(p.status)).length;
+    const ok = await ask({
+      title: t('piece.discard.title'),
+      text: (
+        <>
+          <p>{t('piece.discard.body', { title: piece.title })}</p>
+          {pending > 0 && <p><strong>{t('piece.discard.cancels', { count: pending })}</strong></p>}
+        </>
+      ),
+      confirmLabel: t('piece.discard.submit'),
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.post(`/api/pieces/${piece.id}/discard`);
       qc.invalidateQueries({ queryKey: ['pieces'] });
       qc.invalidateQueries({ queryKey: ['piece', piece.id] });
       toast(t('piece.discard.done'));
       navigate('/pieces');
-    },
-  });
-  return (
-    <Dialog title={t('piece.discard.title')} onClose={onClose}>
-      <div className="stack">
-        <p>{t('piece.discard.body', { title: piece.title })}</p>
-        {pending > 0 && <div className="notice notice-warn">{t('piece.discard.cancels', { count: pending })}</div>}
-        <p className="muted small">{t('piece.discard.final')}</p>
-        {discard.error && <ErrorBox error={discard.error} />}
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
-          <button type="button" className="btn btn-danger" disabled={discard.isPending} onClick={() => discard.mutate()}>{t('piece.discard.submit')}</button>
-        </div>
-      </div>
-    </Dialog>
-  );
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    }
+  };
 }
 
 // ───────────────────────────── brief ─────────────────────────────
@@ -239,243 +289,145 @@ function BriefText({ text }: { text: string }) {
   return <>{blocks}</>;
 }
 
-/** Long briefs start folded, so the variants stay in sight; one click shows the rest. */
-function Brief({ text, className }: { text: string; className: string }) {
+/** Long briefs start folded, so what follows stays in sight; one click shows the rest. */
+function Brief({ text, canEdit, onEdit, className }: { text: string; canEdit: boolean; onEdit: () => void; className?: string }) {
   const long = text.length > 520 || text.split('\n').length > 9;
   const [open, setOpen] = useState(false);
   return (
-    <section className={`card pc-brief ${className}`} aria-labelledby="pc-brief-h">
-      <div className="card-head"><h2 id="pc-brief-h">{t('piece.brief')}</h2></div>
-      <div id="pc-brief-text" className={`pc-brief-text ${long && !open ? 'is-folded' : ''}`}><BriefText text={text} /></div>
-      {long && (
-        <button type="button" className="btn btn-ghost btn-small pc-brief-toggle" aria-expanded={open} aria-controls="pc-brief-text" onClick={() => setOpen(!open)}>
-          {open ? t('piece.briefLess') : t('piece.briefMore')}
-        </button>
-      )}
+    <section className={`pc-section pc-brief ${className ?? ''}`} aria-labelledby="pc-brief-h">
+      <header className="pc-section-head">
+        <h2 id="pc-brief-h">{t('piece.brief')}</h2>
+        {canEdit && (
+          <button type="button" className="pc-icon-btn" onClick={onEdit} title={t('piece.briefEdit')} aria-label={t('piece.briefEdit')}>
+            <Icon name="pen" />
+          </button>
+        )}
+      </header>
+      <div className="pc-brief-card">
+        {text ? (
+          <>
+            <div id="pc-brief-text" className={`pc-brief-text ${long && !open ? 'is-folded' : ''}`}><BriefText text={text} /></div>
+            {long && (
+              <button type="button" className="pc-brief-toggle" aria-expanded={open} aria-controls="pc-brief-text" onClick={() => setOpen(!open)}>
+                {open ? t('piece.briefLess') : t('piece.briefMore')}
+                <Icon name="chevronDown" className={open ? 'is-up' : undefined} />
+              </button>
+            )}
+          </>
+        ) : (
+          <p className="pc-side-empty">{canEdit ? t('piece.briefEmptyEdit') : t('piece.briefEmpty')}</p>
+        )}
+      </div>
     </section>
   );
 }
 
 // ───────────────────────────── variants ─────────────────────────────
 
-/** The latest version's preview. PDFs and versions without a preview get a quiet placeholder instead. */
-function VersionThumb({ version, format }: { version: VersionSummary | undefined; format: string }) {
+function VariantThumb({ version, format }: { version: VersionSummary | undefined; format: string }) {
   const [failed, setFailed] = useState(false);
   if (!version || failed) {
-    return (
-      <span className="pc-ph">
-        <Icon d={format === 'document' ? ICON.pdf : ICON.image} />
-        <span>{version ? (format === 'document' ? t('piece.thumbPdf') : t('piece.noPreview')) : t('piece.noVersionYet')}</span>
-      </span>
-    );
+    return <span className="pc-vthumb-ph"><Icon name={!version ? 'plus' : format === 'document' ? 'file' : 'image'} /></span>;
   }
   const src = (w: number) => `/api/versions/${version.id}/thumb?w=${w}`;
   return <img src={src(240)} srcSet={`${src(240)} 1x, ${src(480)} 2x`} alt="" loading="lazy" onError={() => setFailed(true)} />;
 }
 
-function VersionChip({ v, latest }: { v: VersionSummary; latest: boolean }) {
-  const title = t('piece.versionTitle', {
-    n: v.number,
-    state: STATE_LABEL[v.review_state] ?? v.review_state,
-    who: v.by_agent ? t('piece.agentAuthor', { name: v.author ?? t('piece.unknownAuthor') }) : (v.author ?? t('piece.unknownAuthor')),
-    when: fmtShort(v.created_at),
-  });
-  return (
-    <Link
-      role="listitem"
-      to={`/review/${v.id}`}
-      className={`pc-vchip ${v.by_agent ? 'is-agent' : ''} ${v.review_state === 'superseded' || v.review_state === 'discarded' ? 'is-old' : ''}`}
-      aria-current={latest ? 'true' : undefined}
-      title={title}
-      aria-label={title}
-    >
-      <span className={`pc-vdot chip-${v.review_state}`} aria-hidden="true" />v{v.number}
-    </Link>
-  );
-}
-
-function VariantRow({ variant, canUpload, onUpload }: { variant: Variant; canUpload: boolean; onUpload: () => void }) {
+function VariantRow({ variant, current, canUpload, onUpload, onShow }: {
+  variant: Variant;
+  current: boolean;
+  canUpload: boolean;
+  onUpload: () => void;
+  onShow: () => void;
+}) {
   const versions = variant.versions;
   const latest = versions.at(-1);
   // Open comments travel with the variant from version to version and block approval wherever they were made.
   const open = versions.filter((v) => v.review_state !== 'discarded').reduce((n, v) => n + v.open_comments, 0);
-  const thumb = (
-    <>
-      <VersionThumb key={latest?.id ?? 'none'} version={latest} format={variant.format} />
-      {latest && <span className="ov ov-l">v{latest.number}</span>}
-    </>
-  );
+  const name = variantName(variant);
   return (
-    <article className="pc-variant">
-      {latest ? (
-        <Link to={`/review/${latest.id}`} className="pc-thumb" tabIndex={-1} aria-hidden="true">{thumb}</Link>
-      ) : (
-        <div className="pc-thumb">{thumb}</div>
-      )}
-      <div className="pc-variant-body">
-        <div className="pc-variant-title">
-          <h3><span className="tag">{formatName(variant.format)}</span> <span>{variant.style || formatHint(variant.format)}</span></h3>
-          {latest && <Chip state={latest.review_state} />}
-        </div>
-        {latest ? (
-          <p className="pc-byline">
-            <span className="mono">v{latest.number}</span>
-            <span aria-hidden="true">·</span>
-            {latest.by_agent && <span className="tag tag-agent">{t('common.agent')}</span>}
-            <span className="pc-author">{latest.author ?? t('piece.unknownAuthor')}</span>
-            <span aria-hidden="true">·</span>
-            <span>{fmtShort(latest.created_at)}</span>
-          </p>
-        ) : (
-          <p className="pc-byline">{canUpload ? t('piece.noVersionsUpload') : t('piece.noVersions')}</p>
-        )}
-        {latest?.notes && <p className="pc-notes" title={latest.notes}>{latest.notes}</p>}
-        {(versions.length > 1 || open > 0) && (
-          <div className="pc-variant-foot">
-            {versions.length > 1 && (
-              <div className="pc-history">
-                <span className="pc-history-label">{t('piece.versions')}</span>
-                <div className="pc-history-list" role="list" aria-label={t('piece.versionsLabel', { count: versions.length })}>
-                  {versions.map((v) => <VersionChip key={v.id} v={v} latest={v === latest} />)}
-                </div>
-              </div>
-            )}
-            {open > 0 && latest && (
-              <Link to={`/review/${latest.id}`} className="pc-open"><Icon d={ICON.comment} />{t('piece.openComments', { count: open })}</Link>
-            )}
-          </div>
-        )}
+    <li className={`pc-vrow ${current ? 'is-current' : ''}`}>
+      <button type="button" className="pc-vthumb" onClick={onShow} title={t('piece.variant.show', { variant: name })} aria-label={t('piece.variant.show', { variant: name })} aria-pressed={current}>
+        <VariantThumb key={latest?.id ?? 'none'} version={latest} format={variant.format} />
+        {latest?.by_agent && <span className="pc-vthumb-agent" aria-hidden="true"><Icon name="bot" /></span>}
+      </button>
+      <div className="pc-vrow-name">
+        <span className="pc-vrow-style" title={name}>{variant.style || formatHint(variant.format)}</span>
+        <span className="pc-vrow-meta">
+          <span>{formatName(variant.format)}</span>
+          {latest ? (
+            <>
+              <span className="pc-dot-sep" aria-hidden="true">·</span>
+              <span className="pc-vrow-num">v{latest.number}</span>
+              <span className="pc-dot-sep" aria-hidden="true">·</span>
+              {latest.by_agent ? <Avatar agent size={16} /> : <Avatar name={authorName(latest)} size={16} />}
+              <span className={`pc-vrow-who ${latest.by_agent ? 'pc-agent-name' : ''}`}>{authorName(latest)}</span>
+              <span className="pc-dot-sep" aria-hidden="true">·</span>
+              <time dateTime={latest.created_at} title={fmtShort(latest.created_at)}>{ago(latest.created_at)}</time>
+            </>
+          ) : (
+            <>
+              <span className="pc-dot-sep" aria-hidden="true">·</span>
+              <span>{t('piece.variant.empty')}</span>
+            </>
+          )}
+        </span>
       </div>
-      <div className="pc-variant-actions">
-        {latest && (
-          <Link className="btn" to={`/review/${latest.id}`} aria-label={t('piece.reviewLabel', { n: latest.number })}>
-            {t('piece.review')}<Icon d={ICON.arrow} />
+      <span className="pc-vrow-status">
+        <span className="pc-vrow-state">{latest && <Chip state={latest.review_state} />}</span>
+        <span className="pc-vrow-comments">
+          {open > 0 && latest ? (
+            <Link to={`/review/${latest.id}`} className="pc-ccount" title={t('piece.openComments', { count: open })} aria-label={t('piece.openComments', { count: open })}>
+              <Icon name="bubble" />{open}
+            </Link>
+          ) : (
+            <span className="pc-ccount is-zero" title={t('piece.noOpenComments')} aria-label={t('piece.noOpenComments')}><Icon name="bubble" />0</span>
+          )}
+        </span>
+      </span>
+      <span className="pc-vrow-act">
+        {latest ? (
+          <Link className="btn btn-small" to={`/review/${latest.id}`} title={t('piece.reviewHint', { n: latest.number, variant: name })}>
+            {t('piece.reviewN', { n: latest.number })}
           </Link>
-        )}
-        {canUpload && (
-          <button className={latest ? 'btn btn-ghost' : 'btn btn-primary'} onClick={onUpload}>
-            <Icon d={ICON.upload} />{latest ? t('piece.uploadNew') : t('piece.uploadFirst')}
+        ) : canUpload ? (
+          <button type="button" className="btn btn-small btn-primary" onClick={onUpload}>{t('piece.uploadFirst')}</button>
+        ) : null}
+        {canUpload && latest && (
+          <button type="button" className="pc-icon-btn" onClick={onUpload} title={t('piece.variant.upload', { variant: name })} aria-label={t('piece.variant.upload', { variant: name })}>
+            <Icon name="upload" />
           </button>
         )}
-      </div>
-    </article>
-  );
-}
-
-// ───────────────────────────── publications ─────────────────────────────
-
-function Publications({ piece, brand, zone, className }: { piece: PieceDetail; brand: BrandSettings | undefined; zone: string; className: string }) {
-  const { me, can } = useSession();
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [move, setMove] = useState<PublicationRow | null>(null);
-  const [resched, setResched] = useState<PublicationRow | null>(null);
-  const [mark, setMark] = useState<string | null>(null);
-  const [pack, setPack] = useState<string | null>(null);
-  const [attempts, setAttempts] = useState<string | null>(null);
-  const [retry, setRetry] = useState<PublicationRow | null>(null);
-  const [prize, setPrize] = useState<PublicationRow | null>(null);
-  const act = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: 'cancel' | 'confirm' | 'hand-over' | 'recheck' }) => api.post(`/api/publications/${id}/${action}`),
-    onSuccess: (_r, v) => {
-      qc.invalidateQueries({ queryKey: ['piece', piece.id] });
-      if (v.action === 'hand-over') toast(t('piece.pub.handedOver'));
-      if (v.action === 'recheck') toast(t('piece.pub.rechecking'));
-      if (v.action === 'cancel') toast(t('piece.pub.cancelled'));
-      if (v.action === 'confirm') toast(t('piece.pub.confirmed'));
-    },
-    onError: (e) => toast(errorMessage(e), 'error'),
-  });
-  if (piece.publications.length === 0) return null;
-  return (
-    <section className={className} aria-labelledby="pc-pubs-h">
-      <div className="pc-section-head">
-        <h2 id="pc-pubs-h">{t('piece.pub.title')}<span className="pc-count">{piece.publications.length}</span></h2>
-      </div>
-      <ul className="pc-pubs">
-        {piece.publications.map((p) => {
-          const variant = piece.variants.find((v) => v.id === p.variant_id);
-          const network = NETWORK_LABEL[p.network] ?? p.network;
-          return (
-            <li key={p.id} className="pc-pub">
-              <div className="pc-pub-acct">
-                <NetMark network={p.network} />
-                <span className="pc-pub-who">
-                  <strong>{p.account_name}</strong>
-                  <span className="muted small">{network}</span>
-                </span>
-              </div>
-              <div className="pc-pub-when">
-                <span>{fmtDateTime(p.scheduled_at, zone)}</span>
-                <span className="pc-pub-what">
-                  {variant && <span className="tag">{formatName(variant.format)}</span>}
-                  {variant?.style && <span className="muted small">{variant.style}</span>}
-                  <Link to={`/review/${p.version_id}`} className="pc-vchip">v{p.version_number}</Link>
-                </span>
-              </div>
-              <div className="pc-pub-state">
-                <div className="row" style={{ gap: '.35rem' }}>
-                  <Chip state={p.status} />
-                  <PublicationBadges pub={p} />
-                </div>
-                {p.hold_reason && <div className="muted small">{p.hold_reason}</div>}
-                <PublicationNote pub={p} />
-                {p.url && <a className="pc-pub-link small" href={p.url} target="_blank" rel="noreferrer"><Icon d={ICON.link} />{t('piece.pub.openPost')}</a>}
-                <div className="pc-pub-actions">
-                  {!p.manual && <button className="btn btn-small" onClick={() => setAttempts(p.id)}>{t('piece.pub.history')}</button>}
-                  {brand?.prizes?.enabled && can('schedule') && ['scheduled', 'preparing', 'ready', 'publishing', 'published', 'awaiting_reapproval', 'on_hold'].includes(p.status) && (
-                    <button className="btn btn-small" onClick={() => setPrize(p)}>{t('piece.pub.prize')}</button>
-                  )}
-                  {can('schedule') && (
-                    <>
-                      {p.status === 'scheduled' && p.manual && <button className="btn btn-small" onClick={() => setPack(p.id)}>{t('piece.pub.publish')}</button>}
-                      {p.status === 'scheduled' && <button className="btn btn-small" onClick={() => setMove(p)}>{t('piece.pub.move')}</button>}
-                      {p.status === 'failed' && !p.manual && <button className="btn btn-small btn-primary" onClick={() => setRetry(p)}>{t('piece.pub.retry')}</button>}
-                      {p.status === 'published' && !p.manual && p.visibility === 'private' && (
-                        <button className="btn btn-small" onClick={() => act.mutate({ id: p.id, action: 'recheck' })} title={t('piece.pub.recheckHint')}>{t('piece.pub.recheck')}</button>
-                      )}
-                      {!p.manual && (p.status === 'failed' || (p.status === 'scheduled' && !p.native_scheduled)) && (
-                        <button className="btn btn-small" onClick={() => confirm(t('piece.pub.handOverConfirm')) && act.mutate({ id: p.id, action: 'hand-over' })}>{t('piece.pub.handOver')}</button>
-                      )}
-                      {p.status === 'awaiting_reapproval' && (
-                        <button className="btn btn-small" onClick={() => act.mutate({ id: p.id, action: 'confirm' })} title={t('piece.pub.confirmHint', { email: me.user.email })}>{t('piece.pub.confirm')}</button>
-                      )}
-                      {p.status === 'on_hold' && <button className="btn btn-small" onClick={() => setResched(p)}>{t('piece.pub.reschedule')}</button>}
-                      {['scheduled', 'awaiting_reapproval', 'on_hold', 'preparing', 'ready', 'failed'].includes(p.status) && (
-                        <button
-                          className="btn btn-small btn-danger"
-                          onClick={() => confirm(p.native_scheduled ? t('piece.pub.cancelConfirmNative') : t('piece.pub.cancelConfirm')) && act.mutate({ id: p.id, action: 'cancel' })}
-                        >
-                          {t('piece.pub.cancel')}
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-      {move && <MoveDialog pub={move} brandId={piece.brand_id} zone={zone} needsConfirmation={!!brand?.rules.reapprove_on_move} onClose={() => setMove(null)} />}
-      {resched && (
-        <RescheduleDialog
-          pub={resched}
-          zone={zone}
-          approvedVersions={(piece.variants.find((v) => v.id === resched.variant_id)?.versions ?? []).filter((v) => v.review_state === 'approved').map((v) => ({ id: v.id, number: v.number }))}
-          onClose={() => setResched(null)}
-        />
-      )}
-      {pack && <PackDialog pubId={pack} zone={zone} onClose={() => setPack(null)} onPublished={() => { setMark(pack); setPack(null); }} />}
-      {mark && <MarkPublishedDialog pubId={mark} onClose={() => setMark(null)} />}
-      {attempts && <AttemptsDialog pubId={attempts} zone={zone} onClose={() => setAttempts(null)} />}
-      {retry && <RetryDialog pub={retry} zone={zone} onClose={() => setRetry(null)} />}
-      {prize && <PrizeDialog pub={prize} brandId={piece.brand_id} zone={zone} onClose={() => setPrize(null)} />}
-    </section>
+      </span>
+    </li>
   );
 }
 
 // ───────────────────────────── the page ─────────────────────────────
+
+/** The page's shape while it loads: the header, the stage and the facts beside it. */
+function PieceSkeleton() {
+  return (
+    <div aria-busy="true" aria-label={t('common.loading')}>
+      <div className="page-top"><Skeleton width={260} height={16} /></div>
+      <div className="pc-grid">
+        <div className="pc-col-main">
+          <div className="pc-hero-media">
+            <Skeleton className="pc-stage" height="auto" radius={12} />
+            <div className="pc-film">{[0, 1, 2].map((i) => <Skeleton key={i} width={60} height={60} radius={8} />)}</div>
+          </div>
+        </div>
+        <div className="pc-col-side">
+          <div className="pc-info">
+            <Skeleton width={90} height={20} radius={99} />
+            <Skeleton width="80%" height={22} />
+            <SkeletonText lines={4} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** The variant a new upload most likely goes to: one with changes asked for, else one still empty, else the first. */
 function suggestedVariant(variants: Variant[]): Variant | undefined {
@@ -486,91 +438,201 @@ function suggestedVariant(variants: Variant[]): Variant | undefined {
   );
 }
 
+/** Keys that work on the whole page, unless someone is typing or a dialog is open. */
+function useShortcuts(map: Record<string, (() => void) | null>) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return;
+      if (document.querySelector('dialog[open], .palette')) return;
+      const fn = map[e.key.toLowerCase()];
+      if (fn) {
+        e.preventDefault();
+        fn();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+}
+
 export function PiecePage() {
   const { pieceId } = useParams();
-  const { brand, can } = useSession();
+  const navigate = useNavigate();
+  const { brand, can, me } = useSession();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [discarding, setDiscarding] = useState(false);
+  const [moving, setMoving] = useState(false);
   const [uploadFor, setUploadFor] = useState<string | null>(null);
-  const { data: piece, error, isLoading } = useQuery({ queryKey: ['piece', pieceId], queryFn: () => api.get<WithCampaign>(`/api/pieces/${pieceId}`) });
+  const [heroVariant, setHeroVariant] = useState<string | null>(null);
+  const [heroVersion, setHeroVersion] = useState<string | null>(null);
+  const { data: piece, error, isLoading } = useQuery({ queryKey: ['piece', pieceId], queryFn: () => api.get<FullPiece>(`/api/pieces/${pieceId}`) });
+  const discard = useDiscard(piece);
   const { data: settings } = useQuery({ queryKey: ['brand', brand.id], queryFn: () => api.get<BrandSettings>(`/api/brands/${brand.id}`) });
-  const campaignId = piece?.campaign_id ?? null;
   const { data: campaigns } = useQuery({
     queryKey: ['campaigns', piece?.brand_id],
-    enabled: !!campaignId,
+    enabled: !!piece,
     queryFn: () => api.get<{ id: string; name: string }[]>(`/api/brands/${piece!.brand_id}/campaigns`),
   });
-  if (isLoading) return <Spinner />;
-  if (error) return <ErrorBox error={error} />;
-  if (!piece) return null;
-  const live = !piece.discarded_at;
+  // The hero shows the main variant (the first) unless another is picked, and its latest version unless another is.
+  const variant = piece?.variants.find((v) => v.id === heroVariant) ?? piece?.variants.find((v) => v.versions.length > 0) ?? piece?.variants[0];
+  const version = variant?.versions.find((v) => v.id === heroVersion) ?? variant?.versions.at(-1);
+  const { data: detail } = useQuery({
+    queryKey: ['version', version?.id],
+    enabled: !!version,
+    queryFn: () => api.get<VersionDetail>(`/api/versions/${version!.id}`),
+    staleTime: 60_000,
+  });
+  const latest = variant?.versions.at(-1);
+  const live = !!piece && !piece.discarded_at;
   const canUpload = live && can('upload');
-  const campaign = campaigns?.find((c) => c.id === campaignId);
-  const suggested = suggestedVariant(piece.variants);
+  const canEdit = live && can('createPiece');
+  const suggested = piece ? suggestedVariant(piece.variants) : undefined;
+  const upload = () => canUpload && (variant ?? suggested) && setUploadFor((variant ?? suggested)!.id);
+  useShortcuts({
+    u: canUpload ? upload : null,
+    r: latest ? () => navigate(`/review/${latest.id}`) : null,
+  });
+
+  if (isLoading) return <PieceSkeleton />;
+  if (error) return <ErrorBox error={error} />;
+  if (!piece || !variant) {
+    if (!piece) return null;
+  }
+  const zone = settings?.timezone ?? brand.timezone;
+  const campaign = campaigns?.find((c) => c.id === piece.campaign_id);
   const uploading = piece.variants.find((v) => v.id === uploadFor);
+  const openOnVariant = (variant?.versions ?? []).filter((v) => v.review_state !== 'discarded').reduce((n, v) => n + v.open_comments, 0);
+
+  const heroProps = variant
+    ? {
+        piece,
+        variants: piece.variants,
+        variantId: variant.id,
+        onVariant: (id: string) => { setHeroVariant(id); setHeroVersion(null); },
+        versionId: version?.id ?? null,
+        onVersion: setHeroVersion,
+        detail,
+        openComments: openOnVariant,
+        campaigns,
+        canEdit,
+        zone,
+      }
+    : null;
+
+  const menu: MenuEntry[] = canEdit
+    ? [
+        { label: t('piece.menu.edit'), icon: 'pen', hint: t('piece.menu.editHint'), onSelect: () => setEditing(true) },
+        { label: t('piece.menu.move'), icon: 'folder', hint: t('piece.menu.moveHint'), onSelect: () => setMoving(true) },
+        ...(canUpload ? [{ label: t('piece.addVariant.button'), icon: 'plus' as const, hint: t('piece.addVariant.hint'), onSelect: () => setAdding(true) }] : []),
+        { sep: true },
+        { label: t('piece.menu.discard'), icon: 'trash', danger: true, hint: t('piece.menu.discardHint'), onSelect: () => void discard() },
+      ]
+    : [];
 
   return (
     <>
-      <nav className="crumbs pc-crumbs" aria-label={t('piece.crumbsLabel')}>
-        <Link to="/pieces">{t('piece.crumbsPieces')}</Link>
-        <span aria-hidden="true"> / </span>
-        <span aria-current="page">{piece.title}</span>
-      </nav>
-      <header className="page-head pc-head">
-        <div className="grow">
-          <h1 className="pc-title">{piece.title}</h1>
-          <div className="pc-facts">
-            <Chip state={live ? piece.review_state : 'discarded'} />
-            {piece.ai_generated && <span className="tag" title={t('piece.aiHint')}>{t('common.ai')}</span>}
-            <span>{tMaybe(`kind.${piece.kind}`, piece.kind)}</span>
-            {piece.target_date && <span className="pc-fact"><Icon d={ICON.calendar} />{t('piece.target', { date: fmtDay(piece.target_date) })}</span>}
-            {campaign && <span className="pc-fact"><Icon d={ICON.flag} />{t('piece.campaign', { name: campaign.name })}</span>}
-          </div>
-        </div>
-        {live && (
-          <div className="pc-actions">
-            {can('createPiece') && <button className="btn btn-ghost pc-discard" onClick={() => setDiscarding(true)}>{t('piece.discard.button')}</button>}
-            {can('createPiece') && <button className="btn" onClick={() => setEditing(true)}>{t('common.edit')}</button>}
-            {canUpload && suggested && (
-              <button className="btn btn-primary" onClick={() => setUploadFor(suggested.id)}><Icon d={ICON.upload} />{t('piece.uploadVersion')}</button>
+      <PageBar
+        crumbs={[
+          { label: t('piece.crumbsPieces'), to: '/pieces' },
+          ...(campaign ? [{ label: campaign.name, to: `/pieces?campaign=${campaign.id}` }] : []),
+          { label: piece.title },
+        ]}
+        actions={
+          <span className="pc-pb">
+            {latest && (
+              <Link className="btn pc-pb-btn pc-pb-review" to={`/review/${latest.id}`} title={`${t('piece.reviewHint', { n: latest.number, variant: variantName(variant!) })} (R)`}>
+                {t('piece.reviewN', { n: latest.number })}
+              </Link>
             )}
-          </div>
-        )}
-      </header>
-      {!live && <div className="notice notice-warn" role="status">{t('piece.discardedNotice', { when: fmtShort(piece.discarded_at!) })}</div>}
+            {canUpload && (
+              <button type="button" className="btn btn-primary pc-pb-btn" onClick={upload} title={`${t('piece.uploadVersionHint')} (U)`} aria-label={t('piece.uploadVersion')}>
+                <Icon name="upload" />
+                <span className="pc-pb-label">{t('piece.uploadVersion')}</span>
+              </button>
+            )}
+            {menu.length > 0 && <MoreMenu items={menu} label={t('piece.menu.label')} className="mm-trigger pc-pb-more" />}
+          </span>
+        }
+      />
+      {!live && (
+        <div className="pc-discarded" role="status">
+          <Icon name="alert" />
+          {t('piece.discardedNotice', { when: fmtShort(piece.discarded_at!) })}
+        </div>
+      )}
 
-      <div className="pc-layout">
-        <div className="pc-main">
-          <section className="pc-o-variants" aria-labelledby="pc-variants-h">
-            <div className="pc-section-head">
-              <h2 id="pc-variants-h">{t('piece.variants')}<span className="pc-count">{piece.variants.length}</span></h2>
-              {canUpload && piece.variants.length > 0 && <button className="btn btn-small" onClick={() => setAdding(true)}>{t('piece.addVariant.button')}</button>}
-            </div>
-            {piece.variants.length === 0 ? (
+      <div className="pc-grid">
+        <div className="pc-col-main">
+          {heroProps ? (
+            <PieceStage {...heroProps} />
+          ) : (
+            <div className="pc-hero-empty">
               <Empty title={t('piece.noVariants')}>
                 {canUpload ? t('piece.noVariantsUpload') : t('piece.noVariantsWait')}
-                {canUpload && <><br /><button className="btn btn-primary pc-empty-cta" onClick={() => setAdding(true)}>{t('piece.addVariant.button')}</button></>}
               </Empty>
-            ) : (
-              <div className="pc-variants">
+              {canUpload && <button className="btn btn-primary" onClick={() => setAdding(true)}><Icon name="plus" />{t('piece.addVariant.button')}</button>}
+            </div>
+          )}
+          {piece.variants.length > 0 && (
+            <section className="pc-section pc-o-variants" aria-labelledby="pc-variants-h">
+              <header className="pc-section-head">
+                <h2 id="pc-variants-h">{t('piece.variants')}</h2>
+                <span className="pc-count">{piece.variants.length}</span>
+                {canUpload && (
+                  <button type="button" className="btn btn-small btn-ghost pc-section-act" onClick={() => setAdding(true)} title={t('piece.addVariant.hint')}>
+                    <Icon name="plus" />{t('piece.addVariant.button')}
+                  </button>
+                )}
+              </header>
+              <ul className="pc-vlist">
                 {piece.variants.map((v) => (
-                  <VariantRow key={v.id} variant={v} canUpload={canUpload} onUpload={() => setUploadFor(v.id)} />
+                  <VariantRow
+                    key={v.id}
+                    variant={v}
+                    current={v.id === variant?.id && piece.variants.length > 1}
+                    canUpload={canUpload}
+                    onUpload={() => setUploadFor(v.id)}
+                    onShow={() => {
+                      setHeroVariant(v.id);
+                      setHeroVersion(null);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                  />
                 ))}
-              </div>
-            )}
-          </section>
-          <Publications piece={piece} brand={settings} zone={settings?.timezone ?? brand.timezone} className="pc-o-pubs" />
+              </ul>
+            </section>
+          )}
+          {piece.publications.length > 0 && (
+            <section className="pc-section pc-o-pubs" aria-labelledby="pc-pubs-h">
+              <header className="pc-section-head">
+                <h2 id="pc-pubs-h">{t('piece.pubs')}</h2>
+                <span className="pc-count">{piece.publications.length}</span>
+              </header>
+              <PublicationList
+                pubs={piece.publications}
+                variants={piece.variants}
+                brandId={piece.brand_id}
+                zone={zone}
+                brand={settings}
+                canSchedule={can('schedule')}
+                me={me.user.email}
+              />
+            </section>
+          )}
+          <Brief text={piece.brief} canEdit={canEdit} onEdit={() => setEditing(true)} className="pc-o-brief" />
         </div>
-        <aside className="pc-side">
-          {piece.brief && <Brief text={piece.brief} className="pc-o-brief" />}
-          <PieceAgentCard pieceId={piece.id} className="pc-o-agent" />
-        </aside>
+        <div className="pc-col-side">
+          {heroProps && <PieceFacts {...heroProps} />}
+          <PieceAgentCard pieceId={piece.id} source={piece.source} zone={zone} className="pc-o-agent" />
+          <PieceActivity piece={piece} zone={zone} className="pc-o-activity" />
+        </div>
       </div>
 
       {adding && <AddVariant pieceId={piece.id} kind={piece.kind} onClose={() => setAdding(false)} />}
-      {editing && <EditPiece piece={piece} onClose={() => setEditing(false)} />}
-      {discarding && <DiscardPiece piece={piece} onClose={() => setDiscarding(false)} />}
+      {editing && <EditPiece piece={piece} campaigns={campaigns} onClose={() => setEditing(false)} />}
+      {moving && <MoveToCampaign piece={piece} campaigns={campaigns} onClose={() => setMoving(false)} />}
       {uploading && <UploadDialog variant={uploading} variants={piece.variants} onClose={() => setUploadFor(null)} />}
     </>
   );
