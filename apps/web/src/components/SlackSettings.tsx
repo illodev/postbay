@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, type SlackSettings } from '../api';
+import { t, tMaybe } from '../i18n';
 import { fmtShort } from '../lib/format';
-import { ErrorBox, errorMessage, Field, Spinner, useToast } from './ui';
+import { Chip, ErrorBox, errorMessage, Field, Spinner, useToast } from './ui';
 
 /** Posts chosen events to a Slack channel, through that channel's incoming webhook. The address is a secret: it is never shown again. */
 export function SlackSettingsCard({ brandId }: { brandId: string }) {
@@ -15,16 +16,17 @@ export function SlackSettingsCard({ brandId }: { brandId: string }) {
 
   const save = useMutation({
     mutationFn: () => api.put<SlackSettings>(`/api/brands/${brandId}/slack`, { ...(url.trim() ? { url: url.trim() } : {}), kinds: [...(kinds ?? new Set(data!.kinds))] }),
-    onSuccess: () => { setUrl(''); setKinds(null); refresh(); toast('Saved'); },
+    onSuccess: () => { setUrl(''); setKinds(null); refresh(); toast(t('settings.saved')); },
   });
   const test = useMutation({
     mutationFn: () => api.post<{ ok: true } | { ok: false; message: string }>(`/api/brands/${brandId}/slack/test`),
-    onSuccess: (r) => { refresh(); toast(r.ok ? 'Sent: look in the channel' : `Slack said no: ${r.message}`, r.ok ? 'ok' : 'error'); },
+    onSuccess: (r) => { refresh(); toast(r.ok ? t('settings.slack.testOk') : t('settings.slack.testRefused', { message: r.message }), r.ok ? 'ok' : 'error'); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
   const remove = useMutation({
     mutationFn: () => api.del(`/api/brands/${brandId}/slack`),
-    onSuccess: () => { setKinds(null); refresh(); toast('Slack removed'); },
+    onSuccess: () => { setKinds(null); refresh(); toast(t('settings.slack.removed')); },
+    onError: (e) => toast(errorMessage(e), 'error'),
   });
 
   if (error) return <ErrorBox error={error} />;
@@ -32,38 +34,51 @@ export function SlackSettingsCard({ brandId }: { brandId: string }) {
   const chosen = kinds ?? new Set(data.kinds);
   const flip = (k: string) => { const n = new Set(chosen); if (n.has(k)) n.delete(k); else n.add(k); setKinds(n); };
   return (
-    <form className="card stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }} aria-label="Slack">
-      <div className="row-between">
-        <h3>Slack</h3>
-        {data.configured && !data.disabledReason && <span className="chip chip-approved">On · {data.hint}</span>}
-        {data.disabledReason && <span className="chip chip-failed">Stopped</span>}
-      </div>
-      <p className="muted" style={{ margin: 0 }}>
-        Posts to a channel, once for the team. In Slack, make an <em>incoming webhook</em> for the channel and paste its address here. The address is a secret:
-        it is kept sealed and cannot be read back, only replaced.
-      </p>
-      {!data.available && <div className="notice notice-warn">The server has no TOKEN_KEY, which seals the address, so Slack cannot be set up yet.</div>}
-      {data.disabledReason && <div className="notice notice-bad" role="alert">Slack stopped taking messages ({data.disabledReason}). Paste a new webhook address to start again.</div>}
-      {!data.disabledReason && data.lastError && <div className="notice notice-warn">The last post failed: {data.lastError}</div>}
-      <Field label={data.configured ? 'Replace the webhook address (optional)' : 'Webhook address'} hint="Starts with https://hooks.slack.com/services/">
-        <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://hooks.slack.com/services/…" autoComplete="off" required={!data.configured} disabled={!data.available} />
-      </Field>
-      <fieldset className="stack" style={{ border: 'none', padding: 0, margin: 0 }}>
-        <legend className="field-label">Post when…</legend>
-        {data.allKinds.map((k) => (
-          <label key={k.kind} className="check">
-            <input type="checkbox" checked={chosen.has(k.kind)} onChange={() => flip(k.kind)} disabled={!data.available} />
-            <span>{k.label}</span>
-          </label>
-        ))}
-      </fieldset>
-      {save.error && <ErrorBox error={save.error} />}
-      <div className="row">
-        <button className="btn btn-primary" disabled={!data.available || save.isPending || chosen.size === 0 || (!data.configured && !url.trim())}>Save</button>
-        {data.configured && <button type="button" className="btn" onClick={() => test.mutate()} disabled={test.isPending}>Send a test message</button>}
-        {data.configured && <button type="button" className="btn btn-danger" onClick={() => confirm('Stop posting to Slack?') && remove.mutate()}>Remove</button>}
-      </div>
-      {data.lastOkAt && <p className="muted small" style={{ margin: 0 }}>Last message posted {fmtShort(data.lastOkAt)}.</p>}
-    </form>
+    <>
+      <form className="card stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }} aria-label={t('settings.slack.title')}>
+        <div className="set-card-head">
+          <div>
+            <h3>{t('settings.slack.channel')}</h3>
+            <p className="set-hint">{t('settings.slack.hint')}</p>
+          </div>
+          {data.configured && !data.disabledReason && <Chip state="approved" label={data.hint ? t('settings.slack.onHint', { hint: data.hint }) : t('settings.slack.on')} />}
+          {data.disabledReason && <Chip state="failed" label={t('settings.slack.stopped')} />}
+          {!data.configured && !data.disabledReason && <Chip state="draft" label={t('settings.slack.off')} />}
+        </div>
+        {!data.available && <div className="notice notice-warn" style={{ margin: 0 }}>{t('settings.slack.unavailable')}</div>}
+        {data.disabledReason && <div className="notice notice-bad" role="alert" style={{ margin: 0 }}>{t('settings.slack.disabled', { reason: data.disabledReason })}</div>}
+        {!data.disabledReason && data.lastError && <div className="notice notice-warn" style={{ margin: 0 }}>{t('settings.slack.lastError', { error: data.lastError })}</div>}
+        <Field label={data.configured ? t('settings.slack.replace') : t('settings.slack.address')} hint={t('settings.slack.addressHint')}>
+          <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://hooks.slack.com/services/…" autoComplete="off" required={!data.configured} disabled={!data.available} />
+        </Field>
+        <fieldset className="set-fieldset set-checks-2">
+          <legend className="set-legend">{t('settings.slack.postWhen')}</legend>
+          {data.allKinds.map((k) => (
+            <label key={k.kind} className="check">
+              <input type="checkbox" checked={chosen.has(k.kind)} onChange={() => flip(k.kind)} disabled={!data.available} />
+              <span>{tMaybe(`account.kind.${k.kind}`, k.label)}</span>
+            </label>
+          ))}
+        </fieldset>
+        {save.error && <ErrorBox error={save.error} />}
+        <div className="set-savebar">
+          <button className="btn btn-primary" disabled={!data.available || save.isPending || chosen.size === 0 || (!data.configured && !url.trim())}>{t('common.save')}</button>
+          {data.configured && <button type="button" className="btn" onClick={() => test.mutate()} disabled={test.isPending}>{t('settings.slack.test')}</button>}
+          {data.lastOkAt && <span className="muted small">{t('settings.slack.lastOk', { when: fmtShort(data.lastOkAt) })}</span>}
+        </div>
+      </form>
+      {data.configured && (
+        <section className="card set-danger">
+          <h3>{t('settings.slack.dangerTitle')}</h3>
+          <div className="set-danger-row">
+            <div>
+              <strong>{t('settings.slack.removeTitle')}</strong>
+              <p>{t('settings.slack.removeHint')}</p>
+            </div>
+            <button type="button" className="btn btn-danger" onClick={() => confirm(t('settings.slack.removeConfirm')) && remove.mutate()} disabled={remove.isPending}>{t('settings.slack.remove')}</button>
+          </div>
+        </section>
+      )}
+    </>
   );
 }
