@@ -98,12 +98,61 @@ export async function listPieces(ctx: Ctx, p: Principal, brandId: string, f: { s
     params.push(`%${f.q.replace(/[%_]/g, '\\$&')}%`);
     where += ` and p.title ilike $${params.length}`;
   }
+  // Everything a card in the list shows, in this one query: the latest version of the first variant (the one the preview is
+  // drawn from, see thumbs.latestVersionId) with its main file, who made the latest version anywhere, the campaign, and what is
+  // scheduled or out on the networks.
   return ctx.db.query(
     `select p.*,
+       cp.name as campaign_name,
        (select count(*)::int from variant v where v.piece_id = p.id) as variant_count,
        (select count(*)::int from comment c join version ver on ver.id = c.version_id join variant v on v.id = ver.variant_id
-         where v.piece_id = p.id and c.parent_id is null and c.status = 'open' and ver.review_state in ('in_review','changes_requested','approved')) as open_comments
-     from piece p where ${where}
+         where v.piece_id = p.id and c.parent_id is null and c.status = 'open' and ver.review_state in ('in_review','changes_requested','approved')) as open_comments,
+       lv.latest_version,
+       coalesce(la.by_agent, false) as latest_by_agent,
+       coalesce(la.created_at, p.created_at) as updated_at,
+       np.next_publication,
+       coalesce(pn.networks, '{}') as networks,
+       pn.last_published_at
+     from piece p
+     left join campaign cp on cp.id = p.campaign_id
+     left join lateral (
+       select json_build_object(
+         'id', ver.id, 'number', ver.number, 'review_state', ver.review_state, 'created_at', ver.created_at,
+         'by_agent', ver.author_token_id is not null,
+         'author', case when ver.author_token_id is not null then t.name else coalesce(nullif(btrim(u.name), ''), split_part(u.email, '@', 1)) end,
+         'format', v.format,
+         'media', m.kind, 'files', m.files, 'duration_ms', m.duration_ms
+       ) as latest_version
+       from variant v
+       join version ver on ver.variant_id = v.id
+       left join app_user u on u.id = ver.author_user_id
+       left join api_token t on t.id = ver.author_token_id
+       cross join lateral (
+         select (array_agg(a.kind order by a.position, a.kind))[1] as kind, count(*)::int as files,
+                (array_agg(a.duration_ms order by a.position) filter (where a.kind = 'video'))[1] as duration_ms
+         from asset a where a.version_id = ver.id and a.kind in ('video','image','pdf')
+       ) m
+       where v.piece_id = p.id
+       order by v.created_at, ver.number desc limit 1
+     ) lv on true
+     left join lateral (
+       select ver.author_token_id is not null as by_agent, ver.created_at
+       from version ver join variant v on v.id = ver.variant_id
+       where v.piece_id = p.id order by ver.created_at desc limit 1
+     ) la on true
+     left join lateral (
+       select json_build_object('scheduled_at', pub.scheduled_at, 'network', sa.network, 'status', pub.status) as next_publication
+       from publication pub join variant v on v.id = pub.variant_id join social_account sa on sa.id = pub.social_account_id
+       where v.piece_id = p.id and pub.status in ('scheduled','awaiting_reapproval','on_hold','preparing','ready','publishing')
+       order by pub.scheduled_at limit 1
+     ) np on true
+     left join lateral (
+       select array_agg(distinct sa.network order by sa.network) as networks,
+              max(coalesce(pub.published_at, pub.scheduled_at)) filter (where pub.status = 'published') as last_published_at
+       from publication pub join variant v on v.id = pub.variant_id join social_account sa on sa.id = pub.social_account_id
+       where v.piece_id = p.id and pub.status in ('scheduled','awaiting_reapproval','on_hold','preparing','ready','publishing','published')
+     ) pn on true
+     where ${where}
      order by (p.review_state = 'discarded'), p.created_at desc limit 200`,
     params,
   );
