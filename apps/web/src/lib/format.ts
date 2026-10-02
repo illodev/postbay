@@ -1,4 +1,16 @@
 import { DateTime } from 'luxon';
+import { t, tMaybe } from '../i18n';
+
+/**
+ * A label map that translates on read: `STATE_LABEL[code]` gives the text for the current language, falling back to
+ * the English text kept here (and then to the code) for anything the messages do not have yet.
+ */
+function labelMap(prefix: string, fallback: Record<string, string>): Record<string, string> {
+  return new Proxy(fallback, {
+    get: (target, key) => (typeof key === 'string' ? tMaybe(`${prefix}.${key}`, target[key] ?? key) : undefined),
+    has: (target, key) => typeof key === 'string' && (key in target || tMaybe(`${prefix}.${key}`, '') !== ''),
+  });
+}
 
 export function fmtDateTime(iso: string, zone: string): string {
   return DateTime.fromISO(iso, { zone }).toFormat('ccc d LLL yyyy, HH:mm');
@@ -15,7 +27,7 @@ export function fmtShort(iso: string): string {
 /** A wall-clock time in the brand's zone ("2027-03-29T19:00") to the ISO instant the API expects. */
 export function zonedToIso(local: string, zone: string): string {
   const dt = DateTime.fromISO(local, { zone });
-  if (!dt.isValid) throw new Error('Pick a valid date and time');
+  if (!dt.isValid) throw new Error(t('common.invalidDate'));
   return dt.toUTC().toISO()!;
 }
 
@@ -37,7 +49,7 @@ export function fmtTime(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
-export const STATE_LABEL: Record<string, string> = {
+export const STATE_LABEL: Record<string, string> = labelMap('state', {
   draft: 'Draft',
   in_review: 'In review',
   changes_requested: 'Changes requested',
@@ -53,9 +65,9 @@ export const STATE_LABEL: Record<string, string> = {
   published: 'Published',
   cancelled: 'Cancelled',
   failed: 'Failed',
-};
+});
 
-export const NETWORK_LABEL: Record<string, string> = {
+export const NETWORK_LABEL: Record<string, string> = labelMap('network', {
   instagram: 'Instagram',
   facebook: 'Facebook',
   youtube: 'YouTube',
@@ -65,32 +77,32 @@ export const NETWORK_LABEL: Record<string, string> = {
   threads: 'Threads',
   pinterest: 'Pinterest',
   bluesky: 'Bluesky',
-};
+});
 
-export const ROLE_LABEL: Record<string, string> = {
+export const ROLE_LABEL: Record<string, string> = labelMap('role', {
   admin: 'Admin',
   approver: 'Approver',
   reviewer: 'Reviewer',
   producer: 'Producer',
   reader: 'Reader',
-};
+});
 
-export const VISIBILITY_LABEL: Record<string, string> = {
+export const VISIBILITY_LABEL: Record<string, string> = labelMap('visibility', {
   public: 'Live',
   private: 'Private',
   processing: 'Processing',
   scheduled: 'Held by the network',
   unknown: 'Not found',
-};
+});
 
-export const STEP_LABEL: Record<string, string> = {
+export const STEP_LABEL: Record<string, string> = labelMap('step', {
   prepare: 'Prepare',
   publish: 'Publish',
   verify: 'Check it is live',
   discard: 'Take down',
-};
+});
 
-export const ERROR_CLASS_LABEL: Record<string, string> = {
+export const ERROR_CLASS_LABEL: Record<string, string> = labelMap('errorClass', {
   auth: 'Connection problem',
   rate_limit: 'Network limit',
   file_rejected: 'Refused by the network',
@@ -98,9 +110,9 @@ export const ERROR_CLASS_LABEL: Record<string, string> = {
   unsupported: 'Not supported',
   missed_window: 'Missed its hour',
   unknown: 'Unknown error',
-};
+});
 
-export const OUTCOME_LABEL: Record<string, string> = {
+export const OUTCOME_LABEL: Record<string, string> = labelMap('outcome', {
   uploaded: 'Sent a new version',
   needs_people: 'Left it to people',
   failed: 'Failed',
@@ -108,21 +120,21 @@ export const OUTCOME_LABEL: Record<string, string> = {
   timeout: 'Ran out of time',
   aborted: 'Stopped',
   blocked: 'Not started',
-};
+});
 
-export const BLOCK_REASON_LABEL: Record<string, string> = {
+export const BLOCK_REASON_LABEL: Record<string, string> = labelMap('blockReason', {
   budget_not_set: 'No budget set',
   rounds_exhausted: 'Rounds used up',
   piece_budget_reached: 'Piece budget reached',
   monthly_budget_reached: 'Monthly budget reached',
-};
+});
 
-export const TRIGGER_LABEL: Record<string, string> = {
+export const TRIGGER_LABEL: Record<string, string> = labelMap('trigger', {
   'version.changes_requested': 'Changes requested',
   'slot.needs_content': 'Empty slot',
-};
+});
 
-export const EVENT_LABEL: Record<string, string> = {
+export const EVENT_LABEL: Record<string, string> = labelMap('event', {
   'version.changes_requested': 'Changes requested',
   'version.approved': 'Version approved',
   'version.rejected': 'Version rejected',
@@ -131,7 +143,7 @@ export const EVENT_LABEL: Record<string, string> = {
   'publication.published': 'Post published',
   'publication.failed': 'Post failed',
   ping: 'Test',
-};
+});
 
 export function fmtMoney(n: number, currency: string): string {
   return `${n.toFixed(2).replace(/\.00$/, '')} ${currency}`;

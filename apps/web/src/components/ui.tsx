@@ -1,8 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError } from '../api';
+import { t, tMaybe } from '../i18n';
 import { STATE_LABEL } from '../lib/format';
 
-export const errorMessage = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : 'Something went wrong');
+/** What to tell the person about an error: the translated text for a known API code, else the server's message. */
+export const errorMessage = (e: unknown): string => {
+  if (e instanceof ApiError) return tMaybe(`errors.${e.code}`, e.message);
+  if (e instanceof TypeError) return t('errors.network');
+  if (e instanceof Error) return e.message;
+  return t('common.somethingWrong');
+};
 
 // ───────────────────────────── toasts ─────────────────────────────
 
@@ -39,8 +46,8 @@ export function Chip({ state, label }: { state: string; label?: string }) {
   return <span className={`chip chip-${state}`}>{label ?? STATE_LABEL[state] ?? state}</span>;
 }
 
-export function Spinner({ label = 'Loading…' }: { label?: string }) {
-  return <div className="muted center pad">{label}</div>;
+export function Spinner({ label }: { label?: string }) {
+  return <div className="muted center pad">{label ?? t('common.loading')}</div>;
 }
 
 export function ErrorBox({ error }: { error: unknown }) {
@@ -74,7 +81,7 @@ export function Dialog({ title, onClose, children, wide }: { title: string; onCl
       <div className="dialog-body">
         <header className="dialog-head">
           <h2>{title}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">×</button>
+          <button className="icon-btn" onClick={onClose} aria-label={t('common.close')}>×</button>
         </header>
         {children}
       </div>
@@ -92,7 +99,7 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   );
 }
 
-export function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
+export function CopyButton({ text, label }: { text: string; label?: string }) {
   const toast = useToast();
   return (
     <button
@@ -101,13 +108,13 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(text);
-          toast('Copied');
+          toast(t('common.copied'));
         } catch {
-          toast('Could not copy: select the text and copy it by hand', 'error');
+          toast(t('common.copyFailed'), 'error');
         }
       }}
     >
-      {label}
+      {label ?? t('common.copy')}
     </button>
   );
 }

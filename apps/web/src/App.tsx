@@ -4,6 +4,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { ApiError, type PublicConfig } from './api';
 import { Layout } from './components/Layout';
 import { Empty, ErrorBox, Spinner } from './components/ui';
+import { t } from './i18n';
 import { SessionProvider, useMe } from './lib/session';
 import { CalendarPage } from './pages/Calendar';
 import { Login, AuthCallback } from './pages/Login';
@@ -30,7 +31,7 @@ function Authed() {
   if (me.brands.length === 0) {
     return (
       <div className="page">
-        <Empty title="You are not a member of any brand yet">Ask an admin to add {me.user.email} to a brand.</Empty>
+        <Empty title={t('layout.noBrands')}>{t('layout.noBrandsHint', { email: me.user.email })}</Empty>
       </div>
     );
   }
@@ -47,7 +48,7 @@ function Authed() {
           <Route path="results" element={<ResultsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="security" element={<SecurityPage />} />
-          <Route path="*" element={<Empty title="Page not found" />} />
+          <Route path="*" element={<Empty title={t('common.notFound')} />} />
         </Route>
       </Routes>
     </SessionProvider>

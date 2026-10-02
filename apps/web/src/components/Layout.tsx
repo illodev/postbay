@@ -1,31 +1,26 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api, type NotificationItem } from '../api';
+import { LOCALES, t, tMaybe, useLocale, type Locale } from '../i18n';
 import { fmtShort } from '../lib/format';
 import { useSession } from '../lib/session';
 import { useToast, errorMessage } from './ui';
 
-const KIND_TEXT: Record<string, string> = {
-  'version.uploaded': 'New version ready for review',
-  'comment.created': 'New comment',
-  'version.changes_requested': 'Changes requested',
-  'version.approved': 'Version approved',
-  'publication.due': 'A publication is due',
-  'publication.reapproval': 'A change needs your confirmation',
-  'publication.on_hold': 'Scheduled posts put on hold by a new version',
-  'publication.published': 'A post went out',
-  'publication.failed': 'A post could not be published',
-  'publication.private': 'A video is private: it needs making public',
-  'account.reconnect': 'An account needs reconnecting',
-  'account.expiring': 'An account connection is about to expire',
-  'webhook.failing': 'A webhook is failing',
-  'agent.needs_person': 'The agent handed a piece back to a person',
-  'agent.failed': 'An agent run failed',
-};
+function Logo() {
+  return (
+    <NavLink to="/" className="logo" aria-label={t('layout.home')}>
+      <span className="logo-mark" aria-hidden="true">
+        <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z" fill="#1a1205" /></svg>
+      </span>
+      <span>{t('layout.appName')}</span>
+    </NavLink>
+  );
+}
 
 function Bell() {
   const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { data } = useQuery({
@@ -34,46 +29,59 @@ function Bell() {
     refetchInterval: 30_000,
   });
   const unread = data?.unread ?? 0;
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
   const readAll = async () => {
     await api.post('/api/notifications/read', {});
     qc.invalidateQueries({ queryKey: ['notifications'] });
   };
   return (
-    <div style={{ position: 'relative' }}>
-      <button className="btn" aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`} aria-expanded={open} onClick={() => setOpen(!open)}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" />
-        </svg>
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        className="sb-item"
+        aria-label={unread ? t('notif.buttonUnread', { count: unread }) : t('notif.button')}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        <span className="row" style={{ gap: '.6rem' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" />
+          </svg>
+          {t('notif.title')}
+        </span>
         {unread > 0 && <span className="badge-count">{unread}</span>}
       </button>
       {open && (
-        <div className="card" style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', width: 'min(360px, 92vw)', zIndex: 30, maxHeight: '70vh', overflowY: 'auto' }}>
+        <div className="popover" style={{ left: 'calc(100% + 10px)', bottom: 0 }}>
           <div className="card-head">
-            <strong>Notifications</strong>
-            <button className="btn btn-small" onClick={readAll} disabled={!unread}>Mark all read</button>
+            <strong>{t('notif.title')}</strong>
+            <button className="btn btn-small" onClick={readAll} disabled={!unread}>{t('notif.markAll')}</button>
           </div>
           {data?.items.length ? (
             data.items.slice(0, 20).map((n) => (
               <button
                 key={n.id}
-                className="btn"
-                style={{ width: '100%', justifyContent: 'flex-start', textAlign: 'left', marginBottom: 4, fontWeight: n.read_at ? 400 : 700 }}
+                className={`notif-item ${n.read_at ? '' : 'unread'}`}
                 onClick={() => {
                   setOpen(false);
                   if (n.payload.pieceId) navigate(`/pieces/${n.payload.pieceId}`);
                   else navigate('/today');
                 }}
               >
-                <span className="grow">
-                  {KIND_TEXT[n.kind] ?? n.kind}
-                  {n.piece_title && <span className="muted"> · {n.piece_title}</span>}
-                  <br />
-                  <span className="muted small">{n.brand} · {fmtShort(n.created_at)}</span>
-                </span>
+                <span style={{ fontWeight: n.read_at ? 400 : 600 }}>{tMaybe(`notif.kind.${n.kind}`, n.kind)}</span>
+                {n.piece_title && <span className="muted"> · {n.piece_title}</span>}
+                <br />
+                <span className="muted small">{n.brand} · {fmtShort(n.created_at)}</span>
               </button>
             ))
           ) : (
-            <p className="muted">Nothing yet.</p>
+            <p className="muted">{t('notif.empty')}</p>
           )}
         </div>
       )}
@@ -81,11 +89,29 @@ function Bell() {
   );
 }
 
+const initials = (s: string) =>
+  s
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join('');
+
 export function Layout() {
   const { me, brand, setBrandId, can } = useSession();
+  const { locale, setLocale } = useLocale();
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [menu, setMenu] = useState(false);
+  useEffect(() => setMenu(false), [location.pathname]);
+  const due = useQuery({
+    queryKey: ['due-count', brand.id],
+    queryFn: () => api.get<unknown[]>(`/api/brands/${brand.id}/publications/due`),
+    refetchInterval: 60_000,
+  });
+  const dueCount = due.data?.length ?? 0;
   const signOut = async () => {
     try {
       await api.post('/api/auth/logout');
@@ -95,39 +121,64 @@ export function Layout() {
       toast(errorMessage(e), 'error');
     }
   };
+  const name = me.user.name ?? me.user.email;
   return (
-    <>
-      <header className="shell-header">
-        <NavLink to="/" className="logo" aria-label="Content Studio home">
-          <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="var(--accent)" /><path d="M9 22V10l14 6z" fill="var(--accent-contrast)" /></svg>
-          <span>Studio</span>
-        </NavLink>
-        {me.brands.length > 1 ? (
-          <select aria-label="Brand" value={brand.id} onChange={(e) => setBrandId(e.target.value)} style={{ width: 'auto', maxWidth: 200 }}>
-            {me.brands.map((b) => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
-          </select>
-        ) : (
-          <strong>{brand.name}</strong>
-        )}
-        <nav className="nav" aria-label="Main">
-          <NavLink to="/pieces">Pieces</NavLink>
-          <NavLink to="/calendar">Calendar</NavLink>
-          <NavLink to="/today">Publish</NavLink>
-          <NavLink to="/results">Results</NavLink>
-          {(can('manage') || can('audit')) && <NavLink to="/settings">Settings</NavLink>}
+    <div className={`shell ${menu ? 'menu-open' : ''}`}>
+      <aside className="sidebar">
+        <Logo />
+        <nav className="nav" aria-label={t('layout.nav.main')}>
+          <NavLink to="/pieces">{t('layout.nav.pieces')}</NavLink>
+          <NavLink to="/calendar">{t('layout.nav.calendar')}</NavLink>
+          <NavLink to="/today">
+            {t('layout.nav.publish')}
+            {dueCount > 0 && <span className="nav-count">{dueCount}</span>}
+          </NavLink>
+          <NavLink to="/results">{t('layout.nav.results')}</NavLink>
+          {(can('manage') || can('audit')) && <NavLink to="/settings">{t('layout.nav.settings')}</NavLink>}
         </nav>
-        <Bell />
-        <div className="row">
-          <NavLink to="/security" className="muted small user-name" title={`${me.user.email}: your account (notifications and sign-in)`}>{me.user.name ?? me.user.email}</NavLink>
-          <button className="btn btn-small" onClick={signOut}>Sign out</button>
+        <div className="sb-sep" />
+        <div className="sb-section">{me.brands.length > 1 ? t('layout.brands') : t('layout.brand')}</div>
+        <div className="nav" role="group" aria-label={t('layout.brands')}>
+          {me.brands.map((b) => (
+            <button key={b.id} className={`sb-item ${b.id === brand.id ? 'on' : ''}`} aria-pressed={b.id === brand.id} onClick={() => setBrandId(b.id)}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.name}</span>
+            </button>
+          ))}
         </div>
-      </header>
-      {brand.paused && <div className="banner" role="status">This brand is paused: nothing can be scheduled or moved until it is resumed.</div>}
-      <main className="page">
-        <Outlet />
-      </main>
-    </>
+        <div className="sb-foot">
+          <Bell />
+          <label className="sb-item" style={{ cursor: 'default' }}>
+            <span>{t('layout.language')}</span>
+            <select
+              aria-label={t('layout.language')}
+              value={locale}
+              onChange={(e) => setLocale(e.target.value as Locale)}
+              style={{ width: 'auto', minHeight: 28, padding: '.1rem 1.8rem .1rem .5rem', fontSize: '.8125rem' }}
+            >
+              {LOCALES.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+            </select>
+          </label>
+          <NavLink to="/security" className="sb-user" title={t('layout.accountHint', { email: me.user.email })}>
+            <span className="avatar" aria-hidden="true">{initials(name)}</span>
+            <span className="who">{name}</span>
+          </NavLink>
+          <button className="sb-item" onClick={signOut}>{t('layout.signOut')}</button>
+        </div>
+      </aside>
+      {menu && <div className="scrim" onClick={() => setMenu(false)} aria-hidden="true" />}
+      <div className="content">
+        <header className="topbar">
+          <button className="icon-btn" aria-label={t('layout.menu')} aria-expanded={menu} onClick={() => setMenu(true)}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" /></svg>
+          </button>
+          <Logo />
+          <span className="muted small" style={{ marginLeft: 'auto' }}>{brand.name}</span>
+        </header>
+        {brand.paused && <div className="banner" role="status">{t('layout.paused')}</div>}
+        <main className="page">
+          <Outlet />
+        </main>
+      </div>
+    </div>
   );
 }

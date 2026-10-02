@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { requirePrincipal, setSessionCookie, SESSION_COOKIE } from '../http.js';
 import type { Ctx } from '../context.js';
-import { badRequest, conflict, forbidden, unauthorized } from '../errors.js';
+import { badRequest, conflict, forbidden, notFound, unauthorized } from '../errors.js';
 import * as agent from '../services/agent.js';
 import * as metrics from '../services/metrics.js';
 import * as prizes from '../services/prizes.js';
@@ -10,6 +10,7 @@ import * as push from '../services/push.js';
 import * as selfcheck from '../services/selfcheck.js';
 import * as slack from '../services/slack.js';
 import * as subtitles from '../services/subtitles.js';
+import * as thumbs from '../services/thumbs.js';
 import * as secondFactor from '../services/secondfactor.js';
 import * as sso from '../services/sso.js';
 import * as approvals from '../services/approvals.js';
@@ -387,6 +388,21 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ───────────────────────────── versions, comments, approvals ─────────────────────────────
 
+  // Previews for the pieces list: the piece's address redirects to its latest version's, which never changes and is cached for good.
+  const thumbWidth = (q: unknown) => {
+    const w = Number((q as { w?: string } | null)?.w ?? 480);
+    return (thumbs.THUMB_WIDTHS as readonly number[]).includes(w) ? (w as thumbs.ThumbWidth) : 480;
+  };
+  app.get('/api/pieces/:id/thumb', async (req, reply) => {
+    const versionId = await thumbs.latestVersionId(ctx, P(req), params(req, 'id').id);
+    if (!versionId) throw notFound('Preview');
+    return reply.header('cache-control', 'private, max-age=30').redirect(`/api/versions/${versionId}/thumb?w=${thumbWidth(req.query)}`);
+  });
+  app.get('/api/versions/:id/thumb', async (req, reply) => {
+    const jpg = await thumbs.versionThumb(ctx, P(req), params(req, 'id').id, thumbWidth(req.query));
+    if (!jpg) throw notFound('Preview');
+    return reply.header('content-type', 'image/jpeg').header('cache-control', 'private, max-age=31536000, immutable').send(jpg);
+  });
   app.get('/api/versions/:id', async (req) => versions.getVersion(ctx, P(req), params(req, 'id').id));
   app.get('/api/versions/:id/comments', async (req) => {
     const q = z
