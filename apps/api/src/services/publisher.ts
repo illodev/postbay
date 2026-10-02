@@ -4,7 +4,7 @@ import { profileOf } from '../connectors/profiles.js';
 import { redact } from '../connectors/http.js';
 import {
   ConnectorError,
-  type Account, type Connector, type Handle, type Issue, type MediaItem, type PlacementSpec, type PublishInput,
+  type Account, type Connector, type Handle, type Issue, type MediaItem, type PlacementSpec, type PublishInput, type VerifyResult,
 } from '../connectors/types.js';
 import type { Ctx } from '../context.js';
 import { localDay } from '../domain/time.js';
@@ -14,6 +14,9 @@ import { emitPublication } from './events.js';
 import { scheduleSnapshots } from './metrics.js';
 import { connectorEnv, loadConnectorAccount, markReconnectRequired } from './connectors.js';
 import { notifyRoles, type NotifyKind } from './notify.js';
+import { english, msg, tr, type Localized } from '../i18n/index.js';
+import { issueText } from '../connectors/validate.js';
+import { localizePlacements } from '../connectors/labels.js';
 import { fileFor } from './renditions.js';
 import { storedFilesMatch } from './versions.js';
 
@@ -157,7 +160,22 @@ type Patch = Partial<{
   verify_attempts: number; last_error_class: string | null; last_error: string | null; failed_at: Date | null; external_id: string | null;
   url: string | null; published_at: Date | null; manual: boolean; hold_reason: string | null; held_on_network: boolean;
   frozen_at: Date | null; prepare_at: Date | null; due_notified_at: Date | null;
+  /** The same texts kept as codes, so each reader gets them in their language (src/i18n). */
+  last_error_i18n: Text | null; hold_reason_i18n: Text | null;
 }>;
+
+/** A text the publisher keeps: one message, or several said one after the other. */
+type Text = Localized | Localized[];
+const JSON_COLUMNS = new Set<string>(['handle', 'last_error_i18n', 'hold_reason_i18n']);
+
+/** A network's name as people write it. */
+const networkName = (network: string) => msg(`network.${network}` as never);
+
+/** What a connector error says: its own words kept as a code when it has them, otherwise the network's words as they came. */
+const said = (e: ConnectorError): Text => e.text ?? msg('pub.said', { text: e.message });
+
+/** The English of a kept text, for the English column beside it, the audit log, webhooks and logs. */
+const englishOf = (text: Text) => english(text);
 
 /**
  * Writes a change only if the publication is still in a state the step expected (so a cancel or hold in the meantime wins) and
@@ -166,7 +184,7 @@ type Patch = Partial<{
 async function commit(db: Queryable, w: Held, expected: string[], patch: Patch): Promise<boolean> {
   const keys = Object.keys(patch) as (keyof Patch)[];
   const sets = keys.map((k, i) => `${k} = $${i + 4}`);
-  const values = keys.map((k) => (k === 'handle' ? JSON.stringify(patch[k]) : patch[k]));
+  const values = keys.map((k) => (JSON_COLUMNS.has(k) && patch[k] !== null ? JSON.stringify(patch[k]) : patch[k]));
   const row = await db.one(
     `update publication set ${sets.join(', ')}${sets.length ? ',' : ''} updated_at = now() where id = $1 and status = any($2) and lease_token = $3 returning id`,
     [w.id, expected, w.lease, ...values],
@@ -220,20 +238,25 @@ async function refresh(ctx: Ctx, L: Loaded) {
   if (r) Object.assign(L.pub, r);
 }
 
-async function fail(ctx: Ctx, L: Loaded, errorClass: string, message: string, attempts?: number): Promise<string> {
+/**
+ * Fails the publication with why, kept as a code (for each reader's language) and in English (for webhooks and the audit). When a send
+ * had begun, people are told the post may be on the network already, unless `checked` says the network was asked and does not have it.
+ */
+async function fail(ctx: Ctx, L: Loaded, errorClass: string, why: Text, o: { attempts?: number; checked?: boolean } = {}): Promise<string> {
   await refresh(ctx, L);
-  const reached = !!L.pub.publish_progress_at && !L.pub.native_scheduled;
-  const text = reached ? `${message} It may already be on ${L.account.network}: check there before trying again.` : message;
+  const reached = !!L.pub.publish_progress_at && !L.pub.native_scheduled && !o.checked;
+  const full: Text = reached ? msg('pub.mayAlreadyBeOn', { message: why, network: networkName(L.account.network) }) : why;
+  const text = englishOf(full);
   return ctx.db.tx(async (db) => {
     const ok = await commit(db, L.w, ['scheduled', 'preparing', 'ready', 'publishing', 'published'], {
-      ...(attempts === undefined ? {} : { attempts }),
-      status: 'failed', failed_at: ctx.now(), last_error_class: errorClass, last_error: text.slice(0, 1000),
+      ...(o.attempts === undefined ? {} : { attempts: o.attempts }),
+      status: 'failed', failed_at: ctx.now(), last_error_class: errorClass, last_error: text.slice(0, 1000), last_error_i18n: full,
       // Whatever the network is holding must be taken down, or it would still go out at its hour.
       next_run_at: L.pub.held_on_network || L.pub.native_scheduled ? ctx.now() : null,
     });
     if (!ok) return 'changed';
     await audit(db, null, L.brandId, 'publication.failed', 'publication', L.pub.id, { status: L.pub.status }, { errorClass, message: text.slice(0, 300) });
-    await tell(db, L, 'publication.failed', { errorClass, message: text.slice(0, 300) });
+    await tell(db, L, 'publication.failed', { errorClass, message: text.slice(0, 300), message_i18n: full });
     await emitPublication(ctx, db, L.brandId, L.pub.id, 'publication.failed', { error: { class: errorClass, message: text.slice(0, 500) } });
     return 'failed';
   });
@@ -243,15 +266,18 @@ async function fail(ctx: Ctx, L: Loaded, errorClass: string, message: string, at
  * Gives up on automation for one publication: it becomes a manual one, with everything ready for a person, who is told why. What
  * the network held for it must already have been taken down.
  */
-async function handOver(ctx: Ctx, L: Loaded, errorClass: string, message: string): Promise<string> {
+async function handOver(ctx: Ctx, L: Loaded, errorClass: string, why: Text): Promise<string> {
+  const message = englishOf(why);
   return ctx.db.tx(async (db) => {
     const ok = await commit(db, L.w, ['scheduled', 'preparing', 'ready'], {
       status: 'scheduled', manual: true, handle: {}, next_run_at: null, prepare_at: null, native_scheduled: false, held_on_network: false,
-      frozen_at: null, attempts: 0, due_notified_at: null, last_error_class: errorClass, last_error: message.slice(0, 1000),
+      frozen_at: null, attempts: 0, due_notified_at: null, last_error_class: errorClass, last_error: message.slice(0, 1000), last_error_i18n: why,
     });
     if (!ok) return 'changed';
     await audit(db, null, L.brandId, 'publication.handed_over', 'publication', L.pub.id, { manual: false }, { manual: true, reason: message.slice(0, 200) });
-    await tell(db, L, 'publication.failed', { errorClass, handedOver: true, message: `${message} It now needs a person: publish it by hand or cancel it.`.slice(0, 400) });
+    // A kind of its own (it used to be publication.failed with handedOver, which is still set for whoever reads it that way).
+    const told = msg('pub.needsPerson', { message: why });
+    await tell(db, L, 'publication.handed_over', { errorClass, handedOver: true, message: englishOf(told).slice(0, 400), message_i18n: told });
     return 'handed-over';
   });
 }
@@ -269,25 +295,30 @@ export async function wakeDependents(db: Queryable, publicationId: string, now: 
 /** Decides what a failed step means: wait, try again, hand it to a person, or give up and say so. */
 async function onError(ctx: Ctx, L: Loaded, step: Step, err: unknown): Promise<string> {
   const e = err instanceof ConnectorError ? err : new ConnectorError('unknown', (err as Error)?.message ?? String(err));
-  await record(ctx, L, step, 'error', { errorClass: e.errorClass, httpStatus: e.httpStatus, detail: { message: e.message, ...(e.detail ? { response: e.detail } : {}) } });
+  await record(ctx, L, step, 'error', {
+    errorClass: e.errorClass, httpStatus: e.httpStatus, detail: { message: e.message, ...(e.text ? { message_i18n: e.text } : {}), ...(e.detail ? { response: e.detail } : {}) },
+  });
   await refresh(ctx, L);
   const now = ctx.now();
   const dueBy = new Date(new Date(L.pub.scheduled_at).getTime() + L.toleranceMs);
   const status = L.pub.status as string;
   const live = status === 'published';
   const schedule = async (next: Date, patch: Patch = {}) => {
-    await commit(ctx.db, L.w, ['scheduled', 'preparing', 'ready', 'publishing', 'published', 'cancelled', 'on_hold', 'failed'], { next_run_at: next, last_error_class: e.errorClass, last_error: e.message.slice(0, 1000), ...patch });
+    await commit(ctx.db, L.w, ['scheduled', 'preparing', 'ready', 'publishing', 'published', 'cancelled', 'on_hold', 'failed'], {
+      next_run_at: next, last_error_class: e.errorClass, last_error: e.message.slice(0, 1000), last_error_i18n: said(e), ...patch,
+    });
     return `retry:${e.errorClass}`;
   };
 
   if (step === 'discard') {
     // Nothing is lost by trying again, but after a few tries a person has to remove it by hand.
     const attempts = (L.pub.attempts as number) + 1;
-    if (e.errorClass === 'auth') await markReconnectRequired(ctx, L.account.id, e.message);
+    if (e.errorClass === 'auth') await markReconnectRequired(ctx, L.account.id, e.message, e.text);
     if (attempts >= TIMING.maxAttempts * 2) {
       await ctx.db.tx(async (db) => {
         await commit(db, L.w, ['cancelled', 'on_hold', 'failed'], { next_run_at: null, attempts });
-        await tell(db, L, 'publication.failed', { errorClass: e.errorClass, message: `Could not remove the post from ${L.account.network}: delete it there by hand. (${e.message.slice(0, 200)})` });
+        const told = msg('pub.couldNotRemove', { network: networkName(L.account.network), error: e.message.slice(0, 200) });
+        await tell(db, L, 'publication.failed', { errorClass: e.errorClass, message: englishOf(told), message_i18n: told });
       });
       return 'discard-gave-up';
     }
@@ -296,22 +327,22 @@ async function onError(ctx: Ctx, L: Loaded, step: Step, err: unknown): Promise<s
 
   switch (e.errorClass) {
     case 'auth': {
-      await markReconnectRequired(ctx, L.account.id, e.message);
+      await markReconnectRequired(ctx, L.account.id, e.message, e.text);
       if (live || now < dueBy) return schedule(addSeconds(now, TIMING.reconnectRetrySeconds), live ? { verify_attempts: (L.pub.verify_attempts as number) + 1 } : {});
-      return fail(ctx, L, 'auth', `${e.message} The account was not reconnected in time.`);
+      return fail(ctx, L, 'auth', msg('pub.notReconnectedInTime', { message: said(e) }));
     }
     case 'rate_limit': {
       const next = addSeconds(now, Math.max(30, e.retryAfterSec ?? 900));
-      if (!live && next > dueBy) return fail(ctx, L, 'rate_limit', `${e.message} The limit did not clear before the post was due.`);
+      if (!live && next > dueBy) return fail(ctx, L, 'rate_limit', msg('pub.limitNotCleared', { message: said(e) }));
       return schedule(next);
     }
     case 'file_rejected':
-      return fail(ctx, L, 'file_rejected', e.message);
+      return fail(ctx, L, 'file_rejected', said(e));
     case 'unsupported': {
       // The API cannot do this: it becomes a manual publication, with everything ready for a person. Unless the network already holds
       // something for it, which has to come down first: then it fails, which takes it down, and a person can hand it over after.
-      if (L.pub.held_on_network || L.pub.publish_progress_at || status === 'publishing') return fail(ctx, L, 'unsupported', e.message);
-      return handOver(ctx, L, 'unsupported', e.message);
+      if (L.pub.held_on_network || L.pub.publish_progress_at || status === 'publishing') return fail(ctx, L, 'unsupported', said(e));
+      return handOver(ctx, L, 'unsupported', said(e));
     }
     default: {
       // Transient or unknown: try again, waiting longer each time. The fifth failure in a row is the last.
@@ -320,7 +351,7 @@ async function onError(ctx: Ctx, L: Loaded, step: Step, err: unknown): Promise<s
         const checks = (L.pub.verify_attempts as number) + 1;
         return schedule(addSeconds(now, TIMING.backoffSeconds[Math.min(checks - 1, 4)]!), { verify_attempts: checks });
       }
-      if (attempts >= TIMING.maxAttempts) return fail(ctx, L, e.errorClass, `${e.message} (failed ${attempts} times in a row)`, attempts);
+      if (attempts >= TIMING.maxAttempts) return fail(ctx, L, e.errorClass, msg('pub.failedTimes', { message: said(e), count: attempts }), { attempts });
       return schedule(addSeconds(now, TIMING.backoffSeconds[attempts - 1]!), { attempts });
     }
   }
@@ -329,12 +360,13 @@ async function onError(ctx: Ctx, L: Loaded, step: Step, err: unknown): Promise<s
 // ───────────────────────────── holding back ─────────────────────────────
 
 /** Why nothing may go out for this publication right now: its brand is paused or its day is blocked. */
-async function freezeReason(ctx: Ctx, L: Loaded): Promise<string | null> {
+async function freezeReason(ctx: Ctx, L: Loaded): Promise<Localized | null> {
   const scheduled = new Date(L.pub.scheduled_at);
-  if (L.brandPaused) return `the brand was paused`;
+  if (L.brandPaused) return msg('pub.freeze.paused');
   const day = localDay(scheduled, L.timezone);
   const blocked = await ctx.db.one('select reason from blocked_date where brand_id = $1 and day = $2', [L.brandId, day]);
-  return blocked ? `${day} is blocked${blocked.reason ? ` (${blocked.reason})` : ''}` : null;
+  if (!blocked) return null;
+  return blocked.reason ? msg('pub.freeze.blockedWhy', { day, reason: blocked.reason }) : msg('pub.freeze.blocked', { day });
 }
 
 /**
@@ -342,7 +374,8 @@ async function freezeReason(ctx: Ctx, L: Loaded): Promise<string | null> {
  * so it cannot go out at its hour; the publication goes back to "scheduled", to be prepared again once the freeze is over. If its
  * hour (and the tolerance) passes meanwhile, a person gets it instead.
  */
-async function freeze(ctx: Ctx, L: Loaded, reason: string): Promise<string> {
+async function freeze(ctx: Ctx, L: Loaded, reasonText: Localized): Promise<string> {
+  const reason = englishOf(reasonText);
   const { pub, connector, account } = L;
   const now = ctx.now();
   const deadline = new Date(new Date(pub.scheduled_at).getTime() + L.toleranceMs);
@@ -353,7 +386,7 @@ async function freeze(ctx: Ctx, L: Loaded, reason: string): Promise<string> {
     } catch (err) {
       const e = err instanceof ConnectorError ? err : new ConnectorError('unknown', (err as Error)?.message ?? String(err));
       await record(ctx, L, 'discard', 'error', { errorClass: e.errorClass, httpStatus: e.httpStatus, detail: { message: e.message, reason } });
-      if (e.errorClass === 'auth') await markReconnectRequired(ctx, account.id, e.message);
+      if (e.errorClass === 'auth') await markReconnectRequired(ctx, account.id, e.message, e.text);
       const attempts = (pub.attempts as number) + 1;
       await ctx.db.tx(async (db) => {
         await commit(db, L.w, [pub.status], {
@@ -361,7 +394,8 @@ async function freeze(ctx: Ctx, L: Loaded, reason: string): Promise<string> {
           next_run_at: addSeconds(now, TIMING.backoffSeconds[Math.min(attempts - 1, 4)]!),
         });
         if (attempts === TIMING.maxAttempts) {
-          await tell(db, L, 'publication.failed', { errorClass: e.errorClass, message: `Nothing may go out because ${reason}, but the post could not be taken down from ${account.network}: delete it there by hand. (${e.message.slice(0, 200)})` });
+          const told = msg('pub.freeze.cannotTakeDown', { reason: reasonText, network: networkName(account.network), error: e.message.slice(0, 200) });
+          await tell(db, L, 'publication.failed', { errorClass: e.errorClass, message: englishOf(told), message_i18n: told });
         }
       });
       return `retry:${e.errorClass}`;
@@ -370,10 +404,9 @@ async function freeze(ctx: Ctx, L: Loaded, reason: string): Promise<string> {
   }
   // A send that had begun before (a retried one) keeps what the connector recorded, so it can still be found again: it only waits.
   const keep = !!pub.publish_progress_at;
-  if (now > deadline && !keep) {
-    return handOver(ctx, L, 'missed_window', `It was due ${new Date(pub.scheduled_at).toISOString()}, while ${reason}, so the app did not publish it.`);
-  }
-  if (now > deadline) return fail(ctx, L, 'missed_window', `It was due ${new Date(pub.scheduled_at).toISOString()}, while ${reason}, so the app did not publish it.`);
+  const missed = msg('pub.freeze.missed', { at: new Date(pub.scheduled_at).toISOString(), reason: reasonText });
+  if (now > deadline && !keep) return handOver(ctx, L, 'missed_window', missed);
+  if (now > deadline) return fail(ctx, L, 'missed_window', missed);
   return ctx.db.tx(async (db) => {
     const park = { frozen_at: pub.frozen_at ?? now, next_run_at: minDate(addSeconds(now, TIMING.frozenRecheckSeconds), addSeconds(deadline, 1)) };
     const ok = keep
@@ -403,7 +436,7 @@ async function holdBack(ctx: Ctx, L: Loaded): Promise<string | null> {
   }
   if (pub.frozen_at) {
     if (!pub.held_on_network && now > deadline) {
-      return handOver(ctx, L, 'missed_window', `It was due ${scheduled.toISOString()}, while the brand was paused or the date blocked, so the app did not publish it.`);
+      return handOver(ctx, L, 'missed_window', msg('pub.freeze.missedEither', { at: scheduled.toISOString() }));
     }
     if (!(await commit(ctx.db, L.w, [pub.status], { frozen_at: null }))) return 'changed';
     pub.frozen_at = null;
@@ -416,16 +449,15 @@ async function holdBack(ctx: Ctx, L: Loaded): Promise<string | null> {
         await commit(ctx.db, L.w, [pub.status], { next_run_at: minDate(addSeconds(now, TIMING.dependencyRecheckSeconds), addSeconds(deadline, 1)) });
         return 'waiting-dependency';
       }
-      const why = gone
-        ? `The publication it depends on is ${dep.status === 'on_hold' ? 'on hold' : dep.status}, so this one was not published`
-        : 'The publication it depends on had not gone out by this one\'s hour, so this one was not published';
+      const whyText = gone ? msg('pub.hold.dependencyGone', { state: msg(`pubState.${dep.status}` as never) }) : msg('pub.hold.dependencyLate');
+      const why = englishOf(whyText);
       return ctx.db.tx(async (db) => {
         const ok = await commit(db, L.w, ['scheduled', 'preparing', 'ready'], {
-          status: 'on_hold', hold_reason: why, next_run_at: pub.held_on_network || pub.native_scheduled ? now : null,
+          status: 'on_hold', hold_reason: why, hold_reason_i18n: whyText, next_run_at: pub.held_on_network || pub.native_scheduled ? now : null,
         });
         if (!ok) return 'changed';
         await audit(db, null, L.brandId, 'publication.on_hold', 'publication', pub.id, { status: pub.status }, { reason: 'dependency', dependency_status: dep.status });
-        await notifyRoles(db, L.brandId, ['approver', 'admin'], 'publication.on_hold', { pieceId: L.pieceId, publicationId: pub.id, count: 1, reason: why }, null);
+        await notifyRoles(db, L.brandId, ['approver', 'admin'], 'publication.on_hold', { pieceId: L.pieceId, publicationId: pub.id, count: 1, reason: why, reason_i18n: whyText }, null);
         return 'held';
       });
     }
@@ -435,6 +467,11 @@ async function holdBack(ctx: Ctx, L: Loaded): Promise<string | null> {
 
 // ───────────────────────────── the steps ─────────────────────────────
 
+const cannotPublish = (network: string) => {
+  const text = msg('pub.cannotPublishTo', { network: networkName(network) });
+  return new ConnectorError('unsupported', englishOf(text), { text });
+};
+
 /**
  * Right before anything is sent to a network, the approval is checked again, from the stored files themselves, the same way
  * scheduling checks it: nothing goes out that is not approved, for this account, as it stands. If it no longer counts the post
@@ -442,15 +479,16 @@ async function holdBack(ctx: Ctx, L: Loaded): Promise<string | null> {
  */
 async function holdIfApprovalLapsed(ctx: Ctx, L: Loaded): Promise<string | null> {
   const eff = await effectiveApproval(ctx.db, L.pub.version_id);
-  let reason: string | null = null;
-  if (!eff.approved || !eff.accountIds.includes(L.pub.social_account_id)) reason = 'The approval behind this publication no longer counts';
-  else if (!(await storedFilesMatch(ctx, L.pub.version_id))) reason = 'The stored files no longer match the approved ones';
+  let reason: Localized | null = null;
+  if (!eff.approved || !eff.accountIds.includes(L.pub.social_account_id)) reason = msg('pub.hold.approvalLapsed');
+  else if (!(await storedFilesMatch(ctx, L.pub.version_id))) reason = msg('pub.hold.filesChanged');
   if (!reason) return null;
+  const lapsed = reason.code === 'pub.hold.approvalLapsed';
   return ctx.db.tx(async (db) => {
-    const held = await commit(db, L.w, ['scheduled', 'preparing', 'ready', 'publishing'], { status: 'on_hold', hold_reason: reason, next_run_at: ctx.now() });
+    const held = await commit(db, L.w, ['scheduled', 'preparing', 'ready', 'publishing'], { status: 'on_hold', hold_reason: englishOf(reason), hold_reason_i18n: reason, next_run_at: ctx.now() });
     if (!held) return 'changed';
-    await audit(db, null, L.brandId, 'publication.on_hold', 'publication', L.pub.id, null, { reason: reason === 'The approval behind this publication no longer counts' ? 'approval no longer counts' : 'stored files changed' });
-    await notifyRoles(db, L.brandId, ['approver', 'admin'], 'publication.on_hold', { pieceId: L.pieceId, count: 1 }, null);
+    await audit(db, null, L.brandId, 'publication.on_hold', 'publication', L.pub.id, null, { reason: lapsed ? 'approval no longer counts' : 'stored files changed' });
+    await notifyRoles(db, L.brandId, ['approver', 'admin'], 'publication.on_hold', { pieceId: L.pieceId, count: 1, reason: englishOf(reason), reason_i18n: reason }, null);
     return 'held';
   });
 }
@@ -459,16 +497,20 @@ async function prepare(ctx: Ctx, L: Loaded): Promise<string> {
   const { pub, connector, account } = L;
   const now = ctx.now();
   const scheduled = new Date(pub.scheduled_at);
-  if (!connector) return onError(ctx, L, 'prepare', new ConnectorError('unsupported', `This server cannot publish to ${account.network}`));
+  if (!connector) return onError(ctx, L, 'prepare', cannotPublish(account.network));
   if (now.getTime() > scheduled.getTime() + L.toleranceMs) {
-    return fail(ctx, L, 'missed_window', `It was due ${scheduled.toISOString()} and could not be prepared in time, so it was not published late.`);
+    return fail(ctx, L, 'missed_window', msg('pub.notPreparedInTime', { at: scheduled.toISOString() }));
   }
   const lapsed = await holdIfApprovalLapsed(ctx, L);
   if (lapsed) return lapsed;
   try {
     const input = await inputFor(ctx, L, true);
     const errors = connector.validate(input, account).filter((i) => i.severity === 'error');
-    if (errors.length) throw new ConnectorError('file_rejected', errors.map((i) => i.message).join(' '));
+    if (errors.length) {
+      // What is kept is each issue's code, so the reason reads in whoever looks at it later's language; the English for the record.
+      const text = errors.map(issueText);
+      throw new ConnectorError('file_rejected', englishOf(text), { text });
+    }
     const r = await connector.prepare(input, account, pub.handle ?? {}, connectorEnv(ctx, account.id, (h) => saveHandle(ctx, L, h, 'prepare')));
     // Whatever the connector made may be held by the network until it is taken down (a Facebook video still processing, say).
     const holds = !!r.nativeScheduled || (!!connector.discard && nonEmpty(r.handle));
@@ -504,20 +546,25 @@ async function takeDownLater(ctx: Ctx, L: Loaded, handle: Handle, native = false
 
 /**
  * Sends the post. `resumed` is a pass that finds it already publishing: an earlier one began sending and did not finish (the worker
- * died, or the network failed). If the connector recorded progress then, the network may have the post, so it is finished through
- * the connector's own recovery (which never posts twice) even past the tolerance: that is the end of a send that began on time, not
- * a late one. If it recorded none, the usual rule applies, and the team is told it could not be confirmed.
+ * died, or the network failed).
+ *
+ * Before any repeated send (a resumed pass, or a retry of one that had begun), the connector is asked to look for the post an earlier
+ * try may have made, without sending anything (`find`). If it is there, the send is finished from it (its link, its first comment) and
+ * never made again, even past the tolerance: that is the end of a send that began on time. If the network says it is not there, it is
+ * sent within the tolerance and not at all past it: a post is never sent late. A connector that cannot look relies on what it recorded,
+ * as before; with nothing recorded, the usual rule applies, and the team is told it could not be confirmed.
  */
 async function publish(ctx: Ctx, L: Loaded, resumed: boolean): Promise<string> {
   const { pub, connector, account } = L;
   const now = ctx.now();
   const scheduled = new Date(pub.scheduled_at);
-  if (!connector) return onError(ctx, L, 'publish', new ConnectorError('unsupported', `This server cannot publish to ${account.network}`));
+  if (!connector) return onError(ctx, L, 'publish', cannotPublish(account.network));
   const progressed = !!pub.publish_progress_at;
+  const late = !pub.native_scheduled && now.getTime() > scheduled.getTime() + L.toleranceMs;
   // A post the network holds goes out by itself even if we were down. One that we publish ourselves is not sent late.
-  if (!pub.native_scheduled && !progressed && now.getTime() > scheduled.getTime() + L.toleranceMs) {
-    const late = `It was due ${scheduled.toISOString()} and the app was not able to publish it within ${Math.round(L.toleranceMs / 60000)} minutes, so it was not sent late.`;
-    return fail(ctx, L, 'missed_window', resumed ? `${late} Publishing had begun and was interrupted before anything was recorded: check ${account.network} in case it went out.` : late);
+  if (late && !progressed) {
+    const notSent = msg('pub.notSentLate', { at: scheduled.toISOString(), minutes: Math.round(L.toleranceMs / 60000) });
+    return fail(ctx, L, 'missed_window', resumed ? [notSent, msg('pub.interrupted', { network: networkName(account.network) })] : notSent);
   }
   // A post the network is holding was checked when it was handed over, and a later change takes it down (versions.ts). A send that
   // had begun is finished as it was approved then, like one that is going out at the moment a new version arrives.
@@ -527,12 +574,25 @@ async function publish(ctx: Ctx, L: Loaded, resumed: boolean): Promise<string> {
   }
   try {
     const input = await inputFor(ctx, L, true);
-    const out = await connector.publish(input, account, pub.handle ?? {}, connectorEnv(ctx, account.id, (h) => saveHandle(ctx, L, h, 'publish')));
-    await record(ctx, L, 'publish', 'ok', { detail: { externalId: out.externalId, ...(progressed ? { recovered: true } : {}) } });
+    let handle: Handle = pub.handle ?? {};
+    let found = false;
+    if (connector.find && (resumed || progressed)) {
+      const there = await connector.find(input, account, handle, connectorEnv(ctx, account.id));
+      if (there) {
+        found = !!there.recovered;
+        handle = there;
+        await saveHandle(ctx, L, handle, 'publish');
+      } else if (late) {
+        // The network was asked and does not have it: it is not sent now, after its hour.
+        return await fail(ctx, L, 'missed_window', msg('pub.notFoundNotLate', { at: scheduled.toISOString(), network: networkName(account.network) }), { checked: true });
+      }
+    }
+    const out = await connector.publish(input, account, handle, connectorEnv(ctx, account.id, (h) => saveHandle(ctx, L, h, 'publish')));
+    await record(ctx, L, 'publish', 'ok', { detail: { externalId: out.externalId, ...(progressed || found ? { recovered: true } : {}), ...(found ? { found: true } : {}) } });
     return await ctx.db.tx(async (db) => {
       const ok = await commit(db, L.w, ['publishing'], {
         status: 'published', external_id: out.externalId, url: out.url ?? null, published_at: now, attempts: 0, verify_attempts: 0,
-        visibility: null, last_error: null, last_error_class: null, next_run_at: now,
+        visibility: null, last_error: null, last_error_i18n: null, last_error_class: null, next_run_at: now,
       });
       if (!ok) return 'changed';
       await audit(db, null, L.brandId, 'publication.published', 'publication', pub.id, { status: 'publishing' }, { externalId: out.externalId, url: out.url ?? null });
@@ -544,6 +604,20 @@ async function publish(ctx: Ctx, L: Loaded, resumed: boolean): Promise<string> {
   }
 }
 
+/**
+ * What people are told when a post goes out, beyond that it did: a note from the network's check (a refused first comment, on
+ * Facebook), or a first comment that the send itself could not post (the other networks), so it reaches people and not only the history.
+ */
+function publishedNote(L: Loaded, res: VerifyResult, handle: Handle): { message?: string; message_i18n?: Text } {
+  if (res.noteText) return { message: res.note ?? englishOf(res.noteText), message_i18n: res.noteText };
+  const refused = typeof handle.firstCommentError === 'string' && handle.firstCommentError ? handle.firstCommentError : null;
+  if (refused && (!res.note || res.note === refused)) {
+    const text = (handle.firstCommentErrorText as Localized | undefined) ?? msg('pub.firstComment.refused', { network: networkName(L.account.network), error: refused });
+    return { message: englishOf(text), message_i18n: text };
+  }
+  return res.note ? { message: res.note } : {};
+}
+
 async function verify(ctx: Ctx, L: Loaded): Promise<string> {
   const { pub, connector, account } = L;
   const now = ctx.now();
@@ -553,10 +627,12 @@ async function verify(ctx: Ctx, L: Loaded): Promise<string> {
   }
   try {
     const res = await connector.verify(account, pub.external_id, pub.handle ?? {}, connectorEnv(ctx, account.id, (h) => saveHandle(ctx, L, h, 'verify')));
-    await record(ctx, L, 'verify', 'ok', { detail: { visibility: res.visibility, note: res.note } });
+    await record(ctx, L, 'verify', 'ok', { detail: { visibility: res.visibility, note: res.note, ...(res.noteText ? { note_i18n: res.noteText } : {}), ...(res.retryAfterSec ? { retryAfterSec: res.retryAfterSec } : {}) } });
     const handle = res.handle ? { ...(pub.handle ?? {}), ...res.handle } : (pub.handle ?? {});
     const checks = (pub.verify_attempts as number) + 1;
-    const base: Patch = { handle, url: res.url ?? pub.url, visibility: res.visibility, verify_attempts: checks, last_error: null, last_error_class: null };
+    const base: Patch = { handle, url: res.url ?? pub.url, visibility: res.visibility, verify_attempts: checks, last_error: null, last_error_i18n: null, last_error_class: null };
+    // The network's own pace, when it gives one (YouTube, a video whose time has come but is not public yet), within reason.
+    const hint = res.retryAfterSec && res.retryAfterSec > 0 ? Math.min(res.retryAfterSec, 3600) : null;
     const scheduled = new Date(pub.scheduled_at);
     const sameAsBefore = pub.visibility === res.visibility;
 
@@ -568,7 +644,7 @@ async function verify(ctx: Ctx, L: Loaded): Promise<string> {
           await scheduleSnapshots(db, { id: pub.id, placement: pub.placement, published_at: pub.published_at });
           if (!sameAsBefore) {
             await audit(db, null, L.brandId, 'publication.live', 'publication', pub.id, { visibility: pub.visibility }, { visibility: 'public', url: res.url ?? pub.url });
-            await tell(db, L, 'publication.published', { url: res.url ?? pub.url });
+            await tell(db, L, 'publication.published', { url: res.url ?? pub.url, ...publishedNote(L, res, handle) });
             await emitPublication(ctx, db, L.brandId, pub.id, 'publication.published');
           }
           return 'public';
@@ -585,9 +661,9 @@ async function verify(ctx: Ctx, L: Loaded): Promise<string> {
         });
       case 'scheduled': {
         if (now.getTime() > scheduled.getTime() + 30 * 60_000) {
-          return fail(ctx, L, 'unknown', 'The network still shows this post as scheduled, long after its hour.');
+          return fail(ctx, L, 'unknown', msg('pub.verify.stillScheduled'));
         }
-        const next = new Date(Math.max(scheduled.getTime() + 30_000, now.getTime() + TIMING.verifyEverySeconds * 1000));
+        const next = new Date(Math.max(scheduled.getTime() + 30_000, now.getTime() + (hint ?? TIMING.verifyEverySeconds) * 1000));
         await commit(ctx.db, L.w, ['published'], { ...base, next_run_at: next });
         return 'scheduled';
       }
@@ -597,11 +673,12 @@ async function verify(ctx: Ctx, L: Loaded): Promise<string> {
         if (checks > limit) {
           return await ctx.db.tx(async (db) => {
             if (!(await commit(db, L.w, ['published'], { ...base, next_run_at: null }))) return 'changed';
-            await tell(db, L, 'publication.failed', { errorClass: 'unknown', message: res.visibility === 'unknown' ? 'The network no longer shows this post. Check it there.' : 'The network is still processing this post after an hour. Check it there.' });
+            const told = msg(res.visibility === 'unknown' ? 'pub.verify.gone' : 'pub.verify.stillProcessing');
+            await tell(db, L, 'publication.failed', { errorClass: 'unknown', message: englishOf(told), message_i18n: told });
             return 'gave-up-verifying';
           });
         }
-        await commit(ctx.db, L.w, ['published'], { ...base, next_run_at: addSeconds(now, res.visibility === 'unknown' ? 300 : TIMING.verifyEverySeconds) });
+        await commit(ctx.db, L.w, ['published'], { ...base, next_run_at: addSeconds(now, hint ?? (res.visibility === 'unknown' ? 300 : TIMING.verifyEverySeconds)) });
         return res.visibility;
       }
     }
@@ -784,19 +861,21 @@ export async function planPublication(
   const row = await ctx.db.one('select id, network, status, token_encrypted from social_account where id = $1 and brand_id = $2', [d.accountId, d.brandId]);
   const account = await loadConnectorAccount(ctx, d.accountId);
   const connector = row ? ctx.connectors.connector(row.network) : null;
-  if (!row || !account) return { automated: false, placement: null, placements: [], issues: [], manualReason: 'Unknown account' };
+  // Said to the person scheduling, in the language of their request.
+  if (!row || !account) return { automated: false, placement: null, placements: [], issues: [], manualReason: tr('pub.manual.unknownAccount') };
 
-  const placements = connector ? connector.capabilities(account).placements.map((p) => ({ id: p.id, label: p.label })) : [];
-  if (d.mode === 'manual') return { automated: false, placement: null, placements, issues: [], manualReason: 'Chosen to be published by hand' };
-  if (!connector) return { automated: false, placement: null, placements, issues: [], manualReason: 'This account is published by hand: it is not connected to its network' };
+  // Their names in the language of the person scheduling.
+  const placements = connector ? localizePlacements(account.network, connector.capabilities(account).placements.map((p) => ({ id: p.id, label: p.label }))) : [];
+  if (d.mode === 'manual') return { automated: false, placement: null, placements, issues: [], manualReason: tr('pub.manual.chosen') };
+  if (!connector) return { automated: false, placement: null, placements, issues: [], manualReason: tr('pub.manual.notConnectedHere') };
   if (row.status !== 'active' || !row.token_encrypted) {
-    return { automated: false, placement: null, placements, issues: [], manualReason: row.status === 'reconnect_required' ? 'This account has to be reconnected before the app can publish to it' : 'This account is not connected to its network' };
+    return { automated: false, placement: null, placements, issues: [], manualReason: tr(row.status === 'reconnect_required' ? 'pub.manual.reconnect' : 'pub.manual.notConnected') };
   }
 
   const assets = await ctx.db.query('select kind from asset where version_id = $1', [d.versionId]);
   const placement = d.placement ?? connector.defaultPlacement({ pieceKind: d.piece.kind, format: d.variantFormat, media: assets.map((a) => ({ kind: a.kind })) });
   if (!placement) {
-    return { automated: false, placement: null, placements, issues: [], manualReason: `${account.network} cannot publish this kind of content through its API, so a person has to` };
+    return { automated: false, placement: null, placements, issues: [], manualReason: tr('pub.manual.cannotKind', { network: networkName(account.network) }) };
   }
   const input = await buildInput(ctx, {
     publicationId: '', brandId: d.brandId, versionId: d.versionId, placement, title: d.title ?? d.piece.title, text: d.text, firstComment: d.firstComment,

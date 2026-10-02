@@ -503,6 +503,39 @@ describe('Facebook: the network holds the post', () => {
   });
 });
 
+describe('what people are told when a post goes out', () => {
+  it('says a refused first comment in the "published" notification, not only in the history', async () => {
+    const s = await scheduled({ account: ig, firstComment: 'Link in bio' });
+    env.meta.processingPolls = 0;
+    env.meta.fail((c) => /^m-\d+\/comments$/.test(c.path) && c.method === 'POST', env.meta.err(100, '(#100) Comments are turned off for this post'), 400);
+    env.clock.set(new Date(s.pub.prepare_at));
+    await env.settle();
+    env.clock.set(new Date(s.pub.scheduled_at));
+    await env.settle();
+    expect(await row(s.pub.id)).toMatchObject({ status: 'published', visibility: 'public' });
+    const told = await env.db.query(`select payload from notification where kind = 'publication.published' and payload->>'publicationId' = $1`, [s.pub.id]);
+    expect(told.length).toBeGreaterThan(0);
+    expect(told[0]!.payload.message).toBe('Instagram refused the first comment: (#100) Comments are turned off for this post. Post it by hand.');
+    expect(told[0]!.payload.message_i18n).toMatchObject({ code: 'pub.firstComment.refused' });
+    // And it is in the email, in the reader's language.
+    const { sendPendingEmails } = await import('../src/background.js');
+    env.mails.length = 0;
+    while ((await sendPendingEmails(env.ctx)) > 0); // everything earlier tests left unsent goes first
+    expect(env.mails.filter((m) => m.subject.includes('A post went out')).map((m) => m.text).join('\n---\n')).toContain('Instagram refused the first comment');
+  });
+
+  it('says nothing more when everything went out', async () => {
+    const s = await scheduled({ account: ig });
+    env.meta.processingPolls = 0;
+    env.clock.set(new Date(s.pub.prepare_at));
+    await env.settle();
+    env.clock.set(new Date(s.pub.scheduled_at));
+    await env.settle();
+    const told = await env.db.query(`select payload from notification where kind = 'publication.published' and payload->>'publicationId' = $1`, [s.pub.id]);
+    expect(told[0]!.payload.message).toBeUndefined();
+  });
+});
+
 describe('YouTube: private until the audit passes', () => {
   const yFile = [{ name: 'clip.mp4', mime: 'video/mp4', kind: 'video' }];
 
@@ -541,6 +574,32 @@ describe('YouTube: private until the audit passes', () => {
     env.clock.set(new Date(new Date(s.pub.scheduled_at).getTime() + 60_000));
     await env.settle();
     expect(await row(s.pub.id)).toMatchObject({ status: 'published', visibility: 'public' });
+  });
+
+  it('looks again at a video YouTube has not made public yet with growing waits, not every minute', async () => {
+    env.google.audited = true;
+    env.google.publishDelayMs = 30 * MIN; // YouTube takes half an hour past the time
+    await env.db.query(`update social_account set provider_data = provider_data || '{"audited": true}' where id = $1`, [yt]);
+    try {
+      const s = await scheduled({ account: yt, kind: 'video', format: '16:9', files: yFile });
+      env.clock.set(new Date(s.pub.prepare_at));
+      await env.settle();
+      env.clock.set(new Date(new Date(s.pub.scheduled_at).getTime() + 20_000));
+      await env.settle();
+      const gaps: number[] = [];
+      for (let i = 0; i < 10; i++) {
+        const r = await row(s.pub.id);
+        if (r.visibility === 'public' || !r.next_run_at) break;
+        gaps.push(Math.round((new Date(r.next_run_at).getTime() - env.clock.now().getTime()) / 1000));
+        env.clock.set(new Date(r.next_run_at));
+        await env.settle();
+      }
+      expect(gaps).toEqual([60, 120, 300, 600, 900]);
+      expect(await row(s.pub.id)).toMatchObject({ status: 'published', visibility: 'public' });
+    } finally {
+      env.google.publishDelayMs = 0;
+      await env.db.query(`update social_account set provider_data = provider_data || '{"audited": false}' where id = $1`, [yt]);
+    }
   });
 
   it('refreshes an expired access token before uploading, once, and stores the new one', async () => {

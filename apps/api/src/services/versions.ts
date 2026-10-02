@@ -6,6 +6,7 @@ import type { Queryable } from '../db.js';
 import { fingerprintOf } from '../domain/fingerprint.js';
 import type { ProbeResult } from '../media/ffmpeg.js';
 import { badRequest, conflict, forbidden } from '../errors.js';
+import { msg, type Key } from '../i18n/index.js';
 import { audit } from './audit.js';
 import { loadVariant, loadVersion } from './loaders.js';
 import { notifyRoles } from './notify.js';
@@ -70,7 +71,7 @@ export async function requestUploads(ctx: Ctx, p: Principal, variantId: string, 
   const input = uploadsInput.parse(raw);
   const variant = await loadVariant(ctx.db, variantId);
   await authorize(ctx.db, p, variant.brand_id, 'version.upload');
-  if (variant.piece_discarded) throw conflict('piece_discarded', 'The piece is discarded');
+  if (variant.piece_discarded) throw conflict('piece_discarded', msg('error.pieceDiscarded'));
   const a = actorCols(p);
   return ctx.db.tx(async (db) => {
     // Big files wait on this server's disk until they are whole, so what a brand may have waiting there is capped. One request at a
@@ -101,9 +102,7 @@ export async function requestUploads(ctx: Ctx, p: Principal, variantId: string, 
         const maxBytes = maxPendingBytes(ctx);
         if (staged + f.bytes > maxBytes) {
           const gb = (n: number) => `${(n / 1024 ** 3).toFixed(1)} GB`;
-          throw conflict('staging_full',
-            `This brand already has ${gb(staged)} of unfinished uploads waiting on the server (at most ${gb(maxBytes)}). Finish or abandon those first: an unfinished upload is dropped a day after its last piece.`,
-            { pendingBytes: staged, maxBytes });
+          throw conflict('staging_full', msg('error.version.stagingFull', { staged: gb(staged), max: gb(maxBytes) }), { pendingBytes: staged, maxBytes });
         }
         staged += f.bytes;
       }
@@ -136,21 +135,21 @@ interface Resolved {
 export function checkComposition(format: string, files: { kind: AssetKind; position: number }[]) {
   const count = (k: AssetKind) => files.filter((f) => f.kind === k).length;
   const primary = files.filter((f) => f.kind === 'video' || f.kind === 'image');
-  const fail = (m: string) => badRequest('invalid_files', m);
-  if (new Set(primary.map((f) => f.position)).size !== primary.length) throw fail('Two main files cannot take the same position');
-  if (count('cover') > 1) throw fail('There can be only one cover');
-  if (count('subtitles') > 10) throw fail('Too many subtitle files');
-  if (count('subtitles') > 0 && count('video') === 0) throw fail('Subtitles only apply to a video');
+  const fail = (key: Key) => badRequest('invalid_files', msg(key));
+  if (new Set(primary.map((f) => f.position)).size !== primary.length) throw fail('error.files.samePosition');
+  if (count('cover') > 1) throw fail('error.files.oneCover');
+  if (count('subtitles') > 10) throw fail('error.files.tooManySubtitles');
+  if (count('subtitles') > 0 && count('video') === 0) throw fail('error.files.subtitlesNeedVideo');
   if (format === 'document') {
-    if (count('pdf') !== 1 || primary.length > 0) throw fail('A document variant takes exactly one PDF');
+    if (count('pdf') !== 1 || primary.length > 0) throw fail('error.files.documentOnePdf');
   } else if (format === 'carousel') {
-    if (count('pdf') > 0) throw fail('A carousel takes no PDF');
-    if (primary.length < 2 || primary.length > 20) throw fail('A carousel takes between 2 and 20 images or videos');
+    if (count('pdf') > 0) throw fail('error.files.carouselNoPdf');
+    if (primary.length < 2 || primary.length > 20) throw fail('error.files.carouselCount');
   } else {
-    if (count('pdf') > 0) throw fail('This variant takes no PDF');
-    if (primary.length !== 1) throw fail('This variant takes exactly one image or video');
+    if (count('pdf') > 0) throw fail('error.files.noPdf');
+    if (primary.length !== 1) throw fail('error.files.exactlyOne');
   }
-  if (count('cover') > 0 && count('video') === 0) throw fail('A cover only applies to a video');
+  if (count('cover') > 0 && count('video') === 0) throw fail('error.files.coverNeedsVideo');
 }
 
 /**
@@ -165,14 +164,14 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
   const a = actorCols(p);
 
   const ids = input.files.map((f) => f.uploadId);
-  if (new Set(ids).size !== ids.length) throw badRequest('invalid_files', 'An uploaded file cannot be used twice');
+  if (new Set(ids).size !== ids.length) throw badRequest('invalid_files', msg('error.files.usedTwice'));
   const uploads = await ctx.db.query(
     `select * from upload where id = any($1) and variant_id = $2 and consumed_at is null
        and created_by_user is not distinct from $3 and created_by_token is not distinct from $4`,
     [ids, variantId, a.user, a.token],
   );
-  if (uploads.length !== ids.length) throw badRequest('invalid_upload', 'An upload does not exist, was already used or is not yours');
-  if (uploads.some((u) => new Date(u.expires_at) < new Date())) throw badRequest('upload_expired', 'An upload has expired: request the URLs again');
+  if (uploads.length !== ids.length) throw badRequest('invalid_upload', msg('error.files.invalidUpload'));
+  if (uploads.some((u) => new Date(u.expires_at) < new Date())) throw badRequest('upload_expired', msg('error.files.uploadExpired'));
 
   const files = input.files.map((f) => ({ kind: f.kind as AssetKind, position: f.position }));
   checkComposition(variant.format, files);
@@ -180,11 +179,11 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
   const resolved: Resolved[] = [];
   for (const f of input.files) {
     const u = uploads.find((x) => x.id === f.uploadId)!;
-    if (!MIME_OK[f.kind].test(u.mime)) throw badRequest('invalid_files', `${u.name}: type ${u.mime} is not valid as ${f.kind}`);
+    if (!MIME_OK[f.kind].test(u.mime)) throw badRequest('invalid_files', msg('error.files.wrongType', { name: u.name, mime: u.mime, kind: msg(`error.assetKind.${f.kind}` as Key) }));
     const stored = await ctx.storage.stat(u.storage_key);
-    if (!stored) throw badRequest('upload_missing', `${u.name}: the file has not been uploaded`);
+    if (!stored) throw badRequest('upload_missing', msg('error.files.notUploaded', { name: u.name }));
     if (stored.bytes !== u.bytes || stored.sha256 !== u.sha256) {
-      throw badRequest('upload_mismatch', `${u.name}: what was uploaded does not match the declared size and hash`);
+      throw badRequest('upload_mismatch', msg('error.files.mismatch', { name: u.name }));
     }
     const measurable = f.kind === 'video' || f.kind === 'image' || f.kind === 'cover';
     const meta = measurable
@@ -198,21 +197,21 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
   return ctx.db.tx(async (db) => {
     await db.query('select 1 from variant where id = $1 for update', [variantId]);
     const fresh = await loadVariant(db, variantId);
-    if (fresh.piece_discarded) throw conflict('piece_discarded', 'The piece is discarded');
+    if (fresh.piece_discarded) throw conflict('piece_discarded', msg('error.pieceDiscarded'));
     // A token is the agent's hand: it uploads only inside a run it started on this piece (or, for a run that makes something new, on
     // the piece it made during that run), so the round cap, the budgets, the longest run and one run per piece hold for every upload.
     if (a.token && !(await runCovering(db, a.token, fresh.piece_id, ctx.now()))) {
       throw conflict('no_run', 'A producer token uploads a version only inside a run it started on this piece and that is still running: start one first (POST /pieces/:id/agent-runs)');
     }
     const still = await db.query('select id from upload where id = any($1) and consumed_at is null for update', [ids]);
-    if (still.length !== ids.length) throw conflict('upload_consumed', 'An upload was already used in another version');
+    if (still.length !== ids.length) throw conflict('upload_consumed', msg('error.files.uploadConsumed'));
 
     const last = await db.one<{ number: number; fingerprint: string }>(
       'select number, fingerprint from version where variant_id = $1 order by number desc limit 1',
       [variantId],
     );
     if (last && last.fingerprint === fingerprint) {
-      throw conflict('identical_version', 'The files are identical to those of the previous version');
+      throw conflict('identical_version', msg('error.files.identical'));
     }
     const number = (last?.number ?? 0) + 1;
 
@@ -225,6 +224,7 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
     // being published this very moment cannot be stopped and goes out as approved.
     const held = await db.query(
       `update publication set status = 'on_hold', updated_at = now(), hold_reason = 'A new version is awaiting approval',
+         hold_reason_i18n = '{"code":"pub.hold.newVersion"}',
          next_run_at = case when native_scheduled or held_on_network then $2::timestamptz else null end
        where variant_id = $1 and status in ('scheduled','awaiting_reapproval','preparing','ready') returning id`,
       [variantId, ctx.now()],
@@ -249,7 +249,7 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
       // An agent leaves the comments marked for people alone, even if it claims to have fixed them.
       if (a.token) {
         const mine = await db.one('select 1 from comment where id = any($1) and people_only', [input.resolves]);
-        if (mine) throw badRequest('people_only', 'A comment marked for people only cannot be resolved by an agent');
+        if (mine) throw badRequest('people_only', msg('error.files.peopleOnlyComment'));
       }
       const done = await db.query(
         `update comment set status = 'resolved', resolved_in_version_id = $2, resolved_by_user_id = $3, resolved_at = now()
@@ -258,7 +258,7 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
         [input.resolves, version.id, a.user, variantId],
       );
       if (done.length !== new Set(input.resolves).size) {
-        throw badRequest('invalid_comment', 'A comment to resolve does not exist, is not on this variant or was already resolved');
+        throw badRequest('invalid_comment', msg('error.files.commentToResolve'));
       }
     }
 
