@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { api, type Anchor, type CommentThread, type SubtitleCue, type SubtitleTrack } from '../api';
-import { fmtTime } from '../lib/format';
+import { t } from '../i18n';
 import { playhead } from '../lib/playhead';
 import { ErrorBox } from './ui';
+import { timecode } from './viewer';
 
 /** The line on screen at a moment: the last that has started and not ended, as the server's cueAt does. */
 function currentCue(cues: SubtitleCue[], t: number): number {
@@ -56,35 +57,53 @@ export function SubtitlePanel({ versionId, threads, canAnnotate, firstVideoPosit
   if (error) return <ErrorBox error={error} />;
   if (!track) return null;
   return (
-    <section className="card stack" aria-label="Subtitles" style={{ gap: '.5rem' }}>
-      <div className="row-between">
-        <h3>Subtitles</h3>
+    <section className="rv-subs" aria-label={t('review.subs.title')}>
+      <header className="rv-subs-head">
+        <h2>{t('review.subs.title')}</h2>
+        <span className="muted small mono">{t('review.subs.lines', { count: cues.length })}</span>
+        <span className="grow" />
         {tracks.length > 1 && (
-          <select aria-label="Subtitle file" value={track.position} onChange={(e) => setWhich(tracks.findIndex((t) => t.position === Number(e.target.value)))} style={{ width: 'auto' }}>
-            {tracks.map((t) => <option key={t.assetId} value={t.position}>{t.name}</option>)}
+          <select
+            className="rv-select"
+            aria-label={t('review.subs.file')}
+            value={track.position}
+            onChange={(e) => setWhich(tracks.findIndex((x) => x.position === Number(e.target.value)))}
+          >
+            {tracks.map((x) => <option key={x.assetId} value={x.position}>{x.name}</option>)}
           </select>
         )}
-      </div>
-      {track.problem && <div className="notice notice-warn">{track.name}: {track.problem}.</div>}
-      {track.skipped > 0 && <p className="muted small" style={{ margin: 0 }}>{track.skipped} block{track.skipped === 1 ? '' : 's'} of the file could not be read and are not shown.</p>}
-      {track.truncated && <p className="muted small" style={{ margin: 0 }}>Only the first lines of this long file are shown.</p>}
+      </header>
+      {track.problem && <div className="notice notice-warn">{t('review.subs.problem', { name: track.name, problem: track.problem })}</div>}
+      {track.skipped > 0 && <p className="muted small">{t('review.subs.skipped', { count: track.skipped })}</p>}
+      {track.truncated && <p className="muted small">{t('review.subs.truncated')}</p>}
       {cues.length > 0 && (
-        <div ref={list} className="cue-list" role="list">
+        <div ref={list} className="cue-list rv-cues" role="list">
           {cues.map((c) => {
             const threadsHere = byCue.get(c.index) ?? [];
-            const open = threadsHere.filter((t) => t.status === 'open').length;
+            const open = threadsHere.filter((x) => x.status === 'open').length;
             return (
               <div key={c.index} role="listitem" data-cue={c.index} className={`cue ${now === c.index ? 'now' : ''}`}>
-                <button className="cue-time" onClick={() => onSeek(c.start, firstVideoPosition)} title="Go to this line">{fmtTime(c.start)}</button>
-                <span className="cue-text">{c.text || <span className="muted">(no words)</span>}</span>
+                <button type="button" className="cue-time" onClick={() => onSeek(c.start, firstVideoPosition)} title={t('review.subs.goTo')}>{timecode(c.start)}</button>
+                <span className="cue-text">{c.text || <span className="muted">{t('review.subs.noWords')}</span>}</span>
                 {threadsHere.length > 0 && (
-                  <button className={`chip ${open ? 'chip-changes_requested' : 'chip-approved'}`} onClick={() => onFocus(threadsHere[0]!.id)} title={`${threadsHere.length} comment${threadsHere.length === 1 ? '' : 's'} on this line`}>
+                  <button
+                    type="button"
+                    className={`rv-cue-count ${open ? 'open' : ''}`}
+                    onClick={() => onFocus(threadsHere[0]!.id)}
+                    title={t('review.subs.commentsOnLine', { count: threadsHere.length })}
+                    aria-label={t('review.subs.commentsOnLine', { count: threadsHere.length })}
+                  >
                     {threadsHere.length}
                   </button>
                 )}
                 {canAnnotate && (
-                  <button className="btn btn-small" aria-label={`Comment on line ${c.index + 1}`} onClick={() => onDraft({ type: 'time', t: c.start, t_end: c.end, track: track.position, cue: c.index, cue_text: c.text })}>
-                    Comment
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small rv-cue-add"
+                    aria-label={t('review.subs.commentLine', { n: c.index + 1 })}
+                    onClick={() => onDraft({ type: 'time', t: c.start, t_end: c.end, track: track.position, cue: c.index, cue_text: c.text })}
+                  >
+                    {t('review.subs.comment')}
                   </button>
                 )}
               </div>
