@@ -229,7 +229,9 @@
 .pb-row-act { grid-area: act; display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
 .pb-row-act .btn-small { min-height: 28px; height: 28px; padding: 0 10px; gap: 6px; font-size: .78125rem; }
 .pb-btn-ext { width: 12px; height: 12px; color: var(--muted); }
-.pb-row-more { width: 28px; height: 28px; color: var(--muted); }
+.pb-row-more { width: 28px; min-height: 28px; height: 28px; padding: 0; }
+.pb-row-more svg { width: 15px; height: 15px; }
+.pb-row-more[data-state='open'] { background: var(--control); color: var(--text); }
 .pb-row-more-gap { width: 28px; flex: none; }
 
 .pb-detail { padding: 0 12px 10px 52px; margin-top: -4px; min-width: 0; font-size: .75rem; }

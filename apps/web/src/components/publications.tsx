@@ -5,9 +5,9 @@ import { api, type Account, type AccountOptionsReply, type Attempt, type Calenda
 import { getLocale, t, type Key } from '../i18n';
 import { countHashtags, countLength, countMentions, truncatePreview } from '../lib/text';
 import { ERROR_CLASS_LABEL, fmtBytes, fmtDateTime, isoToZonedInput, NETWORK_LABEL, STEP_LABEL, VISIBILITY_LABEL, zonedToIso } from '../lib/format';
-import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, useConfirm, useToast } from './ui';
-import { MoreMenu, type MenuEntry } from './MoreMenu';
+import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, Menu, MenuItem, MenuSeparator, Tip, useConfirm, useToast } from './ui';
 import { defaultValues, NetMark, NetworkOptions, sendableOptions, type OptionValues } from './NetworkOptions';
+import { Icon as UiIcon, type IconName } from './icons';
 import { PrizeDialog } from './PrizeDialog';
 import '../styles/publications.css';
 
@@ -872,6 +872,8 @@ export interface ListVariant {
 }
 
 type Group = 'attention' | 'upcoming' | 'published' | 'cancelled';
+/** One line of a row's "⋯" menu, or the line between its actions and cancelling. */
+type Entry = { sep: true } | { sep?: false; label: string; icon: IconName; danger?: boolean; onSelect: () => void };
 type Tone = 'bad' | 'warn' | 'info';
 interface Detail { tone: Tone; summary: string; text?: string }
 
@@ -1018,31 +1020,33 @@ export function PublicationList({ pubs, variants = [], brandId, zone, brand, can
       primary = <button type="button" className="btn btn-small" onClick={() => setPack(p.id)}>{t('publications.list.publish')}</button>;
     } else if (canSchedule && p.status === 'awaiting_reapproval') {
       primaryKey = 'confirm';
-      primary = <button type="button" className="btn btn-small" disabled={act.isPending} onClick={() => act.mutate({ id: p.id, action: 'confirm' })} title={me ? t('publications.list.confirmHint', { email: me }) : undefined}>{t('publications.list.confirm')}</button>;
+      const button = <button type="button" className="btn btn-small" disabled={act.isPending} onClick={() => act.mutate({ id: p.id, action: 'confirm' })}>{t('publications.list.confirm')}</button>;
+      primary = me ? <Tip label={t('publications.list.confirmHint', { email: me })}>{button}</Tip> : button;
     } else if (canSchedule && p.status === 'on_hold') {
       primaryKey = 'reschedule';
       primary = <button type="button" className="btn btn-small" onClick={() => setResched(p)}>{t('publications.list.reschedule')}</button>;
     } else if (p.url && p.status === 'published') {
       primaryKey = 'open';
       primary = (
-        <a className="btn btn-small" href={p.url} target="_blank" rel="noreferrer" title={t('publications.list.openHint', { network: netName(p.network) })}>
-          {t('publications.list.open')}<Icon d={ICON.external} className="pb-icon pb-btn-ext" />
-        </a>
+        <Tip label={t('publications.list.openHint', { network: netName(p.network) })}>
+          <a className="btn btn-small" href={p.url} target="_blank" rel="noreferrer">
+            {t('publications.list.open')}<Icon d={ICON.external} className="pb-icon pb-btn-ext" />
+          </a>
+        </Tip>
       );
     }
 
-    const items: MenuEntry[] = [];
-    if (p.url && primaryKey !== 'open') items.push({ label: t('publications.list.open'), icon: 'external', href: p.url });
-    if (canSchedule && p.status === 'scheduled' && p.manual && primaryKey !== 'publish') items.push({ label: t('publications.list.publish'), icon: 'send', hint: t('publications.list.publishHint'), onSelect: () => setPack(p.id) });
+    const items: Entry[] = [];
+    if (p.url && primaryKey !== 'open') items.push({ label: t('publications.list.open'), icon: 'external', onSelect: () => window.open(p.url!, '_blank', 'noopener,noreferrer') });
+    if (canSchedule && p.status === 'scheduled' && p.manual && primaryKey !== 'publish') items.push({ label: t('publications.list.publish'), icon: 'send', onSelect: () => setPack(p.id) });
     if (canSchedule && p.status === 'scheduled') items.push({ label: t('publications.list.move'), icon: 'calendar', onSelect: () => setMove(p) });
     if (canSchedule && p.status === 'published' && !p.manual && p.visibility === 'private') {
-      items.push({ label: t('publications.list.recheck'), icon: 'refresh', hint: t('publications.list.recheckHint'), onSelect: () => act.mutate({ id: p.id, action: 'recheck' }) });
+      items.push({ label: t('publications.list.recheck'), icon: 'refresh', onSelect: () => act.mutate({ id: p.id, action: 'recheck' }) });
     }
     if (canSchedule && !p.manual && (p.status === 'failed' || (p.status === 'scheduled' && !p.native_scheduled))) {
       items.push({
         label: t('publications.list.handOver'),
         icon: 'hand',
-        hint: t('publications.list.handOverHint'),
         onSelect: async () => {
           const ok = await ask({ title: t('publications.list.handOverTitle'), text: t('publications.list.handOverText', { account: p.account_name, network: netName(p.network) }), confirmLabel: t('publications.list.handOverGo') });
           if (ok) act.mutate({ id: p.id, action: 'hand-over' });
@@ -1052,7 +1056,7 @@ export function PublicationList({ pubs, variants = [], brandId, zone, brand, can
     if (brand?.prizes?.enabled && canSchedule && ['scheduled', 'preparing', 'ready', 'publishing', 'published', 'awaiting_reapproval', 'on_hold'].includes(p.status)) {
       items.push({ label: t('publications.list.prize'), icon: 'gift', onSelect: () => setPrize(p) });
     }
-    if (!p.manual) items.push({ label: t('publications.list.history'), icon: 'history', hint: t('publications.list.historyHint'), onSelect: () => setAttempts(p.id) });
+    if (!p.manual) items.push({ label: t('publications.list.history'), icon: 'history', onSelect: () => setAttempts(p.id) });
     if (canSchedule && pending) {
       items.push({ sep: true });
       items.push({
@@ -1086,14 +1090,31 @@ export function PublicationList({ pubs, variants = [], brandId, zone, brand, can
           <time className="pb-row-when" dateTime={at} title={fmtDateTime(at, zone)}>{shortWhen(at, zone)}</time>
           <span className="pb-row-state">
             {isPrivate ? <Chip state="on_hold" label={VISIBILITY_LABEL[p.visibility!] ?? p.visibility!} /> : <Chip state={p.status} />}
-            <span className="pb-row-mode" data-mode={p.manual ? 'manual' : 'auto'} title={p.manual ? t('publications.list.manualHint') : t('publications.list.autoHint')} aria-label={p.manual ? t('publications.mode.manual') : t('publications.mode.auto')} role="img">
-              <Icon d={p.manual ? ICON.hand : ICON.auto} />
-            </span>
+            <Tip label={p.manual ? t('publications.list.manualHint') : t('publications.list.autoHint')}>
+              <span className="pb-row-mode" data-mode={p.manual ? 'manual' : 'auto'} aria-label={p.manual ? t('publications.mode.manual') : t('publications.mode.auto')} role="img" tabIndex={0}>
+                <Icon d={p.manual ? ICON.hand : ICON.auto} />
+              </span>
+            </Tip>
           </span>
           <span className="pb-row-act">
             {primary}
             {items.length > 0 ? (
-              <MoreMenu items={items} label={t('publications.list.menu', { account: p.account_name })} className="mm-trigger pb-row-more" />
+              <Menu
+                align="end"
+                trigger={
+                  <button type="button" className="btn btn-ghost pb-row-more" aria-label={t('publications.list.menu', { account: p.account_name })}>
+                    <UiIcon name="more" />
+                  </button>
+                }
+              >
+                {items.map((it, i) =>
+                  it.sep ? (
+                    <MenuSeparator key={`sep-${i}`} />
+                  ) : (
+                    <MenuItem key={it.label} icon={it.icon} danger={it.danger} onSelect={it.onSelect}>{it.label}</MenuItem>
+                  ),
+                )}
+              </Menu>
             ) : (
               <span className="pb-row-more-gap" aria-hidden="true" />
             )}

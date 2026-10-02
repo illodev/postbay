@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
-import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Asset, type VersionDetail, type VersionSummary } from '../api';
 import { t, tMaybe } from '../i18n';
@@ -8,10 +8,13 @@ import { fmtDateTime, fmtDay, STATE_LABEL } from '../lib/format';
 import { useStableUrls } from '../lib/stableUrls';
 import { Avatar, displayName } from './Avatar';
 import { Icon, type IconName } from './icons';
-import { Chip, errorMessage, useToast } from './ui';
+import { Chip, errorMessage, Select, Tip, useToast } from './ui';
 import '../styles/piece.css';
 
 // ───────────────────────────── small shared helpers ─────────────────────────────
+
+/** The Select's value for "no campaign" (a Select value may not be empty). */
+const NO_CAMPAIGN = 'none';
 
 /** The format as a short tag: the ratio itself, or a word for the carousel and the document. */
 export const formatName = (format: string) => tMaybe(`piece.formatName.${format}`, format);
@@ -34,16 +37,14 @@ export interface HeroVariant {
   versions: VersionSummary[];
 }
 
-/** A small question mark that explains a field on hover or focus, in the app's own tooltip. */
-export function Tip({ text, label }: { text: string; label: string }) {
-  const id = useId();
+/** An ⓘ beside a field's name that explains it, in the app's tooltip. */
+export function InfoTip({ text, label }: { text: string; label: string }) {
   return (
-    <span className="pc-tip">
-      <button type="button" className="pc-tip-btn" aria-label={label} aria-describedby={id}>
+    <Tip label={<span className="pc-tip-text">{text}</span>}>
+      <button type="button" className="pc-tip-btn" aria-label={label}>
         <Icon name="info" />
       </button>
-      <span role="tooltip" id={id} className="pc-tip-body">{text}</span>
-    </span>
+    </Tip>
   );
 }
 
@@ -72,7 +73,6 @@ function StageVideo({ src, poster, label }: { src: string; poster: string; label
           type="button"
           className="pc-play"
           aria-label={t('piece.hero.play')}
-          title={t('piece.hero.play')}
           onClick={() => {
             setStarted(true);
             void ref.current?.play().catch(() => {});
@@ -102,12 +102,12 @@ function Strip({ count, label, children }: { count: number; label: string; child
         {children}
       </div>
       {!edge.start && (
-        <button type="button" className="pc-strip-nav is-prev" aria-label={t('piece.hero.prev')} title={t('piece.hero.prev')} onClick={() => go(-1)}>
+        <button type="button" className="pc-strip-nav is-prev" aria-label={t('piece.hero.prev')} onClick={() => go(-1)}>
           <Icon name="chevronLeft" />
         </button>
       )}
       {!edge.end && (
-        <button type="button" className="pc-strip-nav is-next" aria-label={t('piece.hero.next')} title={t('piece.hero.next')} onClick={() => go(1)}>
+        <button type="button" className="pc-strip-nav is-next" aria-label={t('piece.hero.next')} onClick={() => go(1)}>
           <Icon name="chevronRight" />
         </button>
       )}
@@ -402,8 +402,12 @@ function InlineText({ value, canEdit, onSave, label, placeholder, mono, display,
           }
         }}
       />
-      <button type="submit" className="pc-inline-ok" aria-label={t('common.save')} title={`${t('common.save')} (Enter)`} disabled={busy}><Icon name="check" /></button>
-      <button type="button" className="pc-inline-no" aria-label={t('common.cancel')} title={`${t('common.cancel')} (Esc)`} disabled={busy} onClick={() => setEditing(false)}><Icon name="x" /></button>
+      <Tip label={t('common.save')} shortcut="Enter">
+        <button type="submit" className="pc-inline-ok" aria-label={t('common.save')} disabled={busy}><Icon name="check" /></button>
+      </Tip>
+      <Tip label={t('common.cancel')} shortcut="Esc">
+        <button type="button" className="pc-inline-no" aria-label={t('common.cancel')} disabled={busy} onClick={() => setEditing(false)}><Icon name="x" /></button>
+      </Tip>
     </form>
   );
 }
@@ -486,9 +490,11 @@ export function PieceStage(p: HeroProps) {
             <span className={`pc-ov pc-ov-tl pc-ov-ver ${version.by_agent ? 'is-agent' : ''}`}>
               {version.by_agent && <Icon name="bot" />}V{version.number}
             </span>
-            <Link to={reviewTo} className="pc-ov pc-ov-tr pc-ov-open" title={t('piece.hero.openReview', { n: version.number })} aria-label={t('piece.hero.openReview', { n: version.number })}>
-              <Icon name="expand" />
-            </Link>
+            <Tip label={t('piece.hero.openReview', { n: version.number })} shortcut="R" side="left">
+              <Link to={reviewTo} className="pc-ov pc-ov-tr pc-ov-open" aria-label={t('piece.hero.openReview', { n: version.number })}>
+                <Icon name="expand" />
+              </Link>
+            </Tip>
             {comments > 0 && (
               <Link to={reviewTo} className="pc-ov pc-ov-bl pc-ov-comments" title={t('piece.openComments', { count: comments })}>
                 <Icon name="bubble" />{comments}
@@ -537,17 +543,14 @@ export function PieceFacts(p: HeroProps) {
       <dl className="pc-fields">
         <FieldRow label={t('piece.fields.campaign')} icon="folder">
           {canEdit ? (
-            <select
+            <Select
               className="pc-inline-select"
-              aria-label={t('piece.fields.campaign')}
-              title={t('piece.inline.edit', { what: t('piece.fields.campaign') })}
-              value={piece.campaign_id ?? ''}
+              label={t('piece.fields.campaign')}
+              value={piece.campaign_id ?? NO_CAMPAIGN}
               disabled={patch.isPending || !campaigns}
-              onChange={(e) => patch.mutate({ campaignId: e.target.value || null })}
-            >
-              <option value="">{t('piece.fields.noCampaign')}</option>
-              {campaigns?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+              onChange={(v) => patch.mutate({ campaignId: v === NO_CAMPAIGN ? null : v })}
+              options={[{ value: NO_CAMPAIGN, label: t('piece.fields.noCampaign') }, ...(campaigns ?? []).map((c) => ({ value: c.id, label: c.name }))]}
+            />
           ) : campaign ? (
             <Link to={`/pieces?campaign=${campaign.id}`} className="pc-field-link">{campaign.name}</Link>
           ) : (
@@ -583,7 +586,7 @@ export function PieceFacts(p: HeroProps) {
             </button>
           ) : piece.target_date ? fmtDay(piece.target_date) : <span className="pc-empty-val">{t('piece.fields.noDate')}</span>}
         </FieldRow>
-        <FieldRow stacked icon="branch" label={<>{t('piece.fields.source')}<Tip text={t('piece.fields.sourceHint')} label={t('piece.fields.sourceWhat')} /></>}>
+        <FieldRow stacked icon="branch" label={<>{t('piece.fields.source')}<InfoTip text={t('piece.fields.sourceHint')} label={t('piece.fields.sourceWhat')} /></>}>
           <InlineText
             value={piece.source ?? ''}
             canEdit={canEdit}

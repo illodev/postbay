@@ -6,7 +6,7 @@ import { api, ApiError, type Anchor, type CommentThread } from '../api';
 import { t, tMaybe, type Key } from '../i18n';
 import { fmtBytes } from '../lib/format';
 import { createVersion, guessKind, guessMime, type AssetKind, type PendingFile, type Progress } from '../lib/upload';
-import { Dialog, ErrorBox, errorMessage, useToast } from './ui';
+import { Dialog, ErrorBox, errorMessage, Select, Tip, useToast } from './ui';
 import '../styles/piece.css';
 
 type Shape = 'document' | 'carousel' | 'default';
@@ -381,24 +381,22 @@ export function UploadDialog({ variant, variants, latestVersionId, onClose }: {
                         )}
                         {err && !ph && <span className="pc-file-err" role="alert">{err}</span>}
                       </span>
-                      <select
+                      <Select
                         className="pc-file-role"
-                        aria-label={t('piece.upload.roleOf', { name: f.file.name })}
-                        title={t('piece.upload.roleHint')}
+                        label={t('piece.upload.roleOf', { name: f.file.name })}
                         value={f.kind}
                         disabled={busy}
-                        onChange={(e) => changeFiles((xs) => xs.map((x, j) => (j === i ? { ...x, kind: e.target.value as AssetKind } : x)))}
-                      >
-                        {ROLES.map((k) => <option key={k} value={k}>{roleLabel(k)}</option>)}
-                      </select>
+                        onChange={(kind) => changeFiles((xs) => xs.map((x, j) => (j === i ? { ...x, kind } : x)))}
+                        options={ROLES.map((k) => ({ value: k, label: roleLabel(k), icon: <Icon name={KIND_ICON[k]} /> }))}
+                      />
                       <span className="pc-file-tools">
                         {shape !== 'document' && files.length > 1 && (
                           <>
-                            <button type="button" className="pc-tool" aria-label={t('piece.upload.moveUp', { name: f.file.name })} title={t('piece.upload.moveUpShort')} disabled={busy || i === 0} onClick={() => move(i, -1)}><Icon name="arrowUp" /></button>
-                            <button type="button" className="pc-tool" aria-label={t('piece.upload.moveDown', { name: f.file.name })} title={t('piece.upload.moveDownShort')} disabled={busy || i === files.length - 1} onClick={() => move(i, 1)}><Icon name="arrowDown" /></button>
+                            <Tip label={t('piece.upload.moveUpShort')}><button type="button" className="pc-tool" aria-label={t('piece.upload.moveUp', { name: f.file.name })} disabled={busy || i === 0} onClick={() => move(i, -1)}><Icon name="arrowUp" /></button></Tip>
+                            <Tip label={t('piece.upload.moveDownShort')}><button type="button" className="pc-tool" aria-label={t('piece.upload.moveDown', { name: f.file.name })} disabled={busy || i === files.length - 1} onClick={() => move(i, 1)}><Icon name="arrowDown" /></button></Tip>
                           </>
                         )}
-                        <button type="button" className="pc-tool is-remove" aria-label={t('piece.upload.remove', { name: f.file.name })} title={t('piece.upload.removeShort')} disabled={busy} onClick={() => changeFiles((xs) => xs.filter((_, j) => j !== i))}><Icon name="x" /></button>
+                        <Tip label={t('piece.upload.removeShort')}><button type="button" className="pc-tool is-remove" aria-label={t('piece.upload.remove', { name: f.file.name })} disabled={busy} onClick={() => changeFiles((xs) => xs.filter((_, j) => j !== i))}><Icon name="x" /></button></Tip>
                       </span>
                     </li>
                   );
