@@ -107,7 +107,10 @@ Bluesky needs only `TOKEN_KEY`. For each, the redirect address is `$APP_URL/api/
 
 - **Threads**: a Meta developer app with the Threads use case; `THREADS_APP_ID`, `THREADS_APP_SECRET`. The studio asks for `threads_basic`, `threads_content_publish`, `threads_manage_insights` and `threads_manage_replies`.
 - **TikTok**: a developer app with Login Kit and the Content Posting API; `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`. For photo posts TikTok downloads
-  the pictures itself, only from a **domain you verified in its portal**, so `MEDIA_URL` must be that domain. Until the audit passes, posts are private.
+  the pictures itself, only from a **domain you verified in its portal**: the domain of the signed addresses the app hands out. With the local storage
+  driver that is `MEDIA_URL`; with `STORAGE_DRIVER=s3` the addresses are signed for the bucket, so it is the host of `S3_PUBLIC_ENDPOINT` (or of
+  `S3_ENDPOINT` when that is not set), not `MEDIA_URL`. The server check (*Settings → Server*, `npm run check:networks`) names the domain to verify.
+  Until the audit passes, posts are private, and TikTok only takes them from a TikTok account that is itself set to private.
 - **LinkedIn**: an app with the Community Management API product (the studio asks for `w_organization_social`, `r_organization_social` and `rw_organization_admin`), and an admin of the company page; `LINKEDIN_CLIENT_ID`,
   `LINKEDIN_CLIENT_SECRET`. The API is versioned by month and each version is retired after about a year: **raise `LINKEDIN_VERSION`** (`YYYYMM`) when
   a post's history says the version is retired. The studio says so in those words.
