@@ -1,7 +1,7 @@
 // The legacy build carries the polyfills that older browsers need (Map.getOrInsertComputed, for one).
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react';
 import type { Anchor, Asset, CommentThread } from '../api';
 import { t } from '../i18n';
 import { playhead } from '../lib/playhead';
@@ -10,7 +10,7 @@ import '../styles/review.css';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
-const round2 = (n: number) => Math.round(n * 100) / 100;
+export const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** 0:14.2 — minutes, seconds and tenths; without tenths, 0:14. */
 export function timecode(seconds: number, tenths = true): string {
@@ -30,6 +30,15 @@ export function shortTimecode(seconds: number): string {
   return full.endsWith('.0') ? full.slice(0, -2) : full;
 }
 
+/** The first line of a comment, short enough for a tooltip. */
+export const firstLine = (text: string, max = 90) => {
+  const line = text.split('\n')[0]!.trim();
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+};
+
+/** Which video the playhead belongs to, for a comment written "at the current moment". */
+export const liveVideo = { position: 0 };
+
 /** A request from outside the stage to show a place: a page and/or a moment of a video. The nonce makes repeats count. */
 export interface Jump {
   nonce: number;
@@ -42,11 +51,24 @@ const primariesOf = (assets: Asset[]) =>
   assets.filter((a) => a.kind === 'video' || a.kind === 'image').sort((a, b) => a.position - b.position);
 
 /**
- * Keys typed into a control are the control's: the stage's shortcuts only listen when nothing editable has the focus. A focused
- * button keeps Space and the arrows (it would act twice otherwise), but lets the frame keys through.
+ * The review's keyboard: it listens on the whole page, so the shortcuts work without first clicking the player, and stays out of
+ * the way of anything that takes typing (fields, a dialog). The handler says whether it used the key.
  */
-const typing = (e: RKeyboardEvent, buttonsToo = true) =>
-  !!(e.target as HTMLElement).closest(buttonsToo ? 'input, select, textarea, button, [role="slider"]' : 'input, select, textarea, [role="slider"]');
+function useStageKeys(handler: (e: KeyboardEvent, onControl: boolean) => boolean) {
+  const ref = useRef(handler);
+  ref.current = handler;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+      if (document.querySelector('dialog[open]')) return;
+      if (ref.current(e, !!el?.closest?.('button, a, [role="tab"]'))) e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+}
 
 // ───────────────────────────── icons ─────────────────────────────
 
@@ -83,6 +105,48 @@ function FullscreenButton({ fs }: { fs: ReturnType<typeof useFullscreen> }) {
   return <button type="button" className="rv-ic" onClick={fs.toggle} aria-label={label} title={label}><IconFull /></button>;
 }
 
+/** The "?" in the control bar: the keyboard shortcuts of what is on the stage. The same key opens it. */
+function ShortcutHelp({ open, onToggle, rows }: { open: boolean; onToggle: () => void; rows: [string, string][] }) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) onToggle(); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open, onToggle]);
+  return (
+    <div ref={box} className="rv-help">
+      <button type="button" className="rv-ic rv-help-btn" aria-expanded={open} onClick={onToggle} aria-label={t('review.keys.title')} title={t('review.keys.title')}>?</button>
+      {open && (
+        <div className="rv-help-pop" role="dialog" aria-label={t('review.keys.title')}>
+          <strong>{t('review.keys.title')}</strong>
+          <dl>
+            {rows.map(([k, v]) => (
+              <div key={k}><dt>{k.split(' ').map((p, i) => (p === '/' || p === '+' ? <span key={i}> {p} </span> : <kbd key={i}>{p}</kbd>))}</dt><dd>{v}</dd></div>
+            ))}
+          </dl>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const videoKeys = (): [string, string][] => [
+  [t('review.keys.space'), t('review.keys.play')],
+  ['← / →', t('review.keys.frame')],
+  [`${t('review.keys.shift')} + ← / →`, t('review.keys.second')],
+  ['C', t('review.keys.comment')],
+  ['Esc', t('review.keys.cancel')],
+  [t('review.keys.enter'), t('review.keys.send')],
+  [`${t('review.keys.shift')} + ${t('review.keys.enter')}`, t('review.keys.newline')],
+];
+const pageKeys = (): [string, string][] => [
+  ['← / →', t('review.keys.page')],
+  ['Esc', t('review.keys.cancel')],
+  [t('review.keys.enter'), t('review.keys.send')],
+  [`${t('review.keys.shift')} + ${t('review.keys.enter')}`, t('review.keys.newline')],
+];
+
 // ───────────────────────────── region layer (images and PDF pages) ─────────────────────────────
 
 type RegionThread = CommentThread & { anchor: Extract<Anchor, { type: 'region' }> };
@@ -101,7 +165,7 @@ interface RegionProps {
 /**
  * Transparent layer over a page: drag to mark a rectangle, click to drop a point, click an existing mark to open its thread.
  * Everything is stored as fractions of the page, so it survives any screen size. Each mark carries the number its thread has
- * in the list beside it.
+ * in the list beside it, and its first line on hover.
  */
 function RegionLayer({ page, threads, numbers, draft, onDraft, canAnnotate, focus, onFocus }: RegionProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -143,7 +207,7 @@ function RegionLayer({ page, threads, numbers, draft, onDraft, canAnnotate, focu
     if (canAnnotate) onDraft({ type: 'region', page, x: round2(x), y: round2(y), w: round2(w), h: round2(h) });
   };
 
-  const pin = (a: { x: number; y: number; w: number; h: number }, cls: string, key: string, label: ReactNode, open?: () => void) => {
+  const pin = (a: { x: number; y: number; w: number; h: number }, cls: string, key: string, label: ReactNode, open?: () => void, tip?: string) => {
     const point = a.w === 0 && a.h === 0;
     // Near the top edge the pin hangs below its point instead of standing above it, so it is never cut off.
     const flip = a.y < 0.07;
@@ -151,7 +215,8 @@ function RegionLayer({ page, threads, numbers, draft, onDraft, canAnnotate, focu
       <button
         type="button"
         className={`rv-pin ${flip ? 'flip' : ''} ${point ? '' : 'corner'}`}
-        aria-label={t('review.pin.open', { n: String(label) })}
+        aria-label={tip ?? t('review.pin.open', { n: String(label) })}
+        data-tip={tip}
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.stopPropagation(); open(); }}
       >
@@ -177,7 +242,17 @@ function RegionLayer({ page, threads, numbers, draft, onDraft, canAnnotate, focu
       onPointerUp={up}
       onPointerCancel={() => setDrag(null)}
     >
-      {marks.map((m) => pin(m.anchor, `${m.status === 'resolved' ? 'resolved' : ''} ${focus === m.id ? 'focus' : ''}`, m.id, numbers.get(m.id) ?? (m.status === 'resolved' ? '✓' : '•'), () => onFocus(m.id)))}
+      {marks.map((m) => {
+        const n = numbers.get(m.id);
+        return pin(
+          m.anchor,
+          `${m.status === 'resolved' ? 'resolved' : ''} ${focus === m.id ? 'focus' : ''}`,
+          m.id,
+          n ?? (m.status === 'resolved' ? '✓' : '•'),
+          () => onFocus(m.id),
+          `${n ? `${n} · ` : ''}${m.author}: ${firstLine(m.body, 70)}`,
+        );
+      })}
       {draft?.type === 'region' && draft.page === page && pin(draft, 'draft', 'draft', '+')}
       {live && (live.w >= 0.012 || live.h >= 0.012) && pin(live, 'draft', 'live', '+')}
     </div>
@@ -186,12 +261,12 @@ function RegionLayer({ page, threads, numbers, draft, onDraft, canAnnotate, focu
 
 // ───────────────────────────── PDF page ─────────────────────────────
 
-/** Draws one page of a PDF as large as its box allows: the full width, and no taller than the box's height limit. */
+/** Draws one page of a PDF as large as its box allows, and again whenever the box changes size. */
 export function PdfCanvas({ url, page, onPages }: { url: string; page: number; onPages?: (n: number) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [doc, setDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [size, setSize] = useState(0);
+  const [size, setSize] = useState({ w: 0, h: 0 });
 
   useEffect(() => {
     let cancelled = false;
@@ -211,33 +286,27 @@ export function PdfCanvas({ url, page, onPages }: { url: string; page: number; o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
-  // Draw again when the window changes size, once it has settled.
+  // The box the page fits in; drawn again once its size settles.
   useEffect(() => {
+    const box = canvas.current?.closest<HTMLElement>('.rv-media');
+    if (!box) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const onResize = () => {
+    const ro = new ResizeObserver(() => {
       clearTimeout(timer);
-      timer = setTimeout(() => setSize((n) => n + 1), 200);
-    };
-    window.addEventListener('resize', onResize);
-    document.addEventListener('fullscreenchange', onResize);
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener('resize', onResize);
-      document.removeEventListener('fullscreenchange', onResize);
-    };
+      timer = setTimeout(() => setSize({ w: box.clientWidth, h: box.clientHeight }), 120);
+    });
+    ro.observe(box);
+    return () => { clearTimeout(timer); ro.disconnect(); };
   }, []);
 
   useEffect(() => {
-    if (!doc || !canvas.current) return;
+    if (!doc || !canvas.current || !size.w || !size.h) return;
     let cancelled = false;
     let renderTask: pdfjs.RenderTask | null = null;
     doc.getPage(clamp(page, 1, doc.numPages)).then((p) => {
       if (cancelled || !canvas.current) return;
       const base = p.getViewport({ scale: 1 });
-      const box = canvas.current.closest<HTMLElement>('.rv-media');
-      const maxW = Math.min(1100, box?.clientWidth ?? 800);
-      const maxH = parseFloat(box ? getComputedStyle(box).maxHeight : '') || window.innerHeight * 0.74;
-      const fit = Math.min(maxW / base.width, maxH / base.height);
+      const fit = Math.min(Math.min(1400, size.w) / base.width, size.h / base.height);
       const ratio = window.devicePixelRatio || 1;
       const viewport = p.getViewport({ scale: fit * ratio });
       const c = canvas.current;
@@ -327,22 +396,29 @@ interface VideoProps {
 }
 
 /**
- * The video with its own controls: play, frame by frame, and a timeline that carries every comment as a numbered mark. Clicking
- * the picture or the timeline (when one can comment) stops the video there and starts a comment on that moment.
+ * The video with its own controls: play, frame by frame, and a timeline that carries every comment as a numbered mark (its
+ * first line on hover). Clicking the picture or the timeline (when one can comment) stops the video there and starts a comment
+ * on that moment. The keyboard works from anywhere on the page: Space, the arrows (a frame; a second with Shift), C and Esc.
  */
 function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draft, onDraft, canAnnotate, focus, onFocus, jump, safeZone, tools }: VideoProps) {
   const ref = useRef<HTMLVideoElement>(null);
   const player = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; moved: boolean } | null>(null);
-  const [now, setT] = useState(0);
-  const [dur, setDur] = useState(asset.duration_ms ? asset.duration_ms / 1000 : 0);
+  const [now, setNow] = useState(0);
+  const [dur, setDur] = useState(asset.duration_ms ? Number(asset.duration_ms) / 1000 : 0);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [tip, setTip] = useState<string | null>(null);
+  const [help, setHelp] = useState(false);
   const width = useWidth(track);
   // Full screen takes the player with its controls and timeline, so reviewing goes on there.
   const fs = useFullscreen(player);
   const fps = asset.fps || 30;
+
+  useEffect(() => {
+    liveVideo.position = asset.position;
+  }, [asset.position]);
 
   useEffect(() => {
     const v = ref.current;
@@ -350,11 +426,11 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
     let raf: number | null = null;
     const rvfc = 'requestVideoFrameCallback' in v;
     const tick = () => {
-      setT(v.currentTime);
+      setNow(v.currentTime);
       if (rvfc) raf = (v as HTMLVideoElement & { requestVideoFrameCallback: (cb: () => void) => number }).requestVideoFrameCallback(tick);
     };
     const meta = () => v.duration && Number.isFinite(v.duration) && setDur(v.duration);
-    const sync = () => setT(v.currentTime);
+    const sync = () => setNow(v.currentTime);
     const play = () => setPlaying(true);
     const pause = () => setPlaying(false);
     const volume = () => setMuted(v.muted);
@@ -384,7 +460,7 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
     if (jump.position !== undefined && jump.position !== asset.position) return;
     v.pause();
     v.currentTime = clamp(jump.t, 0, dur || jump.t);
-    setT(v.currentTime);
+    setNow(v.currentTime);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jump?.nonce]);
 
@@ -395,7 +471,7 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
     const frame = Math.floor(v.currentTime * fps + 1e-3);
     // Land in the middle of the target frame so rounding never shows the neighbour.
     v.currentTime = clamp((frame + d + 0.5) / fps, 0, v.duration || dur);
-    setT(v.currentTime);
+    setNow(v.currentTime);
   }, [fps, dur]);
 
   const toggle = () => {
@@ -408,23 +484,56 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
     const v = ref.current;
     if (!v || !dur) return;
     v.currentTime = clamp(s, 0, dur);
-    setT(v.currentTime);
+    setNow(v.currentTime);
   };
   const timeAt = (clientX: number) => {
     const r = track.current!.getBoundingClientRect();
     return clamp((clientX - r.left) / r.width, 0, 1) * dur;
   };
   const dropAt = (s: number) => onDraft({ type: 'time', t: round2(s), position: asset.position });
-
-  const clickPicture = () => {
+  const commentNow = () => {
     const v = ref.current;
-    if (!v) return;
-    if (!canAnnotate) return toggle();
+    if (!v || !canAnnotate) return;
     v.pause();
     dropAt(v.currentTime);
   };
 
-  // The subtitle list follows the video.
+  useStageKeys((e, onControl) => {
+    switch (e.key) {
+      case ' ':
+      case 'k':
+        if (onControl) return false;
+        toggle();
+        return true;
+      case 'ArrowLeft':
+      case 'ArrowRight': {
+        if ((e.target as HTMLElement).closest?.('[role="tab"]')) return false;
+        const d = e.key === 'ArrowLeft' ? -1 : 1;
+        if (e.shiftKey) { ref.current?.pause(); seekTo((ref.current?.currentTime ?? 0) + d); }
+        else step(d);
+        return true;
+      }
+      case ',': step(-1); return true;
+      case '.': step(1); return true;
+      case 'c':
+      case 'C':
+        if (!canAnnotate) return false;
+        commentNow();
+        return true;
+      case 'Escape':
+        if (help) { setHelp(false); return true; }
+        if (!draft) return false;
+        onDraft(null);
+        return true;
+      case '?':
+        setHelp((h) => !h);
+        return true;
+      default:
+        return false;
+    }
+  });
+
+  // The subtitle list and the comment list follow the video.
   useEffect(() => { playhead.set(now); }, [now]);
 
   const mine = threads.filter((c): c is TimeThread => c.anchor?.type === 'time' && (c.anchor.position ?? firstVideoPosition) === asset.position);
@@ -440,22 +549,14 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
     const next = i < marks.length - 1 ? px(marks[i + 1]!.anchor.t) : Infinity;
     return width > 0 && x - prev >= 20 && next - x >= 20;
   };
-  const step10 = tickStep(dur, width);
+  const tickEvery = tickStep(dur, width);
   const ticks: number[] = [];
-  if (dur > 0 && width > 0) for (let s = 0; s <= dur + 1e-6; s += step10) ticks.push(s);
+  if (dur > 0 && width > 0) for (let s = 0; s <= dur + 1e-6; s += tickEvery) ticks.push(s);
+  const tipped = marks.find((c) => c.id === tip);
 
   return (
-    <div
-      ref={player}
-      className={`rv-player ${fs.on ? 'is-full' : ''}`}
-      onKeyDown={(e) => {
-        if (typing(e, false)) return;
-        if (e.key === ',') { e.preventDefault(); step(-1); }
-        if (e.key === '.') { e.preventDefault(); step(1); }
-        if ((e.key === ' ' || e.key === 'k') && !typing(e)) { e.preventDefault(); toggle(); }
-      }}
-    >
-      <div className="rv-media" tabIndex={0} aria-label={t('review.video.label')}>
+    <div ref={player} className={`rv-player ${fs.on ? 'is-full' : ''}`}>
+      <div className="rv-media">
         <div className="stage-inner">
           <video
             ref={ref}
@@ -463,7 +564,7 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
             poster={poster}
             playsInline
             preload="metadata"
-            onClick={clickPicture}
+            onClick={() => (canAnnotate ? commentNow() : toggle())}
             className={canAnnotate ? 'annotate' : ''}
             title={canAnnotate ? t('review.video.clickToComment') : undefined}
           />
@@ -491,7 +592,7 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
           <div className="rv-ctl-group rv-ctl-end">
             {canAnnotate && (
               <>
-                <button type="button" className="btn btn-small" onClick={() => dropAt(now)}>{t('review.video.commentHere')}</button>
+                <button type="button" className="btn btn-small" onClick={() => dropAt(now)} title={t('review.video.commentHereHint')}>{t('review.video.commentHere')}</button>
                 {draftHere && (
                   <button type="button" className="btn btn-small" disabled={now < draftHere.t} onClick={() => onDraft({ ...draftHere, t_end: round2(now) })} title={t('review.video.setEndHint')}>
                     {t('review.video.setEnd')}
@@ -500,12 +601,13 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
               </>
             )}
             {tools}
+            <ShortcutHelp open={help} onToggle={() => setHelp((h) => !h)} rows={videoKeys()} />
           </div>
         </div>
 
         <div
           ref={track}
-          className="timeline rv-track"
+          className="rv-track"
           role="slider"
           tabIndex={0}
           aria-label={t('review.timeline.label')}
@@ -513,14 +615,6 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
           aria-valuemax={Math.round(dur)}
           aria-valuenow={Math.round(now)}
           aria-valuetext={timecode(now)}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowLeft') { e.preventDefault(); seekTo(now - (e.shiftKey ? 5 : 1)); }
-            if (e.key === 'ArrowRight') { e.preventDefault(); seekTo(now + (e.shiftKey ? 5 : 1)); }
-            if (e.key === 'Home') { e.preventDefault(); seekTo(0); }
-            if (e.key === 'End') { e.preventDefault(); seekTo(dur); }
-            if (e.key === ',') { e.preventDefault(); step(-1); }
-            if (e.key === '.') { e.preventDefault(); step(1); }
-          }}
           onPointerDown={(e) => {
             if (e.button !== 0) return;
             e.currentTarget.setPointerCapture(e.pointerId);
@@ -566,10 +660,14 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
                 style={{ left: `${pct(c.anchor.t)}%` }}
                 aria-label={t('review.timeline.marker', { n: n ?? '', time: shortTimecode(c.anchor.t) })}
                 onPointerDown={(e) => e.stopPropagation()}
+                onPointerEnter={() => setTip(c.id)}
+                onPointerLeave={() => setTip((x) => (x === c.id ? null : x))}
+                onFocus={() => setTip(c.id)}
+                onBlur={() => setTip((x) => (x === c.id ? null : x))}
                 onClick={() => {
                   onFocus(c.id);
                   const v = ref.current;
-                  if (v) { v.pause(); v.currentTime = c.anchor.t; setT(c.anchor.t); }
+                  if (v) { v.pause(); v.currentTime = c.anchor.t; setNow(c.anchor.t); }
                 }}
               >
                 {big && n}
@@ -578,6 +676,20 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
           })}
           {draftHere && <span className="rv-mk-draft" style={{ left: `${pct(draftHere.t)}%` }} aria-hidden="true" />}
           <span className="rv-playhead" style={{ left: `${pct(now)}%` }} />
+          {tipped && (
+            <span
+              className={`rv-tip ${pct(tipped.anchor.t) < 18 ? 'start' : pct(tipped.anchor.t) > 82 ? 'end' : ''}`}
+              style={{ left: `${pct(tipped.anchor.t)}%` }}
+              role="tooltip"
+            >
+              <span className="rv-tip-h">
+                {numbers.get(tipped.id) !== undefined && <b>{numbers.get(tipped.id)}</b>}
+                <span className="mono">{shortTimecode(tipped.anchor.t)}</span>
+                <span>{shortName(tipped.author)}</span>
+              </span>
+              {firstLine(tipped.body)}
+            </span>
+          )}
         </div>
         <div className="rv-ticks" aria-hidden="true">
           {ticks.map((s) => {
@@ -592,9 +704,12 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
   );
 }
 
+/** A person's name as the list shows it: an e-mail address loses its domain (the whole address is in the tooltip). */
+export const shortName = (author: string) => (author.includes('@') ? author.split('@')[0]! : author);
+
 // ───────────────────────────── pages of a carousel or a PDF ─────────────────────────────
 
-function Pager({ unit, page, count, onPage, thumbs, counts, tools, fs }: {
+function Pager({ unit, page, count, onPage, thumbs, counts, tools, fs, help }: {
   unit: 'page' | 'item';
   page: number;
   count: number;
@@ -603,6 +718,7 @@ function Pager({ unit, page, count, onPage, thumbs, counts, tools, fs }: {
   counts: number[];
   tools?: ReactNode;
   fs?: ReturnType<typeof useFullscreen>;
+  help?: { open: boolean; onToggle: () => void };
 }) {
   if (count <= 1 && !tools && !fs?.supported) return null;
   return (
@@ -618,6 +734,7 @@ function Pager({ unit, page, count, onPage, thumbs, counts, tools, fs }: {
         <span className="grow" />
         {tools}
         {fs && <FullscreenButton fs={fs} />}
+        {help && <ShortcutHelp open={help.open} onToggle={help.onToggle} rows={pageKeys()} />}
       </div>
       {count > 1 && (
         <div className="rv-strip">
@@ -666,6 +783,7 @@ export function Stage(p: StageProps) {
   const firstVideoPosition = primaries.find((a) => a.kind === 'video')?.position ?? 0;
   const [page, setPage] = useState(1);
   const [pdfPages, setPdfPages] = useState(0);
+  const [help, setHelp] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
   const fs = useFullscreen(stage);
   const count = pdf ? pdfPages : primaries.length;
@@ -685,6 +803,20 @@ export function Stage(p: StageProps) {
   const regionProps = { page, threads: p.threads, numbers: p.numbers, draft: p.draft, onDraft: p.onDraft, canAnnotate: p.canAnnotate, focus: p.focus, onFocus: p.onFocus };
   const go = (n: number) => setPage(clamp(n, 1, Math.max(count, 1)));
 
+  // Pages: the arrows turn them (a video page keeps the arrows for its frames), Esc drops the mark being made.
+  useStageKeys((e) => {
+    if (current?.kind === 'video') return false;
+    if ((e.target as HTMLElement).closest?.('[role="tab"]')) return false;
+    if (e.key === 'ArrowLeft' && count > 1) { go(page - 1); return true; }
+    if (e.key === 'ArrowRight' && count > 1) { go(page + 1); return true; }
+    if (e.key === 'Escape') {
+      if (help) { setHelp(false); return true; }
+      if (p.draft) { p.onDraft(null); return true; }
+    }
+    if (e.key === '?') { setHelp((h) => !h); return true; }
+    return false;
+  });
+
   // Open comments per page, for the badges on the strip.
   const counts = Array.from({ length: count }, (_, i) => p.threads.filter((c) => {
     if (c.status !== 'open' || !c.anchor) return false;
@@ -694,26 +826,19 @@ export function Stage(p: StageProps) {
   }).length);
   const thumbs = pdf ? [] : primaries.map((a) => (a.kind === 'image' ? a.url : cover?.url));
   const unit = pdf ? 'page' : 'item';
+  const helpProps = { open: help, onToggle: () => setHelp((h) => !h) };
 
   return (
-    <div
-      ref={stage}
-      className={`rv-stage ${fs.on ? 'is-full' : ''}`}
-      onKeyDown={(e) => {
-        if (count <= 1 || (typing(e) && !(e.target as HTMLElement).closest('.rv-tile')) || current?.kind === 'video') return;
-        if (e.key === 'ArrowLeft') { e.preventDefault(); go(page - 1); }
-        if (e.key === 'ArrowRight') { e.preventDefault(); go(page + 1); }
-      }}
-    >
+    <div ref={stage} className={`rv-stage ${fs.on ? 'is-full' : ''}`}>
       {pdf ? (
         <>
-          <div className="rv-media rv-paper" tabIndex={-1}>
+          <div className="rv-media rv-paper">
             <div className="stage-inner">
               <PdfCanvas url={pdf.url} page={page} onPages={setPdfPages} />
               <RegionLayer {...regionProps} />
             </div>
           </div>
-          <Pager unit="page" page={page} count={count} onPage={go} thumbs={[]} counts={counts} fs={fs} />
+          <Pager unit="page" page={page} count={count} onPage={go} thumbs={[]} counts={counts} fs={fs} help={helpProps} />
         </>
       ) : current?.kind === 'video' ? (
         <>
@@ -737,14 +862,14 @@ export function Stage(p: StageProps) {
         </>
       ) : current ? (
         <>
-          <div className="rv-media" tabIndex={-1}>
+          <div className="rv-media">
             <div className="stage-inner">
               <img src={current.url} alt={current.name} draggable={false} />
               <SafeZoneOverlay zone={p.safeZone} />
               <RegionLayer {...regionProps} />
             </div>
           </div>
-          <Pager unit={unit} page={page} count={count} onPage={go} thumbs={thumbs} counts={counts} tools={p.tools} fs={fs} />
+          <Pager unit={unit} page={page} count={count} onPage={go} thumbs={thumbs} counts={counts} tools={p.tools} fs={fs} help={helpProps} />
         </>
       ) : (
         <div className="rv-media rv-nothing">{t('review.stage.empty')}</div>
@@ -767,21 +892,21 @@ export function CompareStage({ left, right, leftLabel, rightLabel }: { left: Ass
   const [mode, setMode] = useState<'side' | 'flip'>('side');
   const [showRight, setShowRight] = useState(true);
   const a = useRef<HTMLVideoElement>(null), b = useRef<HTMLVideoElement>(null);
-  const [now, setT] = useState(0);
+  const [now, setNow] = useState(0);
   const [playing, setPlaying] = useState(false);
 
   const la = lpdf ? undefined : lp[page - 1], ra = rpdf ? undefined : rp[page - 1];
   const count = lpdf || rpdf ? pages : Math.max(lp.length, rp.length);
   const bothVideo = la?.kind === 'video' && ra?.kind === 'video';
   const fps = la?.fps || 30;
-  const dur = Math.max(a.current?.duration || 0, la?.duration_ms ? la.duration_ms / 1000 : 0);
+  const dur = Math.max(a.current?.duration || 0, la?.duration_ms ? Number(la.duration_ms) / 1000 : 0);
 
   useEffect(() => {
     const va = a.current, vb = b.current;
     if (!bothVideo || !va || !vb) return;
     vb.muted = true;
     const onTime = () => {
-      setT(va.currentTime);
+      setNow(va.currentTime);
       if (Math.abs(vb.currentTime - va.currentTime) > 0.15) vb.currentTime = va.currentTime;
     };
     const onPlay = () => { setPlaying(true); void vb.play(); };
@@ -811,16 +936,28 @@ export function CompareStage({ left, right, leftLabel, rightLabel }: { left: Ass
     const target = clamp((Math.floor(va.currentTime * fps + 1e-3) + d + 0.5) / fps, 0, va.duration || dur);
     va.currentTime = target;
     vb.currentTime = target;
-    setT(target);
+    setNow(target);
   };
+
+  useStageKeys((e, onControl) => {
+    if (bothVideo) {
+      if ((e.key === ' ' || e.key === 'k') && !onControl) { toggle(); return true; }
+      if (e.key === 'ArrowLeft' || e.key === ',') { stepFrame(-1); return true; }
+      if (e.key === 'ArrowRight' || e.key === '.') { stepFrame(1); return true; }
+      return false;
+    }
+    if (e.key === 'ArrowLeft' && page > 1) { setPage(page - 1); return true; }
+    if (e.key === 'ArrowRight' && page < count) { setPage(page + 1); return true; }
+    return false;
+  });
 
   const view = (asset: Asset | undefined, pdf: Asset | undefined, ref: RefObject<HTMLVideoElement | null>, label: string, side: 'left' | 'right') => (
     <figure className={`rv-cmp-pane ${side}`}>
       <figcaption><span className={`tag ${side === 'right' ? 'rv-tag-now' : ''}`}>{label}</span></figcaption>
       <div className={`rv-media ${pdf ? 'rv-paper' : ''}`}>
         {pdf ? <div className="stage-inner"><PdfCanvas url={pdf.url} page={page} onPages={(n) => setPages((p) => Math.max(p, n))} /></div>
-          : asset?.kind === 'video' ? <video ref={ref} src={asset.url} playsInline preload="auto" muted={ref === b} onClick={toggle} />
-          : asset ? <img src={asset.url} alt={t('review.compare.imageAlt', { label, name: asset.name })} />
+          : asset?.kind === 'video' ? <div className="stage-inner"><video ref={ref} src={asset.url} playsInline preload="auto" muted={ref === b} onClick={toggle} /></div>
+          : asset ? <div className="stage-inner"><img src={asset.url} alt={t('review.compare.imageAlt', { label, name: asset.name })} /></div>
           : <div className="rv-nothing">{t('review.compare.nothing')}</div>}
       </div>
     </figure>
@@ -869,7 +1006,7 @@ export function CompareStage({ left, right, leftLabel, rightLabel }: { left: Ass
         {bothVideo && (
           <input
             type="range" className="rv-range" min={0} max={dur || 1} step={0.01} value={now} aria-label={t('review.compare.position')}
-            onChange={(e) => { const v = Number(e.target.value); if (a.current && b.current) { a.current.currentTime = v; b.current.currentTime = v; setT(v); } }}
+            onChange={(e) => { const v = Number(e.target.value); if (a.current && b.current) { a.current.currentTime = v; b.current.currentTime = v; setNow(v); } }}
           />
         )}
       </div>

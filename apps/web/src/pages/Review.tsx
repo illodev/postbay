@@ -1,19 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type Account, type Anchor, type CommentThread, type Integrations, type VersionDetail } from '../api';
-import { CommentsPanel, numberThreads, type ComposeHint } from '../components/comments';
+import { ago, CommentsPanel, numberThreads, type ComposeHint } from '../components/comments';
 import { SubtitlePanel } from '../components/Subtitles';
 import { approvedAccountIds, ScheduleDialog } from '../components/publications';
 import { Chip, CopyButton, Dialog, ErrorBox, Field, Spinner, useToast } from '../components/ui';
-import { CompareStage, Stage, timecode, type Jump, type SafeZone } from '../components/viewer';
+import { CompareStage, liveVideo, Stage, timecode, type Jump, type SafeZone } from '../components/viewer';
 import { t } from '../i18n';
-import { fmtBytes, fmtDateTime, fmtShort, NETWORK_LABEL } from '../lib/format';
+import { fmtBytes, fmtDateTime, NETWORK_LABEL } from '../lib/format';
+import { playhead } from '../lib/playhead';
 import { useSession } from '../lib/session';
 import { useStableUrls } from '../lib/stableUrls';
 import '../styles/review.css';
 
 const LIVE = ['in_review', 'changes_requested', 'approved'];
+
+/** "3 min ago", or "just now". */
+function agoPhrase(iso: string): string {
+  const short = ago(iso);
+  return short === t('review.ago.now') ? t('review.ago.justNow') : t('review.ago.phrase', { when: short });
+}
 
 function DecisionDialog({ version, decision, openCount, onClose, onSeeComments }: {
   version: VersionDetail;
@@ -218,7 +225,7 @@ function DecisionCard({ v, threads, openCount, onDialog }: {
         <span className="mono">v{v.number}</span> {t('review.decision.uploadedBy')}{' '}
         <b className={v.by_agent ? 'rv-agent' : ''}>{v.author ?? t('review.decision.unknown')}</b>
         {v.by_agent && <span className="sr-only"> {t('review.decision.agentSuffix')}</span>}
-        {' · '}<time dateTime={v.created_at} title={fmtDateTime(v.created_at, v.brand.timezone)}>{fmtShort(v.created_at)}</time>
+        {' · '}<time dateTime={v.created_at} title={fmtDateTime(v.created_at, v.brand.timezone)}>{agoPhrase(v.created_at)}</time>
         {carried.length > 0 && <>{' · '}{t('review.decision.resolves', { done: fixedHere, count: carried.length })}</>}
       </p>
 
@@ -279,6 +286,14 @@ function Details({ v }: { v: VersionDetail }) {
   return (
     <div className="rv-details">
       <section className="rv-block">
+        <h3>{t('review.details.version')}</h3>
+        <p className="rv-meta">
+          <span className="tag">{[v.variant.format, v.variant.style].filter(Boolean).join(' · ')}</span>
+          {v.piece.ai_generated && <span className="tag">{t('review.meta.ai')}</span>}
+        </p>
+        <p className="muted small">{t('review.meta.uploaded', { date: fmtDateTime(v.created_at, v.brand.timezone) })}</p>
+      </section>
+      <section className="rv-block">
         <h3>{t('review.details.approvals')}</h3>
         {v.approvals.length === 0 && <p className="muted small">{t('review.details.noDecisions')}</p>}
         {v.approvals.map((a) => (
@@ -332,15 +347,23 @@ export function ReviewPage() {
   return <Review key={versionId} versionId={versionId} />;
 }
 
+type Tab = 'comments' | 'subtitles' | 'details';
+
+/**
+ * The review: a full-height workspace. On a wide screen the picture, its controls and its timeline never move, and only the
+ * panel on the right scrolls; on a phone the picture sticks to the top while the panel scrolls under it.
+ */
 function Review({ versionId }: { versionId: string }) {
-  const { brand, can } = useSession();
+  const { me, brand, can } = useSession();
   const [draft, setDraft] = useState<Anchor | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [jump, setJump] = useState<Jump | null>(null);
-  const [tab, setTab] = useState<'comments' | 'details'>('comments');
+  const [tab, setTab] = useState<Tab>('comments');
   const [compareId, setCompareId] = useState('');
   const [dialog, setDialog] = useState<null | 'approve' | 'reject' | 'changes' | 'schedule'>(null);
   const [zoneId, setZoneId] = useState('');
+  const root = useRef<HTMLDivElement>(null);
+  const stick = useRef<HTMLDivElement>(null);
   const stable = useStableUrls();
   const { data: integ } = useQuery({ queryKey: ['integrations', brand.id], queryFn: () => api.get<Integrations>(`/api/brands/${brand.id}/integrations`) });
 
@@ -355,6 +378,15 @@ function Review({ versionId }: { versionId: string }) {
     queryFn: () => api.get<VersionDetail>(`/api/versions/${compareId}`),
   });
 
+  // On a phone the stage sticks to the top: the comments brought into view leave room for it.
+  useEffect(() => {
+    const el = stick.current, top = root.current;
+    if (!el || !top) return;
+    const ro = new ResizeObserver(() => top.style.setProperty('--rv-stick', `${el.offsetHeight}px`));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [v?.id]);
+
   if (isLoading) return <Spinner />;
   if (error) return <ErrorBox error={error} />;
   if (!v) return null;
@@ -367,15 +399,17 @@ function Review({ versionId }: { versionId: string }) {
   const hasPdf = assets.some((a) => a.kind === 'pdf');
   const hasVideo = assets.some((a) => a.kind === 'video');
   const hasImage = assets.some((a) => a.kind === 'image');
+  const hasSubtitles = assets.some((a) => a.kind === 'subtitles');
   const hint: ComposeHint = compareId ? 'none' : hasPdf ? 'pdf' : hasImage ? 'image' : hasVideo ? 'video' : 'none';
   // Every placement that knows what its network draws over the picture, for the "what the network covers" overlay.
   const safeZones: (SafeZone & { id: string })[] = Object.values(integ?.capabilities ?? {}).flatMap((c) =>
     c.placements.flatMap((pl) => (pl.safeZones ? [{ id: `${c.network}:${pl.id}`, label: `${NETWORK_LABEL[c.network] ?? c.network} · ${pl.label}`, ...pl.safeZones }] : [])));
   const openCount = stableThreads.filter((c) => c.status === 'open').length;
   const canAnnotate = can('comment') && live;
+  const shownTab: Tab = tab === 'subtitles' && (!hasSubtitles || compareId) ? 'comments' : tab;
+  // A comment takes the stage to its place: the moment (paused there) or the page, and lights up its mark.
   const jumpTo = (c: CommentThread) => {
     setFocus(c.id);
-    if (c.version_id !== v.id) return;
     const a = c.anchor;
     if (a?.type === 'time') setJump({ nonce: Date.now(), t: a.t, position: a.position });
     else if (a?.type === 'region') setJump({ nonce: Date.now(), page: a.page });
@@ -392,79 +426,64 @@ function Review({ versionId }: { versionId: string }) {
     </label>
   ) : null;
 
-  const meta = [v.variant.format, v.variant.style].filter(Boolean).join(' · ');
-
   return (
-    <div className="rv">
+    <div ref={root} className="rv">
       <div className="rv-main">
-        <header className="rv-header">
-        <nav className="crumbs rv-crumbs" aria-label={t('review.crumbs.label')}>
-          <Link to="/pieces">{t('review.crumbs.pieces')}</Link>
-          <span aria-hidden="true">/</span>
-          <Link to={`/pieces/${v.piece.id}`} className="rv-crumb-piece">{v.piece.title}</Link>
-        </nav>
-        <div className="rv-head">
-          <div className="rv-title">
-            <h1 title={v.piece.title}>{v.piece.title}</h1>
-            <Chip state={v.review_state} />
-          </div>
+        <header className="rv-top">
+          <nav className="rv-crumbs" aria-label={t('review.crumbs.label')}>
+            <Link to="/pieces">{t('review.crumbs.pieces')}</Link>
+            <span aria-hidden="true">/</span>
+          </nav>
+          <h1 title={v.piece.title}><Link to={`/pieces/${v.piece.id}`}>{v.piece.title}</Link></h1>
+          <Chip state={v.review_state} />
           <VersionSwitch v={v} compareId={compareId} onCompare={setCompareId} />
-        </div>
-        <p className="rv-meta">
-          <span className="tag">{meta}</span>
-          {v.piece.ai_generated && <span className="tag">{t('review.meta.ai')}</span>}
-          <span>{t('review.meta.uploaded', { date: fmtDateTime(v.created_at, v.brand.timezone) })}</span>
-        </p>
         </header>
 
-        {compareId && other && otherAssets ? (
-          <CompareStage left={otherAssets} right={assets} leftLabel={`v${other.number}`} rightLabel={t('review.compare.thisOne', { n: v.number })} />
-        ) : compareId ? (
-          <Spinner />
-        ) : (
-          <Stage
-            assets={assets}
-            threads={stableThreads}
-            numbers={numbers}
-            draft={draft}
-            onDraft={(a) => { setDraft(a); if (a) setTab('comments'); }}
-            canAnnotate={canAnnotate}
-            focus={focus}
-            onFocus={(id) => toComments(id)}
-            jump={jump}
-            safeZone={safeZones.find((z) => z.id === zoneId) ?? null}
-            tools={zoneTools}
-          />
-        )}
-        {!compareId && assets.some((a) => a.kind === 'subtitles') && (
-          <SubtitlePanel
-            versionId={v.id}
-            threads={stableThreads}
-            canAnnotate={canAnnotate}
-            firstVideoPosition={assets.find((a) => a.kind === 'video')?.position ?? 0}
-            onDraft={(a) => { setDraft(a); setTab('comments'); }}
-            onSeek={(s, position) => setJump({ nonce: Date.now(), t: s, position })}
-            onFocus={(id) => toComments(id)}
-          />
-        )}
+        <div ref={stick} className="rv-stick">
+          {compareId && other && otherAssets ? (
+            <CompareStage left={otherAssets} right={assets} leftLabel={`v${other.number}`} rightLabel={t('review.compare.thisOne', { n: v.number })} />
+          ) : compareId ? (
+            <Spinner />
+          ) : (
+            <Stage
+              assets={assets}
+              threads={stableThreads}
+              numbers={numbers}
+              draft={draft}
+              onDraft={(a) => { setDraft(a); if (a) setTab('comments'); }}
+              canAnnotate={canAnnotate}
+              focus={focus}
+              onFocus={(id) => toComments(id)}
+              jump={jump}
+              safeZone={safeZones.find((z) => z.id === zoneId) ?? null}
+              tools={zoneTools}
+            />
+          )}
+        </div>
       </div>
 
       <aside className="rv-side" aria-label={t('review.side.label')}>
         <DecisionCard v={v} threads={stableThreads} openCount={openCount} onDialog={setDialog} />
         <div className="rv-tabs" role="tablist" aria-label={t('review.tabs.label')}>
-          <button type="button" role="tab" aria-selected={tab === 'comments'} onClick={() => setTab('comments')}>
+          <button type="button" role="tab" aria-selected={shownTab === 'comments'} onClick={() => setTab('comments')}>
             {t('review.tabs.comments')}
             {openCount > 0 && <span className="rv-tab-n">{openCount}</span>}
           </button>
-          <button type="button" role="tab" aria-selected={tab === 'details'} onClick={() => setTab('details')}>{t('review.tabs.details')}</button>
+          {hasSubtitles && !compareId && (
+            <button type="button" role="tab" aria-selected={shownTab === 'subtitles'} onClick={() => setTab('subtitles')}>{t('review.tabs.subtitles')}</button>
+          )}
+          <button type="button" role="tab" aria-selected={shownTab === 'details'} onClick={() => setTab('details')}>{t('review.tabs.details')}</button>
         </div>
-        {tab === 'comments' ? (
+        {shownTab === 'comments' ? (
           <CommentsPanel
             versionId={v.id}
             threads={stableThreads}
             numbers={numbers}
+            me={me.user.name ?? me.user.email}
             draft={draft}
+            onDraft={setDraft}
             onClearDraft={() => setDraft(null)}
+            onHold={() => setJump({ nonce: Date.now(), t: playhead.t, position: liveVideo.position })}
             canComment={can('comment')}
             canReply={can('reply')}
             canResolve={can('resolve')}
@@ -474,6 +493,18 @@ function Review({ versionId }: { versionId: string }) {
             commentable={live}
             hint={hint}
           />
+        ) : shownTab === 'subtitles' ? (
+          <div className="rv-scroll rv-subs-tab">
+            <SubtitlePanel
+              versionId={v.id}
+              threads={stableThreads}
+              canAnnotate={canAnnotate}
+              firstVideoPosition={assets.find((a) => a.kind === 'video')?.position ?? 0}
+              onDraft={(a) => { setDraft(a); setTab('comments'); }}
+              onSeek={(s, position) => setJump({ nonce: Date.now(), t: s, position })}
+              onFocus={(id) => toComments(id)}
+            />
+          </div>
         ) : (
           <div className="rv-scroll"><Details v={v} /></div>
         )}
