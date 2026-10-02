@@ -45,12 +45,18 @@ function General({ brandId }: { brandId: string }) {
   const toast = useToast();
   const confirm = useConfirm();
   const { data: b, error } = useBrandSettings(brandId);
-  const [form, setForm] = useState<null | { name: string; timezone: string; locale: string; required: number; reapprove: boolean; checklist: string; lead: number; tolerance: number }>(null);
-  const f = form ?? (b && { name: b.name, timezone: b.timezone, locale: b.locale, required: b.rules.required_approvals, reapprove: b.rules.reapprove_on_move, checklist: b.rules.checklist.join('\n'), lead: b.publishing.prepare_lead_minutes, tolerance: b.publishing.late_tolerance_minutes });
+  const [form, setForm] = useState<null | { name: string; timezone: string; locale: string; required: number; reapprove: boolean; checklist: string; lead: number; tolerance: number; autoFill: boolean; styles: string }>(null);
+  const f = form ?? (b && {
+    name: b.name, timezone: b.timezone, locale: b.locale, required: b.rules.required_approvals, reapprove: b.rules.reapprove_on_move, checklist: b.rules.checklist.join('\n'),
+    lead: b.publishing.prepare_lead_minutes, tolerance: b.publishing.late_tolerance_minutes, autoFill: !!b.rules.auto_fill_slots, styles: (b.rules.variant_styles ?? []).join('\n'),
+  });
   const save = useMutation({
     mutationFn: () => api.patch(`/api/brands/${brandId}`, {
       name: f!.name, timezone: f!.timezone, locale: f!.locale,
-      rules: { required_approvals: f!.required, reapprove_on_move: f!.reapprove, checklist: f!.checklist.split('\n').map((x) => x.trim()).filter(Boolean) },
+      rules: {
+        required_approvals: f!.required, reapprove_on_move: f!.reapprove, checklist: f!.checklist.split('\n').map((x) => x.trim()).filter(Boolean),
+        auto_fill_slots: f!.autoFill, variant_styles: f!.styles.split('\n').map((x) => x.trim()).filter(Boolean),
+      },
       publishing: { prepare_lead_minutes: f!.lead, late_tolerance_minutes: f!.tolerance },
     }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['brand'] }); qc.invalidateQueries({ queryKey: ['me'] }); setForm(null); toast(t('settings.saved')); },
@@ -82,6 +88,9 @@ function General({ brandId }: { brandId: string }) {
                 <input type="text" required maxLength={10} value={f.locale} onChange={(e) => setForm({ ...f, locale: e.target.value })} />
               </Field>
             </div>
+            <Field label={t('fx.rules.styles')} hint={t('fx.rules.stylesHint')}>
+              <textarea value={f.styles} onChange={(e) => setForm({ ...f, styles: e.target.value })} placeholder={t('fx.rules.stylesPlaceholder')} />
+            </Field>
           </section>
 
           <section className="card stack">
@@ -90,6 +99,12 @@ function General({ brandId }: { brandId: string }) {
               <input className="set-num-input" type="number" min={1} max={5} value={f.required} onChange={(e) => setForm({ ...f, required: Number(e.target.value) })} />
             </Field>
             <Switch label={t('settings.general.reapprove')} hint={t('settings.general.reapproveHint')} checked={f.reapprove} onChange={(v) => setForm({ ...f, reapprove: v })} />
+            <Switch
+              label={t('fx.rules.autoFill')}
+              hint={b.rules.auto_fill_slots && b.rules.auto_fill_since && f.autoFill ? t('fx.rules.autoFillSince', { date: DateTime.fromISO(b.rules.auto_fill_since).toFormat('d LLL yyyy') }) : t('fx.rules.autoFillHint')}
+              checked={f.autoFill}
+              onChange={(v) => setForm({ ...f, autoFill: v })}
+            />
             <Field label={t('settings.general.checklist')} hint={t('settings.general.checklistHint')}>
               <textarea value={f.checklist} onChange={(e) => setForm({ ...f, checklist: e.target.value })} placeholder={t('settings.general.checklistPlaceholder')} />
             </Field>

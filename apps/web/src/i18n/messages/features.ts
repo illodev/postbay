@@ -36,6 +36,17 @@ export const features = define({
 
     // The agent's runs.
     'outcome.scheduled': 'Programó lo aprobado',
+    'trigger.version.approved': 'Versión aprobada',
+
+    // Settings: the brand's rules and the agent.
+    'fx.rules.autoFill': 'Rellenar huecos libres con lo aprobado',
+    'fx.rules.autoFillHint': 'Lo aprobado que nadie ha programado va al siguiente hueco libre de una cuenta para la que se aprobó.',
+    'fx.rules.autoFillSince': 'Activo desde el {date}. Solo toma lo aprobado desde entonces.',
+    'fx.rules.styles': 'Estilos de variante',
+    'fx.rules.stylesHint': 'Uno por línea, en el orden en que se eligen. El agente usa estos.',
+    'fx.rules.stylesPlaceholder': 'Riso\nCollage\nFotografía de producto',
+    'fx.agent.canSchedule': 'El agente puede programar lo aprobado',
+    'fx.agent.canScheduleHint': 'Solo en las cuentas para las que se aprobó. Nunca aprueba, ni cancela ni mueve nada.',
   },
   en: {
     'members.deactivate': 'Deactivate',
@@ -66,5 +77,15 @@ export const features = define({
     'notif.kind.agent.timed_out': 'An agent run ran out of time',
 
     'outcome.scheduled': 'Scheduled what was approved',
+    'trigger.version.approved': 'Version approved',
+
+    'fx.rules.autoFill': 'Fill free slots with what is approved',
+    'fx.rules.autoFillHint': 'What is approved and nobody scheduled goes into the next free slot of an account it was approved for.',
+    'fx.rules.autoFillSince': 'On since {date}. Only takes what was approved since then.',
+    'fx.rules.styles': 'Variant styles',
+    'fx.rules.stylesHint': 'One per line, in the order people pick from. The agent uses these.',
+    'fx.rules.stylesPlaceholder': 'Riso\nCollage\nProduct photography',
+    'fx.agent.canSchedule': 'The agent can schedule what is approved',
+    'fx.agent.canScheduleHint': 'Only on the accounts it was approved for. It never approves, cancels or moves anything.',
   },
 });
