@@ -1,5 +1,7 @@
+import { Writable } from 'node:stream';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createEnv, type Env } from './helpers.js';
+import { buildApp, redactUrl } from '../src/app.js';
+import { createEnv, fakeMedia, type Env } from './helpers.js';
 
 let env: Env;
 beforeAll(async () => { env = await createEnv(); });
@@ -122,5 +124,33 @@ describe('response headers', () => {
     expect(r.headers['x-content-type-options']).toBe('nosniff');
     expect(r.headers['x-frame-options']).toBe('DENY');
     expect(r.headers['referrer-policy']).toBe('same-origin');
+  });
+});
+
+describe('the request log', () => {
+  it('keeps no secret that travels in a URL: sign-in links, OAuth and sign-on codes, prize links, signed media', async () => {
+    const lines: string[] = [];
+    const stream = new Writable({ write(chunk, _enc, done) { lines.push(String(chunk)); done(); } });
+    const { app } = await buildApp({ config: env.ctx.config, db: env.db, media: fakeMedia, mailer: { async send() {} }, logStream: stream });
+    await app.ready();
+    const secret = 'S3cretValue0123456789abcdefXYZ';
+    const urls = [
+      `/auth/callback?token=${secret}`, `/api/auth/sso/callback?code=${secret}&state=${secret}`, `/api/oauth/callback?code=${secret}&state=${secret}`,
+      `/api/public/prizes/${secret}`, `/api/public/prizes/${secret}/download`, `/prize/${secret}`, `/api/public/data-deletion/${secret}`,
+      `/api/meta/webhook?hub.mode=subscribe&hub.verify_token=${secret}&hub.challenge=1`, `/media/a/b.mp4?exp=1&sig=${secret}`, `/nowhere?${secret}`,
+    ];
+    for (const url of urls) await app.inject({ method: url.includes('/download') ? 'POST' : 'GET', url });
+    await app.close();
+    const log = lines.join('');
+    expect(log).toContain('"url":"/api/public/prizes/[redacted]"'); // the requests themselves are still there
+    expect(log).toContain('"url":"/auth/callback?token=[redacted]"');
+    expect(log).not.toContain(secret);
+  });
+
+  it('keeps the names of the parameters and the shape of the path', () => {
+    expect(redactUrl('/api/auth/sso/callback?code=abc&state=def')).toBe('/api/auth/sso/callback?code=[redacted]&state=[redacted]');
+    expect(redactUrl('/api/public/prizes/abc/download')).toBe('/api/public/prizes/[redacted]/download');
+    expect(redactUrl('/api/brands/1/calendar')).toBe('/api/brands/1/calendar');
+    expect(redactUrl('/x?bareValue&a=1')).toBe('/x?[redacted]&a=[redacted]');
   });
 });

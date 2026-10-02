@@ -28,11 +28,53 @@ export interface AppDeps {
   connectors?: ConnectorSet;
   now?: () => Date;
   logger?: boolean;
+  /** Where the log goes instead of standard output (tests read it back). */
+  logStream?: NodeJS.WritableStream;
 }
+
+/**
+ * Paths whose last part is itself a secret: a prize's link (the page and the API behind it) and Meta's data-deletion
+ * confirmation code. The first group is kept, the secret is not.
+ */
+const SECRET_PATHS = [/^(\/api\/public\/prizes\/)[^/?#]+/, /^(\/prize\/)[^/?#]+/, /^(\/api\/public\/data-deletion\/)[^/?#]+/];
+
+/**
+ * A URL as it may be written to the log: the value of every query parameter replaced (sign-in link tokens, OAuth and
+ * single sign-on codes and states, signed media URLs, Meta's verify token), and the secret part of the paths above.
+ * Names of parameters are kept, so a log still says what kind of request it was.
+ */
+export function redactUrl(url: string): string {
+  const q = url.indexOf('?');
+  let pathPart = q === -1 ? url : url.slice(0, q);
+  for (const re of SECRET_PATHS) pathPart = pathPart.replace(re, '$1[redacted]');
+  if (q === -1) return pathPart;
+  const query = url
+    .slice(q + 1)
+    .split('&')
+    .filter(Boolean)
+    .map((kv) => {
+      // A part with no "=" may be a value on its own (a bare token): only something that reads like a name is kept.
+      const eq = kv.indexOf('=');
+      return eq > 0 && /^[\w.\-[\]%]{1,40}$/.test(kv.slice(0, eq)) ? `${kv.slice(0, eq)}=[redacted]` : '[redacted]';
+    })
+    .join('&');
+  return `${pathPart}?${query}`;
+}
+
+/** Fastify's own request serializer, with the URL as redactUrl leaves it. */
+const logOptions = (stream?: NodeJS.WritableStream) => ({
+  ...(stream ? { stream } : {}),
+  serializers: {
+    req(req: { method?: string; url?: string; host?: string; ip?: string; socket?: { remotePort?: number } }) {
+      return { method: req.method, url: redactUrl(req.url ?? ''), host: req.host, remoteAddress: req.ip, remotePort: req.socket?.remotePort };
+    },
+  },
+});
 
 export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; ctx: Ctx }> {
   const { config, db } = deps;
-  const app = Fastify({ logger: deps.logger ?? config.NODE_ENV !== 'test', trustProxy: true });
+  const logging = deps.logger ?? (config.NODE_ENV !== 'test' || !!deps.logStream);
+  const app = Fastify({ logger: logging ? logOptions(deps.logStream) : false, trustProxy: true });
   const ctx: Ctx = createContext(config, db, app.log, {
     storage: deps.storage, mailer: deps.mailer, media: deps.media, connectors: deps.connectors, now: deps.now,
   });
@@ -126,13 +168,13 @@ export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; c
 
   // In production the API also serves the built front end.
   const dist = config.WEB_DIST ? path.resolve(config.WEB_DIST) : null;
-  if (dist && existsSync(dist)) {
-    await app.register(fastifyStatic, { root: dist, wildcard: false });
-    app.setNotFoundHandler((req, reply) => {
-      if (req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/media/')) return reply.sendFile('index.html');
-      return reply.code(404).send({ error: { code: 'not_found', message: 'Not found' } });
-    });
-  }
+  const serveShell = !!dist && existsSync(dist);
+  if (serveShell) await app.register(fastifyStatic, { root: dist, wildcard: false });
+  // Always our own: Fastify's default handler writes "Route GET:<the whole URL> not found" to the log, query and all.
+  app.setNotFoundHandler((req, reply) => {
+    if (serveShell && req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/media/')) return reply.sendFile('index.html');
+    return reply.code(404).send({ error: { code: 'not_found', message: 'Not found' } });
+  });
   return { app, ctx };
 }
 

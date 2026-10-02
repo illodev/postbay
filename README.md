@@ -162,6 +162,7 @@ declared.
 | A post that would go out after its hour plus the tolerance is not sent late | `services/publisher.ts` |
 | Network tokens are sealed, bound to their account, and never returned, logged or stored in the attempt history | `crypto.ts`, `connectors/http.ts` |
 | An event is written in the same transaction as the change it describes | `services/events.ts` |
+| The request log never holds a secret from a URL: query values (sign-in links, OAuth and sign-on codes and states, signed media) and prize links are redacted | `app.ts` |
 | A webhook never reaches cloud metadata or link-local addresses, and in production only public ones over https (unless allowed) | `net.ts` |
 | The agent cannot start without both budgets, past its rounds, over a budget, or on a piece that already has a run | `services/agent.ts`, a unique index |
 | An agent token cannot answer, resolve or claim to fix a comment marked for people only | `services/comments.ts`, `services/versions.ts` |
