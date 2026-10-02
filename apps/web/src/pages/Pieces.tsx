@@ -330,9 +330,9 @@ function AppearancePanel({ look, onChange }: { look: Look; onChange: (l: Look) =
   );
 }
 
-function MenuButton({ icon, label, value, props, active }: { icon: IconName; label: string; value?: string; props: Record<string, unknown>; active?: boolean }) {
+function MenuButton({ icon, label, value, props, active, className = '' }: { icon: IconName; label: string; value?: string; props: Record<string, unknown>; active?: boolean; className?: string }) {
   return (
-    <button type="button" className={`pz-tb ${active ? 'is-active' : ''}`} {...props}>
+    <button type="button" className={`pz-tb ${active ? 'is-active' : ''} ${className}`} aria-label={value ? `${label} ${value}` : label} {...props}>
       <Icon name={icon} />
       <span className="pz-tb-label">{label}</span>
       {value && <span className="pz-tb-value">{value}</span>}
@@ -528,7 +528,7 @@ export function PiecesPage() {
               label={t('pieces.look.title')}
               panelClassName="pz-pop-look"
               button={(props) => (
-                <button type="button" className="pz-tb" {...props}><Icon name="grid" /><span className="pz-tb-label">{t('pieces.look.title')}</span></button>
+                <button type="button" className="pz-tb" aria-label={t('pieces.look.title')} title={t('pieces.look.title')} {...props}><Icon name="grid" /><span className="pz-tb-label">{t('pieces.look.title')}</span></button>
               )}
             >
               {() => <AppearancePanel look={look} onChange={setLook} />}
@@ -561,7 +561,7 @@ export function PiecesPage() {
               </>
             )}
           </Dropdown>
-          <Dropdown label={t('pieces.sort.label')} button={(props) => <MenuButton icon="sort" label={t('pieces.sort.label')} value={sortLabel} props={props} />}>
+          <Dropdown label={t('pieces.sort.label')} button={(props) => <MenuButton icon="sort" label={t('pieces.sort.label')} value={sortLabel} props={props} className="pz-tb-sort" />}>
             {(close) => (
               <>
                 {MENU_SORTS.map((k) => (
@@ -577,26 +577,26 @@ export function PiecesPage() {
               </>
             )}
           </Dropdown>
-          <label className="pz-search">
-            <Icon name="search" />
-            <input
-              ref={searchRef}
-              type="search"
-              aria-label={t('pieces.searchLabel')}
-              placeholder={t('pieces.search')}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape' && q) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setQ('');
-                }
-              }}
-            />
-            {!q && <kbd className="pz-kbd" aria-hidden="true">/</kbd>}
-          </label>
         </div>
+        <label className="pz-search">
+          <Icon name="search" />
+          <input
+            ref={searchRef}
+            type="search"
+            aria-label={t('pieces.searchLabel')}
+            placeholder={t('pieces.search')}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && q) {
+                e.preventDefault();
+                e.stopPropagation();
+                setQ('');
+              }
+            }}
+          />
+          {!q && <kbd className="pz-kbd" aria-hidden="true">/</kbd>}
+        </label>
         <div className="pz-seg pz-views" role="radiogroup" aria-label={t('pieces.view.label')}>
           {VIEWS.map((v) => (
             <button key={v} type="button" role="radio" aria-checked={view === v} className={view === v ? 'is-on' : ''} onClick={() => setView(v)} title={t(`pieces.view.${v}` as Key)}>

@@ -4,7 +4,7 @@ import type { PieceSummary } from '../../api';
 import { Avatar } from '../../components/Avatar';
 import { Icon, type IconName } from '../../components/icons';
 import { Chip, NetMark, Skeleton } from '../../components/ui';
-import { t, type Key } from '../../i18n';
+import { t, tMaybe, type Key } from '../../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../../lib/format';
 import { Dropdown } from './Dropdown';
 import { ago, BOARD, FIRST_DIR, mediaLabel, stageOf, when, type Look, type Sort, type SortKey, type Stage } from './model';
@@ -405,8 +405,8 @@ export function ListView({ pieces, sort, onSort, selected, onToggle, onToggleAll
     const on = sort.key === c.key;
     return (
       <th key={c.key} className={c.className} aria-sort={on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
-        <button type="button" className={`pz-th ${on ? 'is-on' : ''}`} onClick={() => onSort({ key: c.key, dir: on ? (sort.dir === 'asc' ? 'desc' : 'asc') : FIRST_DIR[c.key] })}>
-          {t(c.label)}
+        <button type="button" className={`pz-th ${on ? 'is-on' : ''}`} title={t(c.label)} onClick={() => onSort({ key: c.key, dir: on ? (sort.dir === 'asc' ? 'desc' : 'asc') : FIRST_DIR[c.key] })}>
+          {c.key === 'comments' ? <><Icon name="bubble" className="pz-th-icon" /><span className="sr-only">{t(c.label)}</span></> : t(c.label)}
           <Icon name="chevronDown" className={`pz-th-arrow ${on && sort.dir === 'asc' ? 'is-up' : ''}`} />
         </button>
       </th>
@@ -451,7 +451,10 @@ export function ListView({ pieces, sort, onSort, selected, onToggle, onToggleAll
                 <td className="pz-c-thumb"><span className="pz-lthumb"><Thumb piece={p} width={240} /></span></td>
                 <td className="pz-c-title">
                   <Link to={`/pieces/${p.id}`} tabIndex={-1} className="pz-ltitle" title={p.title}>{p.title}</Link>
-                  <span className="pz-lsub">{[t(`kind.${p.kind}` as Key), mediaLabel(p)].filter(Boolean).join(' · ')}</span>
+                  <span className="pz-lsub">
+                    {[tMaybe(`kind.${p.kind}`, p.kind), mediaLabel(p)].filter(Boolean).join(' · ')}
+                    {p.campaign_name && <span className="pz-lsub-camp"> · {p.campaign_name}</span>}
+                  </span>
                 </td>
                 <td className="pz-c-camp">{p.campaign_name ?? <span className="pz-none">—</span>}</td>
                 <td className="pz-c-state"><Chip state={stageOf(p)} /></td>
