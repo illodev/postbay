@@ -1,4 +1,6 @@
-import { validateAgainst } from '../validate.js';
+import { goneNote } from '../notes.js';
+import { msg } from '../../i18n/index.js';
+import { issue, validateAgainst } from '../validate.js';
 import {
   ConnectorError,
   type Account, type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
@@ -67,6 +69,19 @@ const nextLook = (h: Handle) => ((h.looks as number | undefined) ?? 0) < POLL_FA
 const mainOf = (input: PublishInput): MediaItem[] =>
   input.media.filter((m) => m.kind === 'video' || m.kind === 'image').sort((a, b) => a.position - b.position);
 
+/** A post as the account's media (or stories) edge lists it. */
+interface IgMedia { id: string; caption?: string; timestamp: string; media_type?: string; media_product_type?: string; permalink?: string }
+
+/** Whether a listed post is the kind a placement makes: a Reel, a feed photo, a carousel, a story. */
+function sameKind(placement: string, m: IgMedia): boolean {
+  switch (placement) {
+    case 'reel': return m.media_product_type === 'REELS' || (!m.media_product_type && m.media_type === 'VIDEO');
+    case 'carousel': return m.media_type === 'CAROUSEL_ALBUM';
+    case 'story': return m.media_product_type === 'STORY' || !m.media_product_type;
+    default: return m.media_type === 'IMAGE' && m.media_product_type !== 'STORY';
+  }
+}
+
 export function createInstagram(client: MetaClient): Connector {
   /** Asks the container where it is. Photos are often ready at once and may not report a status at all. */
   async function status(containerId: string, token: string): Promise<{ state: 'ready' | 'pending' | 'expired'; }> {
@@ -110,15 +125,12 @@ export function createInstagram(client: MetaClient): Connector {
     validate(input): Issue[] {
       const issues = validateAgainst(CAPS, input);
       if (input.placement === 'story' && input.text.trim()) {
-        issues.push({ severity: 'warning', code: 'story.text', field: 'text', message: 'Instagram Stories take no caption: the text will be left out' });
+        issues.push(issue('warning', 'story.text', {}, 'text'));
       }
       if (input.placement === 'carousel') {
         for (const m of mainOf(input)) {
           if (m.kind === 'video' && m.durationMs && m.durationMs > 60_000) {
-            issues.push({
-              severity: 'warning', code: 'carousel.video.length', field: 'media',
-              message: `${m.name} runs ${Math.round(m.durationMs / 1000)} s. Meta's reference gives no length for a video in a carousel, and feed videos were limited to 60 seconds: Instagram may refuse it.`,
-            });
+            issues.push(issue('warning', 'carousel.video.length', { name: m.name, seconds: String(Math.round(m.durationMs / 1000)) }, 'media'));
           }
         }
       }
@@ -212,6 +224,11 @@ export function createInstagram(client: MetaClient): Connector {
       let h: Handle = { ...handle };
       let mediaId: string = h.mediaId;
       if (!mediaId) {
+        // Written down BEFORE the call: if its answer is lost, the next try knows the post may exist, and `find` looks for it.
+        if (!h.publishAttemptedAt) {
+          h = { ...h, publishAttemptedAt: env.now().toISOString() };
+          await env.persist(h);
+        }
         const r = await client.post<{ id: string }>(`${igUserId(account)}/media_publish`, token, { creation_id: h.containerId });
         mediaId = r.id;
         h = { ...h, mediaId };
@@ -241,13 +258,41 @@ export function createInstagram(client: MetaClient): Connector {
       return { externalId: mediaId, url };
     },
 
+    /**
+     * Whether an earlier `media_publish` went through although its answer was lost. The container says so itself: its status_code
+     * is PUBLISHED once it has been published, and FINISHED while it has not. Meta does not say which media it became, so that is
+     * looked for among the account's latest posts (its stories, for a story): the same kind of post, made since a minute before the
+     * attempt, with the same caption.
+     */
+    async find(input, account, handle: Handle, env: ConnectorEnv): Promise<Handle | null> {
+      if (handle.mediaId) return handle;
+      if (!handle.containerId) return null;
+      const token = (await env.token()).accessToken;
+      const c = await client.get<{ status_code?: string }>(handle.containerId as string, token, { fields: 'status_code' });
+      if (c.status_code !== 'PUBLISHED') return null;
+      const since = new Date(String(handle.publishAttemptedAt ?? new Date(input.scheduledAt.getTime() - 3600_000).toISOString())).getTime() - 60_000;
+      const story = input.placement === 'story';
+      const r = await client.get<{ data?: IgMedia[] }>(`${igUserId(account)}/${story ? 'stories' : 'media'}`, token, {
+        fields: 'id,caption,timestamp,media_type,media_product_type,permalink', limit: 25,
+      });
+      const found = (r.data ?? [])
+        .filter((m) => new Date(m.timestamp).getTime() >= since && sameKind(input.placement, m) && (story || (m.caption ?? '') === input.text))
+        .sort((a, b) => a.timestamp.localeCompare(b.timestamp))[0];
+      if (!found) {
+        throw new ConnectorError('unknown', "Instagram says this post was published, but it is not among the account's latest posts yet: it is looked for again before anything is sent.", {
+          text: msg('connector.ig.publishedNotFound'),
+        });
+      }
+      return { ...handle, mediaId: found.id, ...(found.permalink ? { permalink: found.permalink } : {}), recovered: true };
+    },
+
     async verify(_account, externalId, _handle, env): Promise<VerifyResult> {
       const token = (await env.token()).accessToken;
       try {
         const m = await client.get<{ id: string; permalink?: string }>(externalId, token, { fields: 'id,permalink' });
         return { visibility: 'public', url: m.permalink };
       } catch (err) {
-        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', note: 'Instagram does not return this post any more' };
+        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', ...goneNote('instagram', 'post') };
         throw err;
       }
     },

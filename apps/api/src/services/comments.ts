@@ -6,6 +6,7 @@ import type { Queryable } from '../db.js';
 import { anchorSchema, type Anchor } from '../domain/anchors.js';
 import { trackAt } from './subtitles.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
+import { msg } from '../i18n/index.js';
 import { audit } from './audit.js';
 import { commentRef, emit } from './events.js';
 import { loadBrand, loadVersion } from './loaders.js';
@@ -53,19 +54,19 @@ async function checkAnchor(ctx: Ctx, versionId: string, anchor: Anchor): Promise
   const primary = assets.filter((a) => a.kind === 'video' || a.kind === 'image');
   if (anchor.type === 'time') {
     const video = assets.find((a) => a.kind === 'video' && (anchor.position === undefined || a.position === anchor.position));
-    if (!video) throw badRequest('invalid_anchor', 'This version has no video to anchor a moment to');
+    if (!video) throw badRequest('invalid_anchor', msg('error.comment.noVideo'));
     const afterEnd = (t: number) => video.duration_ms !== null && t * 1000 > video.duration_ms + 1000;
     if (anchor.cue === undefined) {
-      if (anchor.track !== undefined || anchor.cue_text !== undefined) throw badRequest('invalid_anchor', 'A subtitle line is named by its number');
-      if (afterEnd(anchor.t)) throw badRequest('invalid_anchor', 'The moment is after the end of the video');
+      if (anchor.track !== undefined || anchor.cue_text !== undefined) throw badRequest('invalid_anchor', msg('error.comment.cueByNumber'));
+      if (afterEnd(anchor.t)) throw badRequest('invalid_anchor', msg('error.comment.afterEnd'));
       return { video, anchor };
     }
     // A comment on a subtitle line: the line must exist in this version, and its times and words are the file's, not the sender's.
     const track = await trackAt(ctx, versionId, anchor.track ?? 0);
-    if (!track) throw badRequest('invalid_anchor', 'This version has no such subtitle file');
+    if (!track) throw badRequest('invalid_anchor', msg('error.comment.noSuchSubtitles'));
     const cue = track.cues[anchor.cue];
-    if (!cue) throw badRequest('invalid_anchor', 'That subtitle line does not exist in this version');
-    if (afterEnd(cue.start)) throw badRequest('invalid_anchor', 'That subtitle line comes after the end of the video');
+    if (!cue) throw badRequest('invalid_anchor', msg('error.comment.noSuchCue'));
+    if (afterEnd(cue.start)) throw badRequest('invalid_anchor', msg('error.comment.cueAfterEnd'));
     return {
       video,
       anchor: {
@@ -75,8 +76,8 @@ async function checkAnchor(ctx: Ctx, versionId: string, anchor: Anchor): Promise
     };
   }
   const hasPdf = assets.some((a) => a.kind === 'pdf');
-  if (!hasPdf && anchor.page > primary.length) throw badRequest('invalid_anchor', `The version only has ${primary.length} page(s)`);
-  if (!hasPdf && primary.length === 0) throw badRequest('invalid_anchor', 'This version has no pages to anchor a region to');
+  if (!hasPdf && anchor.page > primary.length) throw badRequest('invalid_anchor', msg('error.comment.pages', { count: primary.length }));
+  if (!hasPdf && primary.length === 0) throw badRequest('invalid_anchor', msg('error.comment.noPages'));
   return { video: null, anchor };
 }
 
@@ -84,7 +85,7 @@ export async function createComment(ctx: Ctx, p: Principal, versionId: string, r
   const input = commentInput.parse(raw);
   const version = await loadVersion(ctx.db, versionId);
   await authorize(ctx.db, p, version.brand_id, 'comment.create');
-  if (!LIVE.includes(version.review_state)) throw conflict('version_closed', 'This version no longer accepts new comments');
+  if (!LIVE.includes(version.review_state)) throw conflict('version_closed', msg('error.comment.versionClosed'));
   const checked = input.anchor ? await checkAnchor(ctx, versionId, input.anchor) : null;
   const anchor = checked?.anchor ?? null;
   const video = checked?.video ?? null;
@@ -122,9 +123,9 @@ export async function replyToComment(ctx: Ctx, p: Principal, commentId: string, 
   const input = replyInput.parse(raw);
   const parent = await loadComment(ctx.db, commentId);
   await authorize(ctx.db, p, parent.brand_id, 'comment.reply');
-  if (parent.parent_id) throw badRequest('invalid_reply', 'Only the comment that opens a thread can be replied to');
-  if (parent.discarded_at) throw conflict('piece_discarded', 'The piece is discarded');
-  if (parent.people_only && p.kind === 'token') throw forbidden('This comment is for people only: an agent leaves it alone');
+  if (parent.parent_id) throw badRequest('invalid_reply', msg('error.comment.replyToThread'));
+  if (parent.discarded_at) throw conflict('piece_discarded', msg('error.pieceDiscarded'));
+  if (parent.people_only && p.kind === 'token') throw forbidden(msg('error.comment.peopleOnly'));
   const a = actorCols(p);
   return ctx.db.tx(async (db) => {
     const row = (await db.one(
@@ -144,8 +145,8 @@ export async function resolveComment(ctx: Ctx, p: Principal, commentId: string) 
   return ctx.db.tx(async (db) => {
     const c = await loadComment(db, commentId);
     await authorize(db, p, c.brand_id, 'comment.resolve');
-    if (c.parent_id) throw badRequest('invalid_comment', 'Resolve the thread, not a reply');
-    if (c.people_only && p.kind === 'token') throw forbidden('This comment is for people only: an agent leaves it alone');
+    if (c.parent_id) throw badRequest('invalid_comment', msg('error.comment.resolveThread'));
+    if (c.people_only && p.kind === 'token') throw forbidden(msg('error.comment.peopleOnly'));
     if (c.status === 'resolved') return c;
     const a = actorCols(p);
     const row = (await db.one(
@@ -161,7 +162,7 @@ export async function reopenComment(ctx: Ctx, p: Principal, commentId: string) {
   return ctx.db.tx(async (db) => {
     const c = await loadComment(db, commentId);
     await authorize(db, p, c.brand_id, 'comment.create');
-    if (c.parent_id) throw badRequest('invalid_comment', 'Reopen the thread, not a reply');
+    if (c.parent_id) throw badRequest('invalid_comment', msg('error.comment.reopenThread'));
     if (c.status === 'open') return c;
     const row = (await db.one(
       `update comment set status = 'open', resolved_by_user_id = null, resolved_at = null, resolved_in_version_id = null
@@ -179,7 +180,7 @@ export async function setPeopleOnly(ctx: Ctx, p: Principal, commentId: string, v
   return ctx.db.tx(async (db) => {
     const c = await loadComment(db, commentId);
     await authorize(db, p, c.brand_id, 'comment.create');
-    if (c.parent_id) throw badRequest('invalid_comment', 'Mark the thread, not a reply');
+    if (c.parent_id) throw badRequest('invalid_comment', msg('error.comment.markThread'));
     if (c.people_only === flag) return c;
     const row = (await db.one('update comment set people_only = $2 where id = $1 returning *', [commentId, flag]))!;
     await audit(db, p, c.brand_id, flag ? 'comment.people_only' : 'comment.agent_allowed', 'comment', commentId, { people_only: c.people_only }, { people_only: flag });

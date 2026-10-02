@@ -13,7 +13,8 @@ let ipCounter = 0;
 const nextIp = () => `10.${(++ipCounter >> 8) & 255}.${ipCounter & 255}.7`;
 interface Reply { status: number; body: any; headers: Record<string, unknown> }
 async function req(cookie: string | null, method: string, url: string, body?: unknown, ip = nextIp()): Promise<Reply> {
-  const headers: Record<string, string> = { 'x-forwarded-for': ip };
+  // In English, as the web asks when someone has chosen it (the Spanish texts are tested in i18n-errors.test.ts).
+  const headers: Record<string, string> = { 'x-forwarded-for': ip, 'accept-language': 'en' };
   if (cookie) { headers.cookie = cookie; headers['x-requested-by'] = 'studio'; }
   const res = await env.app.inject({ method: method as 'GET', url, headers, payload: body === undefined ? undefined : (body as object) });
   let parsed: any = null;
@@ -362,7 +363,8 @@ describe('managing it', () => {
     expect(added.status).toBe(202);
     expect(added.body).toMatchObject({ invited: true, invitation: { email: 'boss@rival.test', role: 'reader' } });
     expect(await env.db.one('select 1 from member where user_id = $1 and brand_id = $2', [victim.id, env.brandId])).toBeNull();
-    await new Promise((r) => setImmediate(r));
+    // The email goes after the answer (it reads the brand and the person's language first): wait for it.
+    for (let i = 0; i < 200 && !env.mails.some((m) => m.to === 'boss@rival.test'); i++) await new Promise((r) => setTimeout(r, 10));
     expect(env.mails.find((m) => m.to === 'boss@rival.test')?.subject).toBe('Invitation to Test brand');
 
     // Even if they accept, an admin of this brand alone cannot touch their authenticator.

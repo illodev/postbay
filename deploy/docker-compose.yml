@@ -25,6 +25,9 @@ x-app-env: &app-env
   TOKEN_KEY: ${TOKEN_KEY:-}
   META_APP_ID: ${META_APP_ID:-}
   META_APP_SECRET: ${META_APP_SECRET:-}
+  # With Facebook Login for Business: the login configuration the sign-in dialog uses (and the one for brands with prizes).
+  META_LOGIN_CONFIG_ID: ${META_LOGIN_CONFIG_ID:-}
+  META_LOGIN_CONFIG_ID_PRIZES: ${META_LOGIN_CONFIG_ID_PRIZES:-}
   GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
   GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
   # The rest of the networks, results and prizes (docs/phase-4.md). Each switches on with its credentials; Bluesky needs only TOKEN_KEY.
@@ -57,6 +60,8 @@ x-app-env: &app-env
   OIDC_TRUST_EMAIL: ${OIDC_TRUST_EMAIL:-}
   # Ask YouTube for the Analytics permission so watch time can be read (a sensitive scope: the Google project has to be verified for it).
   GOOGLE_ANALYTICS: ${GOOGLE_ANALYTICS:-}
+  # How much a brand may have waiting in unfinished big uploads on the staging volume, in GB (20 when empty).
+  STAGING_MAX_GB_PER_BRAND: ${STAGING_MAX_GB_PER_BRAND:-}
 
 services:
   db:

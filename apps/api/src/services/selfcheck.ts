@@ -19,12 +19,14 @@ import {
 } from '../connectors/types.js';
 import type { Ctx } from '../context.js';
 import { notFound } from '../errors.js';
+import { render, requestLocale, tr, type Locale } from '../i18n/index.js';
 import { audit } from './audit.js';
 import { connectorEnv, loadConnectorAccount } from './connectors.js';
 import { prizesOf } from './prizes.js';
 
 /**
- * Checks that say whether this server and each connected account are ready for real use, and what to do about what is not.
+ * Checks that say whether this server and each connected account are ready for real use, and what to do about what is not. Every
+ * title, detail and hint is in the language of the request (the command line: the one its environment's LANG names).
  *
  * Everything in the tests and the browser runs was proven against stand-ins for the networks. This is how the first real run is
  * made short: it looks at the connection, asks each network a few harmless questions and says in plain words what failed and what
@@ -80,63 +82,63 @@ export async function checkServer(ctx: Ctx): Promise<CheckResult[]> {
   const out: CheckResult[] = [];
 
   out.push(ctx.vault
-    ? result('token_key', 'pass', 'Token key', 'TOKEN_KEY is set, so network tokens are kept sealed.')
-    : result('token_key', 'fail', 'Token key', 'TOKEN_KEY is not set: no account can be connected.', 'Generate one with `openssl rand -base64 32`, keep a copy somewhere safe, and restart.'));
+    ? result('token_key', 'pass', tr('check.tokenKey.title'), tr('check.tokenKey.pass'))
+    : result('token_key', 'fail', tr('check.tokenKey.title'), tr('check.tokenKey.fail'), tr('check.tokenKey.failHint')));
 
   const app = new URL(c.APP_URL);
   const redirect = `${c.APP_URL.replace(/\/$/, '')}/api/oauth/callback`;
   if (isPrivateHost(app.hostname)) {
-    out.push(result('app_url', c.NODE_ENV === 'production' ? 'fail' : 'warn', 'Public address', `APP_URL is ${c.APP_URL}, which only this machine can reach.`, 'Networks send the browser back to the address you register, so for a real run it has to be a public https address.'));
+    out.push(result('app_url', c.NODE_ENV === 'production' ? 'fail' : 'warn', tr('check.appUrl.title'), tr('check.appUrl.private', { url: c.APP_URL }), tr('check.appUrl.privateHint')));
   } else if (app.protocol !== 'https:') {
-    out.push(result('app_url', 'warn', 'Public address', `APP_URL is ${c.APP_URL}, which is not https.`, 'Most networks refuse an http redirect address, and sign-in cookies should only travel over https.'));
+    out.push(result('app_url', 'warn', tr('check.appUrl.title'), tr('check.appUrl.http', { url: c.APP_URL }), tr('check.appUrl.httpHint')));
   } else {
-    out.push(result('app_url', 'pass', 'Public address', `Register this redirect address with every network: ${redirect}`));
+    out.push(result('app_url', 'pass', tr('check.appUrl.title'), tr('check.appUrl.pass', { redirect })));
   }
 
   // The address the networks download files from: this app's own media route, or, with S3, the bucket's (signed) public address.
   const s3Media = c.STORAGE_DRIVER === 's3' ? (c.S3_PUBLIC_ENDPOINT || c.S3_ENDPOINT || `https://${c.S3_BUCKET}.s3.${c.S3_REGION === 'auto' ? 'us-east-1' : c.S3_REGION}.amazonaws.com`) : null;
-  const mediaName = s3Media ? (c.S3_PUBLIC_ENDPOINT ? 'S3_PUBLIC_ENDPOINT' : c.S3_ENDPOINT ? 'S3_ENDPOINT' : 'the S3 bucket address') : 'MEDIA_URL';
+  const mediaName = s3Media ? (c.S3_PUBLIC_ENDPOINT ? 'S3_PUBLIC_ENDPOINT' : c.S3_ENDPOINT ? 'S3_ENDPOINT' : tr('check.media.bucket')) : 'MEDIA_URL';
   const mediaUrl = s3Media ?? c.MEDIA_URL;
   const media = new URL(mediaUrl);
   if (isPrivateHost(media.hostname)) {
-    out.push(result('media_url', 'fail', 'Media address', `${mediaName} is ${mediaUrl}: the networks cannot reach it, and Instagram, Threads, Pinterest and TikTok photos download the files from it.`, `Point ${s3Media ? 'S3_PUBLIC_ENDPOINT' : 'MEDIA_URL'} at a public https domain that serves the signed media addresses.`));
+    out.push(result('media_url', 'fail', tr('check.media.title'), tr('check.media.private', { name: mediaName, url: mediaUrl }), tr('check.media.privateHint', { variable: s3Media ? 'S3_PUBLIC_ENDPOINT' : 'MEDIA_URL' })));
   } else if (media.protocol !== 'https:') {
-    out.push(result('media_url', 'warn', 'Media address', `${mediaName} is ${mediaUrl}, which is not https.`, 'Some networks refuse to download from an http address.'));
+    out.push(result('media_url', 'warn', tr('check.media.title'), tr('check.media.http', { name: mediaName, url: mediaUrl }), tr('check.media.httpHint')));
   } else {
-    out.push(result('media_url', 'pass', 'Media address', `Networks will download files from ${media.host}${s3Media ? ` (${mediaName}, where the signed S3 addresses point)` : ''}. TikTok photo posts also need this domain verified in TikTok's developer portal: ${media.host}.`));
+    out.push(result('media_url', 'pass', tr('check.media.title'), tr('check.media.pass', { host: media.host, where: s3Media ? tr('check.media.s3Where', { name: mediaName }) : '' })));
   }
 
   out.push(c.STORAGE_DRIVER === 'local' && c.NODE_ENV === 'production'
-    ? result('storage', 'warn', 'Storage', 'Files are kept on this machine\'s disk.', 'Use the s3 driver so files survive a rebuilt machine and can be served from the media domain.')
-    : result('storage', 'pass', 'Storage', `Driver: ${c.STORAGE_DRIVER}.`));
+    ? result('storage', 'warn', tr('check.storage.title'), tr('check.storage.local'), tr('check.storage.localHint'))
+    : result('storage', 'pass', tr('check.storage.title'), tr('check.storage.pass', { driver: c.STORAGE_DRIVER })));
 
   const [ffmpeg, ffprobe] = await Promise.all([tool('ffmpeg'), tool('ffprobe')]);
   out.push(ffmpeg && ffprobe
     ? result('ffmpeg', 'pass', 'ffmpeg', ffmpeg)
-    : result('ffmpeg', 'fail', 'ffmpeg', `${!ffmpeg ? 'ffmpeg' : 'ffprobe'} is not installed on this machine.`, 'Videos and pictures are converted for each network with it: install ffmpeg (it includes ffprobe).'));
+    : result('ffmpeg', 'fail', 'ffmpeg', tr('check.ffmpeg.missing', { tool: !ffmpeg ? 'ffmpeg' : 'ffprobe' }), tr('check.ffmpeg.missingHint')));
 
   if (c.NODE_ENV === 'production' && !c.SMTP_URL) {
-    out.push(result('email', 'warn', 'Email', 'SMTP_URL is not set: sign-in links are only written to the server log.', 'Set SMTP_URL so people can sign in.'));
+    out.push(result('email', 'warn', tr('check.email.title'), tr('check.email.noSmtp'), tr('check.email.noSmtpHint')));
   }
 
   const enabled = Object.entries(c.enabled).filter(([, on]) => on).map(([k]) => k);
   out.push(enabled.length
-    ? result('networks', 'pass', 'Networks switched on', enabled.join(', '))
-    : result('networks', 'warn', 'Networks switched on', 'No network has credentials: every account stays manual.', 'Set a network\'s credentials (see .env.example) and restart.'));
+    ? result('networks', 'pass', tr('check.networks.title'), enabled.join(', '))
+    : result('networks', 'warn', tr('check.networks.title'), tr('check.networks.none'), tr('check.networks.noneHint')));
 
   if (c.enabled.linkedin) {
     const age = versionAgeMonths(c.LINKEDIN_VERSION, ctx.now());
     out.push(age >= 12
-      ? result('linkedin_version', 'fail', 'LinkedIn API version', `LINKEDIN_VERSION=${c.LINKEDIN_VERSION} is ${age} months old, and LinkedIn retires a version after about a year.`, 'Raise LINKEDIN_VERSION to the latest month in LinkedIn\'s changelog, and check the post still works.')
+      ? result('linkedin_version', 'fail', tr('check.linkedin.title'), tr('check.linkedin.retired', { version: c.LINKEDIN_VERSION, months: age }), tr('check.linkedin.retiredHint'))
       : age >= 10
-        ? result('linkedin_version', 'warn', 'LinkedIn API version', `LINKEDIN_VERSION=${c.LINKEDIN_VERSION} is ${age} months old and will soon be retired.`, 'Plan to raise it.')
-        : result('linkedin_version', 'pass', 'LinkedIn API version', `LINKEDIN_VERSION=${c.LINKEDIN_VERSION} (${Math.max(age, 0)} months old).`));
+        ? result('linkedin_version', 'warn', tr('check.linkedin.title'), tr('check.linkedin.old', { version: c.LINKEDIN_VERSION, months: age }), tr('check.linkedin.oldHint'))
+        : result('linkedin_version', 'pass', tr('check.linkedin.title'), tr('check.linkedin.pass', { version: c.LINKEDIN_VERSION, count: Math.max(age, 0) })));
   }
 
   if (c.metaEnabled) {
     out.push(c.META_WEBHOOK_VERIFY_TOKEN
-      ? result('meta_webhook', 'pass', 'Meta webhook', `Register ${c.APP_URL.replace(/\/$/, '')}/api/meta/webhook in the Meta app (Instagram and Page objects, comments) with the verify token you set.`)
-      : result('meta_webhook', 'warn', 'Meta webhook', 'META_WEBHOOK_VERIFY_TOKEN is not set.', 'Only needed for prizes. Without it comments are found by polling every few minutes instead of arriving at once.'));
+      ? result('meta_webhook', 'pass', tr('check.metaWebhook.title'), tr('check.metaWebhook.pass', { url: `${c.APP_URL.replace(/\/$/, '')}/api/meta/webhook` }))
+      : result('meta_webhook', 'warn', tr('check.metaWebhook.title'), tr('check.metaWebhook.missing'), tr('check.metaWebhook.missingHint')));
   }
   return out;
 }
@@ -157,22 +159,18 @@ function requiredScopes(provider: string, prizes: boolean, analytics: boolean): 
   }
 }
 
-/** A network's own failure, said as what the person can do about it. */
+/** A network's own failure, said as what the person can do about it. The network's message stays in its own words. */
 function describe(err: unknown, about: 'account' | 'post' = 'account'): { status: CheckStatus; detail: string; hint: string } {
-  if (!(err instanceof ConnectorError)) return { status: 'fail', detail: (err as Error).message, hint: 'This is not an answer from the network: look at the server log.' };
+  if (!(err instanceof ConnectorError)) return { status: 'fail', detail: (err as Error).message, hint: tr('check.why.notNetwork') };
   const where = err.httpStatus ? ` (HTTP ${err.httpStatus})` : '';
+  const detail = `${err.text ? render(requestLocale(), err.text, err.message) : err.message}${where}`;
   switch (err.errorClass) {
-    case 'auth': return { status: 'fail', detail: `${err.message}${where}`, hint: 'The network no longer accepts this connection: connect the account again in Settings → Accounts.' };
-    case 'rate_limit': return { status: 'warn', detail: `${err.message}${where}`, hint: 'The network is limiting this app right now. Try again later; nothing is wrong with the connection.' };
-    case 'transient': return { status: 'warn', detail: `${err.message}${where}`, hint: 'The network did not answer properly. If this repeats, check that this server can reach it (outbound firewall, proxy, DNS).' };
-    case 'unsupported': return { status: 'fail', detail: `${err.message}${where}`, hint: 'The network says it cannot do this. The message above says why.' };
-    case 'file_rejected': return {
-      status: 'fail', detail: `${err.message}${where}`,
-      hint: about === 'post'
-        ? 'The network refused the question about this post. If the post was deleted on the network, that is why. Otherwise this app and the network disagree about how to ask: send the transcript (see docs/phase-5.md) so it can be fixed.'
-        : 'The network refused the request itself, which usually means this app and the network disagree about how to ask. Send the transcript (see docs/phase-5.md) so it can be fixed.',
-    };
-    default: return { status: 'fail', detail: `${err.message}${where}`, hint: 'An answer the app does not know how to read. Send the transcript (see docs/phase-5.md) so it can be fixed.' };
+    case 'auth': return { status: 'fail', detail, hint: tr('check.why.auth') };
+    case 'rate_limit': return { status: 'warn', detail, hint: tr('check.why.rateLimit') };
+    case 'transient': return { status: 'warn', detail, hint: tr('check.why.transient') };
+    case 'unsupported': return { status: 'fail', detail, hint: tr('check.why.unsupported') };
+    case 'file_rejected': return { status: 'fail', detail, hint: tr(about === 'post' ? 'check.why.refusedPost' : 'check.why.refused') };
+    default: return { status: 'fail', detail, hint: tr('check.why.unknown') };
   }
 }
 
@@ -190,17 +188,24 @@ async function latestPost(ctx: Ctx, accountId: string) {
   );
 }
 
+/** A number with a fixed count of decimals, written the way the language writes it (3.0 days, 3,0 días). */
+const fixed = (n: number, digits: number, locale: Locale) => (locale === 'es' ? n.toFixed(digits).replace('.', ',') : n.toFixed(digits));
+
 /** How long a token has left, in the unit a person would say it in: an hour-long token is not "0.0 days". */
-export function lifetimeOf(ms: number): string {
+export function lifetimeOf(ms: number, locale: Locale = requestLocale()): string {
+  const say = (key: 'check.minutes' | 'check.hours' | 'check.days', count: string | number) => render(locale, { code: key, params: { count } });
   const minutes = ms / 60_000;
-  if (minutes < 90) return `${Math.max(1, Math.round(minutes))} minute${Math.round(minutes) === 1 ? '' : 's'}`;
+  if (minutes < 90) return say('check.minutes', Math.max(1, Math.round(minutes)));
   const hours = minutes / 60;
-  if (hours < 48) return `${Math.round(hours)} hours`;
+  if (hours < 48) return say('check.hours', Math.round(hours));
   const days = hours / 24;
-  return `${days.toFixed(days < 10 ? 1 : 0)} days`;
+  return say('check.days', fixed(days, days < 10 ? 1 : 0, locale));
 }
 
-const fmtMs = (ms: number) => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
+const METRIC_NAMES = ['views', 'reach', 'likes', 'comments', 'shares', 'saves', 'avgWatchSeconds', 'watchMinutes'] as const;
+const isKnownMetric = (k: string): k is (typeof METRIC_NAMES)[number] => (METRIC_NAMES as readonly string[]).includes(k);
+
+const fmtMs = (ms: number) => (ms < 1000 ? tr('check.ms', { n: ms }) : tr('check.seconds', { n: fixed(ms / 1000, 1, requestLocale()) }));
 
 /** The checks that only read. Safe to run from the screen at any time. */
 export async function checkAccount(ctx: Ctx, accountId: string): Promise<AccountReport> {
@@ -211,20 +216,21 @@ export async function checkAccount(ctx: Ctx, accountId: string): Promise<Account
   const done = (): AccountReport => ({ account: header, results, ok: ok(results) });
 
   if (!row.token_encrypted) {
-    results.push(result('connected', 'skip', 'Connection', 'This account is not connected: a person publishes to it by hand.', 'Connect it in Settings → Accounts to let the app publish.'));
+    results.push(result('connected', 'skip', tr('check.connected.title'), tr('check.connected.manual'), tr('check.connected.manualHint')));
     return done();
   }
   if (row.status === 'reconnect_required') {
-    results.push(result('connected', 'fail', 'Connection', `The network stopped accepting this connection${row.last_error ? `: ${row.last_error}` : ''}.`, 'Connect the account again in Settings → Accounts.'));
+    results.push(result('connected', 'fail', tr('check.connected.title'),
+      row.last_error ? tr('check.connected.lostWhy', { error: row.last_error }) : tr('check.connected.lost'), tr('check.connected.lostHint')));
     return done();
   }
-  results.push(result('connected', 'pass', 'Connection', 'Connected, and nothing has told the app otherwise.'));
+  results.push(result('connected', 'pass', tr('check.connected.title'), tr('check.connected.pass')));
 
   const connector = ctx.connectors.connector(row.network as Account['network']);
   const provider = ctx.connectors.providerOf(row.network as Account['network']);
   const account = (await loadConnectorAccount(ctx, accountId))!;
   if (!connector || !provider || !ctx.vault) {
-    results.push(result('server', 'fail', 'This server', `The app is not set up to publish to ${row.network} on this server.`, 'Set the network\'s credentials and TOKEN_KEY (see .env.example), and restart.'));
+    results.push(result('server', 'fail', tr('check.server.title'), tr('check.server.notSetUp', { network: row.network }), tr('check.server.notSetUpHint')));
     return done();
   }
 
@@ -233,18 +239,19 @@ export async function checkAccount(ctx: Ctx, accountId: string): Promise<Account
   try {
     token = ctx.vault.open<TokenSet>(row.token_encrypted, `account:${accountId}`);
   } catch {
-    results.push(result('token', 'fail', 'Stored token', 'The stored token cannot be opened with this server\'s TOKEN_KEY.', 'TOKEN_KEY changed since the account was connected. Connect the account again.'));
+    results.push(result('token', 'fail', tr('check.token.storedTitle'), tr('check.token.unreadable'), tr('check.token.unreadableHint')));
     return done();
   }
   const expires = token.expiresAt ? new Date(token.expiresAt).getTime() : null;
   if (expires === null) {
-    results.push(result('token', 'pass', 'Token lifetime', 'The network gave no end date for this token.'));
+    results.push(result('token', 'pass', tr('check.token.title'), tr('check.token.noEnd')));
   } else {
     const days = (expires - ctx.now().getTime()) / 86_400_000;
     const renews = !!provider.refresh;
-    if (days < 0) results.push(result('token', 'fail', 'Token lifetime', 'The token has expired.', 'Connect the account again.'));
-    else if (days <= 7 && !renews) results.push(result('token', 'warn', 'Token lifetime', `The token runs out in ${days.toFixed(1)} days and this network gives no way to renew it.`, 'Connect the account again before then.'));
-    else results.push(result('token', 'pass', 'Token lifetime', `Valid for another ${lifetimeOf(expires - ctx.now().getTime())}${renews ? ', and the app renews it by itself before it ends' : ''}.`));
+    const title = tr('check.token.title');
+    if (days < 0) results.push(result('token', 'fail', title, tr('check.token.expired'), tr('check.token.reconnect')));
+    else if (days <= 7 && !renews) results.push(result('token', 'warn', title, tr('check.token.ending', { days: fixed(days, 1, requestLocale()) }), tr('check.token.endingHint')));
+    else results.push(result('token', 'pass', title, tr('check.token.valid', { lifetime: lifetimeOf(expires - ctx.now().getTime()), renews: renews ? tr('check.token.renews') : '' })));
   }
 
   // What was granted, against what the app needs for what this brand uses.
@@ -253,14 +260,14 @@ export async function checkAccount(ctx: Ctx, accountId: string): Promise<Account
   const needed = requiredScopes(provider.id, prizes, ctx.config.GOOGLE_ANALYTICS);
   const granted = (row.granted_permissions && row.granted_permissions.length ? row.granted_permissions : token.scopes) ?? null;
   if (!needed.length) {
-    results.push(result('scopes', 'skip', 'Permissions', 'This network has no list of permissions to compare.'));
+    results.push(result('scopes', 'skip', tr('check.scopes.title'), tr('check.scopes.noList')));
   } else if (!granted) {
-    results.push(result('scopes', 'skip', 'Permissions', 'The network did not say which permissions it granted.'));
+    results.push(result('scopes', 'skip', tr('check.scopes.title'), tr('check.scopes.unknown')));
   } else {
     const missing = needed.filter((s) => !granted.includes(s));
     results.push(missing.length
-      ? result('scopes', 'warn', 'Permissions', `Not granted: ${missing.join(', ')}.`, `Anything that needs them will fail. Connect the account again and accept every permission${prizes ? '' : ' (prizes are off, so the messaging ones are not asked for)'}.`)
-      : result('scopes', 'pass', 'Permissions', `All ${needed.length} permissions the app asks for were granted.`));
+      ? result('scopes', 'warn', tr('check.scopes.title'), tr('check.scopes.missing', { missing: missing.join(', ') }), tr('check.scopes.missingHint', { prizesOff: prizes ? '' : tr('check.scopes.prizesOff') }))
+      : result('scopes', 'pass', tr('check.scopes.title'), tr('check.scopes.pass', { count: needed.length })));
   }
 
   // A live question to the network: is the connection accepted right now?
@@ -269,20 +276,22 @@ export async function checkAccount(ctx: Ctx, accountId: string): Promise<Account
     try {
       const h = await connector.health(account, connectorEnv(ctx, accountId));
       results.push(h.valid
-        ? result('health', 'pass', 'Network accepts the connection', `Answered in ${fmtMs(Date.now() - t0)}${h.expiresAt ? `; access ends ${h.expiresAt.slice(0, 10)}` : ''}.${h.note ? ` ${h.note}` : ''}`)
-        : result('health', 'fail', 'Network accepts the connection', h.note ?? 'The network says this connection is no longer valid.', 'Connect the account again.'));
+        ? result('health', 'pass', tr('check.health.title'), tr('check.health.answered', {
+          time: fmtMs(Date.now() - t0), access: h.expiresAt ? tr('check.health.access', { date: h.expiresAt.slice(0, 10) }) : '', note: h.note ? ` ${h.note}` : '',
+        }))
+        : result('health', 'fail', tr('check.health.title'), h.note ?? tr('check.health.invalid'), tr('check.token.reconnect')));
     } catch (err) {
-      results.push({ id: 'health', title: 'Network accepts the connection', ...describe(err) });
+      results.push({ id: 'health', title: tr('check.health.title'), ...describe(err) });
     }
   } else {
-    results.push(result('health', 'skip', 'Network accepts the connection', 'This connector has no light question to ask.'));
+    results.push(result('health', 'skip', tr('check.health.title'), tr('check.health.none')));
   }
 
   // Numbers and comments of the latest public post: read-only, and only if there is one.
   const post = await latestPost(ctx, accountId);
   if (!post) {
-    for (const [id, title] of [['metrics', 'Reading a post\'s numbers'], ['comments', 'Reading a post\'s comments']] as const) {
-      results.push(result(id, 'skip', title, 'No post has been published to this account by the app yet.', 'Publish one (or run the check with --publish from the command line) and check again.'));
+    for (const [id, title] of [['metrics', tr('check.metrics.title')], ['comments', tr('check.comments.title')]] as const) {
+      results.push(result(id, 'skip', title, tr('check.post.none'), tr('check.post.noneHint')));
     }
     return done();
   }
@@ -290,25 +299,27 @@ export async function checkAccount(ctx: Ctx, accountId: string): Promise<Account
   if (connector.fetchMetrics) {
     try {
       const m = await connector.fetchMetrics(account, post.external_id, post.handle ?? {}, env, { publishedAt: new Date(post.published_at), placement: post.placement });
-      const shown = Object.entries(m.common).map(([k, v]) => `${k} ${v}`).join(', ');
+      const metricName = (k: string) => (isKnownMetric(k) ? tr(`check.metric.${k}`) : k);
+      const shown = Object.entries(m.common).map(([k, v]) => `${metricName(k)} ${v}`).join(', ');
+      const note = m.note ? ` ${m.note}` : '';
       results.push(shown
-        ? result('metrics', 'pass', 'Reading a post\'s numbers', `${shown}.${m.note ? ` ${m.note}` : ''}`, 'Compare these with what the network shows for the same post.')
-        : result('metrics', 'warn', 'Reading a post\'s numbers', `The network answered but gave no numbers.${m.note ? ` ${m.note}` : ''}`, 'A new post may have none yet. If it stays empty, a permission or a product on the network\'s side is probably missing.'));
+        ? result('metrics', 'pass', tr('check.metrics.title'), tr('check.metrics.pass', { numbers: shown, note }), tr('check.metrics.passHint'))
+        : result('metrics', 'warn', tr('check.metrics.title'), tr('check.metrics.empty', { note }), tr('check.metrics.emptyHint')));
     } catch (err) {
-      results.push({ id: 'metrics', title: 'Reading a post\'s numbers', ...describe(err, 'post') });
+      results.push({ id: 'metrics', title: tr('check.metrics.title'), ...describe(err, 'post') });
     }
   } else {
-    results.push(result('metrics', 'skip', 'Reading a post\'s numbers', 'This connector does not read numbers.'));
+    results.push(result('metrics', 'skip', tr('check.metrics.title'), tr('check.metrics.unsupported')));
   }
   if (connector.listComments && prizes) {
     try {
       const cs = await connector.listComments(account, post.external_id, post.handle ?? {}, env, new Date(ctx.now().getTime() - 7 * 86_400_000));
-      results.push(result('comments', 'pass', 'Reading a post\'s comments', `${cs.length} comment${cs.length === 1 ? '' : 's'} in the last 7 days.`));
+      results.push(result('comments', 'pass', tr('check.comments.title'), tr('check.comments.pass', { count: cs.length })));
     } catch (err) {
-      results.push({ id: 'comments', title: 'Reading a post\'s comments', ...describe(err, 'post') });
+      results.push({ id: 'comments', title: tr('check.comments.title'), ...describe(err, 'post') });
     }
   } else {
-    results.push(result('comments', 'skip', 'Reading a post\'s comments', connector.listComments ? 'Prizes are off for this brand, so comments are not read.' : 'This connector does not read comments.'));
+    results.push(result('comments', 'skip', tr('check.comments.title'), tr(connector.listComments ? 'check.comments.prizesOff' : 'check.comments.unsupported')));
   }
   return done();
 }
@@ -380,30 +391,30 @@ export async function publishTest(ctx: Ctx, accountId: string, o: PublishTestOpt
   const account = await loadConnectorAccount(ctx, accountId);
   if (!account) throw notFound('Account');
   const connector: Connector | null = ctx.connectors.connector(account.network);
-  if (!connector) return [result('publish', 'fail', 'Test post', `The app is not set up to publish to ${account.network} on this server.`)];
+  if (!connector) return [result('publish', 'fail', tr('check.publish.title'), tr('check.server.notSetUp', { network: account.network }))];
 
   const image = { kind: 'image' as const };
   const kind: 'image' | 'video' | null = connector.defaultPlacement({ pieceKind: 'image', format: '4:5', media: [image] })
     ? 'image'
     : connector.defaultPlacement({ pieceKind: 'video', format: '9:16', media: [{ kind: 'video' }] }) ? 'video' : null;
-  if (!kind) return [result('publish', 'skip', 'Test post', 'This network takes neither a single picture nor a single video from the app.')];
+  if (!kind) return [result('publish', 'skip', tr('check.publish.title'), tr('check.publish.nothing'))];
   const placement = connector.defaultPlacement({ pieceKind: kind, format: kind === 'image' ? '4:5' : '9:16', media: [{ kind }] })!;
 
   let media: MediaItem;
   try {
     media = await testMedia(ctx, kind);
   } catch (err) {
-    return [result('publish', 'fail', 'Test post', `Could not make a test ${kind}: ${(err as Error).message}`, 'ffmpeg has to be installed on this machine.')];
+    return [result('publish', 'fail', tr('check.publish.title'), tr('check.publish.noMedia', { kind: tr(`check.publish.kind.${kind}`), error: (err as Error).message }), tr('check.publish.noMediaHint'))];
   }
   const input: PublishInput = {
     publicationId: randomUUID(), placement, title: 'Connection test', text: TEST_TEXT, firstComment: '', options: TEST_OPTIONS[account.network] ?? {},
     scheduledAt: ctx.now(), aiGenerated: false, media: [media],
   };
-  out.push(result('publish.input', 'pass', 'Test post', `A ${kind} for the "${placement}" kind of post, with options ${JSON.stringify(input.options)}.`));
+  out.push(result('publish.input', 'pass', tr('check.publish.title'), tr('check.publish.input', { kind: tr(`check.publish.kind.${kind}`), placement, options: JSON.stringify(input.options) })));
 
   const issues = connector.validate(input, account).filter((i) => i.severity === 'error');
   if (issues.length) {
-    out.push(result('publish.validate', 'fail', 'The app\'s own checks', issues.map((i) => i.message).join(' '), 'The test post is not made when the app itself would refuse it.'));
+    out.push(result('publish.validate', 'fail', tr('check.publish.validateTitle'), issues.map((i) => i.message).join(' '), tr('check.publish.validateHint')));
     return out;
   }
 
@@ -419,38 +430,45 @@ export async function publishTest(ctx: Ctx, accountId: string, o: PublishTestOpt
         return false;
       }
       if (ctx.now().getTime() > deadline) {
-        out.push(result(id, 'fail', title, `Still not ready after ${o.waitSeconds ?? 180} seconds.`, 'The network may just be slow: look at the account itself, and run the check again.'));
+        out.push(result(id, 'fail', title, tr('check.publish.notReady', { seconds: o.waitSeconds ?? 180 }), tr('check.publish.notReadyHint')));
         return false;
       }
     }
   };
 
-  const prepared = await stage('publish.prepare', 'The network accepts the files', async () => {
+  const prepared = await stage('publish.prepare', tr('check.publish.prepareTitle'), async () => {
     const r = await connector.prepare(input, account, handle, env);
     handle = r.handle;
     if (!r.done) { await pause(Math.min((r.retryAfterSec ?? 5) * 1000, 30_000)); return null; }
-    return result('publish.prepare', 'pass', 'The network accepts the files', r.nativeScheduled ? 'Accepted, and the network holds it itself.' : 'Accepted.');
+    return result('publish.prepare', 'pass', tr('check.publish.prepareTitle'), tr(r.nativeScheduled ? 'check.publish.preparedHeld' : 'check.publish.prepared'));
   });
   if (!prepared) return out;
 
   let published: { externalId: string; url?: string } | null = null;
-  const posted = await stage('publish.publish', 'The post is made', async () => {
+  const posted = await stage('publish.publish', tr('check.publish.postTitle'), async () => {
     published = await connector.publish(input, account, handle, env);
-    return result('publish.publish', 'pass', 'The post is made', `The network's id for it: ${published.externalId}${published.url ? `, at ${published.url}` : ''}.`);
+    return result('publish.publish', 'pass', tr('check.publish.postTitle'), tr('check.publish.posted', {
+      id: published.externalId, url: published.url ? tr('check.publish.postedAt', { url: published.url }) : '',
+    }));
   });
   if (!posted || !published) return out;
   const live = published as { externalId: string; url?: string };
 
-  await stage('publish.verify', 'The post can be found again', async () => {
+  await stage('publish.verify', tr('check.publish.verifyTitle'), async () => {
     const v = await connector.verify(account, live.externalId, handle, env);
     if (v.visibility === 'processing' || v.visibility === 'scheduled') { await pause(10_000); return null; }
-    const where = v.url ?? live.url ?? 'the account\'s own page';
-    if (v.visibility === 'public') return result('publish.verify', 'pass', 'The post can be found again', `It is public: ${where}`);
-    if (v.visibility === 'private') return result('publish.verify', 'warn', 'The post can be found again', `It is there, but private${v.note ? `: ${v.note}` : ''}.`, 'That is what is expected until the network approves the app. Flip the account\'s approval flag once it has.');
-    return result('publish.verify', 'fail', 'The post can be found again', `The network no longer shows it${v.note ? `: ${v.note}` : ''}.`, 'Look at the account itself.');
+    const title = tr('check.publish.verifyTitle');
+    const where = v.url ?? live.url ?? tr('check.publish.ownPage');
+    const said = v.noteText ? render(requestLocale(), v.noteText, v.note) : v.note;
+    const note = said ? `: ${said}` : '';
+    if (v.visibility === 'public') return result('publish.verify', 'pass', title, tr('check.publish.public', { where }));
+    if (v.visibility === 'private') return result('publish.verify', 'warn', title, tr('check.publish.private', { note }), tr('check.publish.privateHint'));
+    return result('publish.verify', 'fail', title, tr('check.publish.gone', { note }), tr('check.publish.goneHint'));
   });
 
-  out.push(result('publish.cleanup', 'warn', 'Delete the test post', `A real post was made on ${account.displayName} (${account.network}), id ${live.externalId}${live.url ? `, ${live.url}` : ''}.`, 'The app cannot take it down: delete it on the network yourself.'));
+  out.push(result('publish.cleanup', 'warn', tr('check.publish.cleanupTitle'), tr('check.publish.cleanup', {
+    name: account.displayName, network: account.network, id: live.externalId, url: live.url ? `, ${live.url}` : '',
+  }), tr('check.publish.cleanupHint')));
   return out;
 }
 

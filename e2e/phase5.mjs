@@ -38,7 +38,7 @@ const watch = (page, label) => {
 };
 
 async function context(label, { viewport = { width: 1280, height: 900 }, init, permissions } = {}) {
-  const ctx = await browser.newContext({ baseURL: BASE, viewport, acceptDownloads: true, permissions });
+  const ctx = await browser.newContext({ baseURL: BASE, locale: 'en-US', viewport, acceptDownloads: true, permissions });
   if (init) await ctx.addInitScript(init.fn, init.arg);
   const page = await ctx.newPage();
   watch(page, label);
@@ -159,7 +159,7 @@ const state = { recovery: {} };
 // ───────────────────────────── seed ─────────────────────────────
 // The first sign-in of the person bootstrapped as admin is also the first time a second factor is asked of anybody.
 const admin = await signIn('admin@example.com');
-const api = (method, url, data) => admin.context.request.fetch(url, { method, data, headers: { 'x-requested-by': 'studio' } });
+const api = (method, url, data) => admin.context.request.fetch(url, { method, data, headers: { 'x-requested-by': 'studio', 'accept-language': 'en' } });
 
 await step('seed: the fake services start blank, and the admin is made to set up a second factor before anything else', async () => {
   await fakes.control({ op: 'reset' });
@@ -256,8 +256,14 @@ await step('second factor: five wrong codes lock the approver out, an admin rese
   await a.reload();
   assert((await a.locator('tr', { hasText: 'approver@example.com' }).getByRole('button', { name: 'Reset authenticator' }).count()) === 0, 'nobody to reset any more');
 
-  // The session that was locked out is no longer locked: it is asked to set a new one up.
-  await s.page.reload();
+  // A reset ends every session of the person (and voids any sign-in link not used yet): the session that was locked out is signed
+  // out, and signing in again asks for a new authenticator to be set up.
+  const me = await s.context.request.get('/api/me', { headers: { 'accept-language': 'en' } });
+  assert(me.status() === 401, `the locked-out session should have been ended by the reset, got ${me.status()}`);
+  await s.page.goto('/login');
+  await s.page.getByLabel('Email').fill('approver@example.com');
+  await s.page.getByRole('button', { name: /Development sign-in/ }).click();
+  await s.page.waitForURL(/\/second-factor$/);
   const box = s.page.getByTestId('second-factor');
   await box.waitFor();
   assert((await box.getAttribute('data-step')) === 'enroll', 'after a reset the approver has to set up a new authenticator');

@@ -52,9 +52,11 @@ Facebook Pages and YouTube.
    those go out even if this app is down at that moment.
 5. **Publish** at the hour. Instagram has no native scheduling, which is why its container is made shortly before.
 6. **Verify.** The worker asks the network whether the post is really there and public, and records the link.
-   Verification repeats for a while when the answer is "processing" or "private". A scheduled YouTube video is made public
-   by YouTube a little after its time, not at that second: an audited channel's video still private just after its hour is
-   looked at every minute for 45 minutes before it is called private.
+   Verification repeats for a while when the answer is "processing" or "private", every minute unless the network's connector
+   says when to look again. A scheduled YouTube video is made public by YouTube a little after its time, not at that second: an
+   audited channel's video still private just after its hour is looked at again after 1, 2, 5 and 10 minutes and then every 15,
+   for 45 minutes, before it is called private. When the post is out, the *published* notification also says what did not go
+   through with it (a first comment the network refused), not only the history.
 
 Every step is a row in `publication_attempt` with what the network answered. The piece page has a *History* button.
 
@@ -66,7 +68,7 @@ Every step is a row in `publication_attempt` with what the network answered. The
 | `rate_limit` | Instagram's daily cap, app limits | Waits as long as the network says. If the window would reopen after the post's last acceptable time, it fails now instead of publishing late |
 | `file_rejected` | Wrong codec, too long, bad parameter | Fails at once with the network's own reason. Retrying the same file would only repeat it |
 | `transient` / unknown | 5xx, "media not ready", dropped connection | Retries after 1, 2, 5, 10 and 20 minutes. The fifth failure in a row is final |
-| `unsupported` | The network cannot publish this kind of content through its API | Hands the post over to a person, as in phase 1, and says why |
+| `unsupported` | The network cannot publish this kind of content through its API | Hands the post over to a person, as in phase 1, and says why (notification kind `publication.handed_over`) |
 | `missed_window` | The app was down past the hour plus the tolerance | Does not publish late. Fails and tells the team |
 
 A failed post can be **tried again** (same approved version, new time optional), **handed over** to a person (it then
@@ -84,8 +86,10 @@ before preparation has finished), the worker takes it down there; cancelling, di
   out at its hour by itself. Pausing wakes those at once. On resume they are prepared again, and go out at their hour (or
   within the tolerance, if it has just passed); one whose hour plus the tolerance passed during the pause is handed to a
   person, with the reason, and shows under *Due now* once the brand is no longer paused.
-- **A date blocked after something was scheduled on it** is treated the same way: the worker's sweep notices the block, takes
-  down what a network holds for that day, and looks again every few minutes, so unblocking it lets the posts carry on.
+- **A date blocked after something was scheduled on it** is treated the same way: blocking the day wakes that day's prepared posts
+  at once, so what a network holds for them comes down straight away, and unblocking it wakes the ones it held back, which carry on
+  at once (the worker's sweep also catches a block made some other way). A post handed to a person because its brand was paused or its
+  date blocked past its hour is announced with its own notification kind, `publication.handed_over`.
 - **A post that depends on another** is not prepared until that one is out (published by the app or marked published by a
   person), so a network cannot be holding it while the first is still in doubt. If the first is cancelled, fails or is put on
   hold, or is still not out at the dependent's hour, the dependent is put on hold with the reason. Moving either of them
@@ -97,12 +101,17 @@ A worker holds a publication through a short lease (two minutes) that it renews 
 a conversion or an upload takes, and every write it makes names that lease: a worker that lost it (stalled for minutes, say)
 cannot overwrite what the one that took over did. A worker that dies lets go within two minutes, including across a restart.
 
-What a connector records while it publishes (an id, or that a call was about to be made) is kept on the publication. A pass
-that finds a send already begun finishes it through the connector's own recovery (Instagram and Threads remember the published
-id, X and LinkedIn recognise their own duplicate, Pinterest looks on the board, Bluesky's write is idempotent), even past the
-tolerance, because that is the end of a send that began on time. If nothing was recorded, the usual late rule applies and the
-team is told the send was interrupted and to check the network. Trying a failed post again keeps that record, so a post the
-network already has is not made twice.
+What a connector records while it publishes (an id, or that a call was about to be made, written down before the call) is kept
+on the publication. **Before any repeated send** (a pass that finds a send already begun, a retry after an error, a failed post
+tried again) the connector is asked to look for the post without sending anything (`find`, a lookup-only step of the connector
+interface): Instagram and Threads ask the container, whose status says `PUBLISHED` once it has been, and then find the post among
+the account's latest (by kind, caption or text, and time); X looks among the account's posts since the attempt, by the media it
+carries; LinkedIn among the page's latest posts, by the file it uploaded; Pinterest on the board, by the title. If the post is
+there, the send is finished from it (its link, its first comment) and never made again, even past the tolerance, because that is
+the end of a send that began on time. If the network says it is not there, it is sent within the tolerance and **not at all past
+it**: the post fails as missed, saying the network does not have it. A connector that cannot look (Facebook and YouTube hold the
+post themselves, Bluesky's write is idempotent, TikTok's upload is the post) relies on what it recorded, as before; if nothing was
+recorded, the usual late rule applies and the team is told the send was interrupted and to check the network.
 
 ### Files: what fits and what is converted
 
@@ -268,11 +277,11 @@ services**) found these, now fixed, each with a test and the stand-ins changed t
   parts, in my order of doubt: the Facebook Reels three-phase upload, the exact error
   codes mapped to each failure class, the Graph API version (`META_GRAPH_VERSION`, v23.0 by default), and the numeric
   limits in `connectors/profiles.ts` and each connector's capabilities (marked for re-verification in the code).
-- **A lost answer is only found again as well as each connector can.** Finishing an interrupted send relies on what the
-  connector wrote down. If Instagram or Threads publish and the worker dies in the instant before the id is saved, the next
-  pass cannot tell: within the tolerance it publishes again (a duplicate), past it the post fails with a note to check the
-  network. X, LinkedIn and Pinterest look for their own post first and, finding none, post then (a little late, since a dead
-  worker lets go within two minutes). A lookup-only call in the connector interface would close both gaps.
+- **A lost answer is found again only as well as each network lets the studio look.** Instagram and Threads do not say which
+  post a published container became, so it is matched among the account's latest posts by kind, caption and time: a caption
+  edited on the network in between, or more than 25 posts since, makes it unfindable, and then nothing is sent again and the
+  post fails, after a few looks, with a note to check the network. X, LinkedIn and Pinterest are searched within a minute of the
+  attempt. Meta does not document what a second publish of the same container does; the stand-ins assume the worst (a second post).
 - **Safe zones are approximate.** The percentages drawn over the picture are my estimate of what each network covers,
   not a published specification. Use them as a guide.
 - **Nothing here has run against H.264 playback in a browser.** The converted files are checked with ffprobe, not played.

@@ -6,8 +6,10 @@ import { ConnectorError, type Candidate, type ProviderId, type TokenSet } from '
 import type { Ctx } from '../context.js';
 import { sha256Hex } from '../crypto.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
+import { isKnown, msg, render, requestLocale, tr, type Key, type Localized } from '../i18n/index.js';
 import { audit } from './audit.js';
 import { connectorEnv, loadConnectorAccount, subscribeEvents, unsubscribeEvents } from './connectors.js';
+import { localizeOptions } from '../connectors/labels.js';
 
 const STATE_TTL_MINUTES = 15;
 export const PROVIDER_INFO: Record<ProviderId, { label: string; networks: string[] }> = {
@@ -22,6 +24,16 @@ export const PROVIDER_INFO: Record<ProviderId, { label: string; networks: string
 };
 const PROVIDERS = Object.keys(PROVIDER_INFO) as ProviderId[];
 
+/** A provider's name inside a sentence, in the reader's language (only Meta's needs translating: "Facebook e Instagram"). */
+const providerName = (id: ProviderId): Localized | string => (id === 'meta' ? msg('connect.provider.meta') : PROVIDER_INFO[id].label);
+
+/** A credential field's name inside a sentence ("Falta el usuario"), or its label when the dictionary does not know it. */
+const fieldName = (key: string, label: string): Localized | string =>
+  ['handle', 'appPassword', 'server'].includes(key) ? msg(`connect.field.${key}` as Key) : label;
+
+/** What a network said when signing in failed: the studio's own words in the reader's language, the network's as they came. */
+const saidBy = (err: ConnectorError) => (err.text ? render(requestLocale(), err.text, err.message) : err.message);
+
 export const redirectUri = (ctx: Ctx) => `${ctx.config.APP_URL}/api/oauth/callback`;
 
 /** What the app can connect to here, and what each network accepts: the editor and the connect buttons read this. */
@@ -31,7 +43,12 @@ export async function integrations(ctx: Ctx, p: Principal, brandId: string) {
     providers: PROVIDERS.map((id) => {
       const provider = ctx.connectors.provider(id);
       // A provider that signs in by credentials shows a form instead of sending the person to the network.
-      return { id, ...PROVIDER_INFO[id], configured: provider !== null, signIn: provider?.credentials ? 'credentials' : 'redirect', fields: provider?.credentials?.fields ?? [] };
+      // Names and help in the request's language, where the dictionary has them.
+      const fields = (provider?.credentials?.fields ?? []).map((f) => (isKnown(`connect.cred.${f.key}`)
+        ? { ...f, label: tr(`connect.cred.${f.key}` as Key), ...(f.help && isKnown(`connect.cred.${f.key}Help`) ? { help: tr(`connect.cred.${f.key}Help` as Key) } : {}) }
+        : f));
+      const label = id === 'meta' ? tr('connect.provider.meta') : PROVIDER_INFO[id].label;
+      return { id, ...PROVIDER_INFO[id], label, configured: provider !== null, signIn: provider?.credentials ? 'credentials' : 'redirect', fields };
     }),
     capabilities: allCapabilities(ctx.config),
   };
@@ -41,17 +58,17 @@ export async function integrations(ctx: Ctx, p: Principal, brandId: string) {
 export async function startConnection(ctx: Ctx, p: Principal, brandId: string, providerId: ProviderId, reconnectAccountId?: string) {
   const provider = ctx.connectors.provider(providerId);
   if (!provider || !ctx.vault) {
-    throw new AppError(503, 'provider_not_configured', `${PROVIDER_INFO[providerId].label} is not set up on this server (see docs/phase-2.md and docs/phase-4.md)`);
+    throw new AppError(503, 'provider_not_configured', msg('connect.notConfigured', { provider: providerName(providerId), docs: msg('connect.docs.both') }));
   }
-  if (!provider.authorizeUrl) throw badRequest('credentials_required', `${PROVIDER_INFO[providerId].label} is connected with an app password, not through a sign-in page`);
-  if (p.kind !== 'user') throw forbidden('Only people can connect accounts');
+  if (!provider.authorizeUrl) throw badRequest('credentials_required', msg('connect.credentialsRequired', { provider: providerName(providerId) }));
+  if (p.kind !== 'user') throw forbidden(msg('connect.peopleOnly'));
   const state = randomBytes(24).toString('base64url');
   await ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.manage');
     if (reconnectAccountId) {
       const acc = await db.one('select network from social_account where id = $1 and brand_id = $2', [reconnectAccountId, brandId]);
       if (!acc) throw notFound('Account');
-      if (!provider.networks.includes(acc.network)) throw badRequest('wrong_provider', 'That account is on a different network');
+      if (!provider.networks.includes(acc.network)) throw badRequest('wrong_provider', msg('connect.wrongProvider'));
     }
     await db.query(
       `insert into oauth_pending (brand_id, user_id, provider, state_hash, reconnect_of, expires_at)
@@ -77,31 +94,32 @@ export async function finishOAuth(
   userId: string,
   q: { code?: string; state?: string; error?: string; error_description?: string },
 ): Promise<{ brandId: string; pendingId?: string; error?: string }> {
-  if (!q.state) throw badRequest('invalid_state', 'The sign-in came back without its state');
+  if (!q.state) throw badRequest('invalid_state', msg('connect.noState'));
   const pending = await ctx.db.one('select * from oauth_pending where state_hash = $1', [sha256Hex(q.state)]);
   if (!pending || pending.completed_at || new Date(pending.expires_at) < ctx.now()) {
-    throw badRequest('invalid_state', 'This connection attempt expired or was already used. Start it again from Settings.');
+    throw badRequest('invalid_state', msg('connect.expired'));
   }
-  if (pending.user_id !== userId) throw forbidden('This connection was started by someone else');
+  if (pending.user_id !== userId) throw forbidden(msg('connect.someoneElse'));
   const done = () => ctx.db.query('update oauth_pending set completed_at = now() where id = $1', [pending.id]);
 
   if (q.error || !q.code) {
     await done();
-    return { brandId: pending.brand_id, error: q.error_description || q.error || 'The sign-in was cancelled' };
+    // What the network said comes in its own words; the rest, in the language of the browser that came back.
+    return { brandId: pending.brand_id, error: q.error_description || q.error || tr('connect.cancelled') };
   }
   const provider = ctx.connectors.provider(pending.provider);
   if (!provider?.exchange || !ctx.vault) {
     await done();
-    return { brandId: pending.brand_id, error: 'This network is not set up on the server' };
+    return { brandId: pending.brand_id, error: tr('connect.networkNotSetUp') };
   }
   let candidates: Candidate[];
   try {
     candidates = await provider.exchange(q.code, redirectUri(ctx), q.state);
   } catch (err) {
     await done();
-    if (err instanceof ConnectorError) return { brandId: pending.brand_id, error: err.message };
+    if (err instanceof ConnectorError) return { brandId: pending.brand_id, error: saidBy(err) };
     ctx.log.error({ err: String(err) }, 'OAuth exchange failed');
-    return { brandId: pending.brand_id, error: 'Could not complete the sign-in with the network' };
+    return { brandId: pending.brand_id, error: tr('connect.exchangeFailed') };
   }
   await ctx.db.query('update oauth_pending set candidates = $2, secrets_encrypted = $3 where id = $1', [
     pending.id,
@@ -124,24 +142,24 @@ export async function connectWithCredentials(ctx: Ctx, p: Principal, brandId: st
   const input = credentialsInput.parse(raw);
   const provider = ctx.connectors.provider(providerId);
   if (!provider || !ctx.vault) {
-    throw new AppError(503, 'provider_not_configured', `${PROVIDER_INFO[providerId].label} is not set up on this server (see docs/phase-4.md)`);
+    throw new AppError(503, 'provider_not_configured', msg('connect.notConfigured', { provider: providerName(providerId), docs: 'docs/phase-4.md' }));
   }
-  if (!provider.credentials) throw badRequest('redirect_required', `${PROVIDER_INFO[providerId].label} is connected through a sign-in page`);
-  if (p.kind !== 'user') throw forbidden('Only people can connect accounts');
+  if (!provider.credentials) throw badRequest('redirect_required', msg('connect.redirectRequired', { provider: providerName(providerId) }));
+  if (p.kind !== 'user') throw forbidden(msg('connect.peopleOnly'));
   for (const f of provider.credentials.fields) {
-    if (f.required !== false && !input.values[f.key]?.trim()) throw badRequest('missing_field', `${f.label} is needed`);
+    if (f.required !== false && !input.values[f.key]?.trim()) throw badRequest('missing_field', msg('connect.fieldNeeded', { field: fieldName(f.key, f.label) }));
   }
   await authorize(ctx.db, p, brandId, 'brand.manage');
   if (input.reconnectAccountId) {
     const acc = await ctx.db.one('select network from social_account where id = $1 and brand_id = $2', [input.reconnectAccountId, brandId]);
     if (!acc) throw notFound('Account');
-    if (!provider.networks.includes(acc.network)) throw badRequest('wrong_provider', 'That account is on a different network');
+    if (!provider.networks.includes(acc.network)) throw badRequest('wrong_provider', msg('connect.wrongProvider'));
   }
   let candidates: Candidate[];
   try {
     candidates = await provider.credentials.connect(Object.fromEntries(Object.entries(input.values).map(([k, v]) => [k, v.trim()])));
   } catch (err) {
-    if (err instanceof ConnectorError) throw badRequest('sign_in_failed', err.message);
+    if (err instanceof ConnectorError) throw badRequest('sign_in_failed', err.text ? (Array.isArray(err.text) ? msg('pub.said', { text: err.text }) : err.text) : err.message);
     throw err;
   }
   const id = randomUUID();
@@ -193,15 +211,15 @@ async function connectChosen(ctx: Ctx, p: Principal & { kind: 'user' }, brandId:
     if (row.user_id !== p.userId) throw notFound('Connection attempt');
     const all = ctx.vault!.open<Candidate[]>(row.secrets_encrypted, `pending:${pendingId}`);
     const chosen = input.keys.map((k) => all.find((c) => c.key === k));
-    if (chosen.some((c) => !c)) throw badRequest('unknown_candidate', 'One of the chosen accounts was not part of this sign-in');
+    if (chosen.some((c) => !c)) throw badRequest('unknown_candidate', msg('connect.unknownCandidate'));
 
     const target = row.reconnect_of ? await db.one('select * from social_account where id = $1 for update', [row.reconnect_of]) : null;
     if (target && (chosen.length !== 1 || chosen[0]!.network !== target.network)) {
-      throw badRequest('wrong_account', `Choose exactly one ${target.network} account to reconnect ${target.display_name}`);
+      throw badRequest('wrong_account', msg('connect.chooseOne', { network: target.network, name: target.display_name }));
     }
     // A connected account must come back as the same account; a manual one (phase 1) simply adopts its real identity.
     if (target && target.status !== 'manual' && target.external_id !== chosen[0]!.externalId) {
-      throw badRequest('wrong_account', `You signed in with ${chosen[0]!.displayName}, not ${target.display_name}. Sign in with the right account.`);
+      throw badRequest('wrong_account', msg('connect.wrongAccount', { chosen: chosen[0]!.displayName, name: target.display_name }));
     }
 
     const out = [];
@@ -253,7 +271,7 @@ export async function disconnectAccount(ctx: Ctx, p: Principal, brandId: string,
       [accountId],
     );
     if ((pending?.n ?? 0) > 0) {
-      throw conflict('account_in_use', `${pending!.n} publication(s) are still waiting to go out through this account: cancel them first`, { count: pending!.n });
+      throw conflict('account_in_use', msg('connect.inUse', { count: pending!.n }), { count: pending!.n });
     }
     // The last token, read before it is forgotten: taking the account's event subscription away needs it.
     let token: TokenSet | null = null;
@@ -286,12 +304,12 @@ export async function updateAccountSettings(ctx: Ctx, p: Principal, brandId: str
     const acc = await db.one('select * from social_account where id = $1 and brand_id = $2 for update', [accountId, brandId]);
     if (!acc) throw notFound('Account');
     if (input.audited !== undefined) {
-      if (!['youtube', 'tiktok', 'pinterest'].includes(acc.network)) throw badRequest('not_applicable', 'Only YouTube, TikTok and Pinterest accounts have an approval status');
+      if (!['youtube', 'tiktok', 'pinterest'].includes(acc.network)) throw badRequest('not_applicable', msg('connect.approvalNotApplicable'));
       await db.query(`update social_account set provider_data = provider_data || jsonb_build_object('audited', $2::boolean) where id = $1`, [accountId, input.audited]);
       await audit(db, p, brandId, 'account.audit_status', 'social_account', accountId, { audited: acc.provider_data?.audited ?? false }, { audited: input.audited });
     }
     if (input.madeForKids !== undefined) {
-      if (acc.network !== 'youtube') throw badRequest('not_applicable', 'Only YouTube channels have a made-for-kids declaration');
+      if (acc.network !== 'youtube') throw badRequest('not_applicable', msg('connect.kidsNotApplicable'));
       await db.query(
         input.madeForKids === null
           ? `update social_account set provider_data = provider_data - 'madeForKids' where id = $1`
@@ -317,16 +335,17 @@ export async function accountOptions(ctx: Ctx, p: Principal, brandId: string, ac
   if (!row || !account) throw notFound('Account');
   const connector = ctx.connectors.connector(account.network);
   if (!connector) return { fields: [], live: false };
-  if (!connector.accountOptions || row.status !== 'active' || !row.token_encrypted) return { fields: connector.capabilities(account).options ?? [], live: false };
+  // Their labels, help and choices in the language of the person scheduling (TikTok's own notices stay word for word).
+  if (!connector.accountOptions || row.status !== 'active' || !row.token_encrypted) return { fields: localizeOptions(account.network, connector.capabilities(account).options ?? []), live: false };
   try {
     const r = await connector.accountOptions(account, connectorEnv(ctx, accountId));
     if (r.remember) {
       await ctx.db.query('update social_account set provider_data = provider_data || $2::jsonb where id = $1', [accountId, JSON.stringify(r.remember)]);
     }
-    return { fields: r.fields, live: true };
+    return { fields: localizeOptions(account.network, r.fields), live: true };
   } catch (err) {
     if (err instanceof ConnectorError) {
-      throw new AppError(502, 'network_refused', `${PROVIDER_INFO[connector.provider].label} did not say what this account may post right now: ${err.message}`, { errorClass: err.errorClass });
+      throw new AppError(502, 'network_refused', msg('connect.optionsRefused', { provider: providerName(connector.provider), error: err.text ?? err.message }), { errorClass: err.errorClass });
     }
     throw err;
   }

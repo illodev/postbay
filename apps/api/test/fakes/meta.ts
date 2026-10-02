@@ -64,7 +64,12 @@ export class FakeMeta {
   failures: Failure[] = [];
   private seq = 0;
   containers = new Map<string, { params: Record<string, string>; polls: number; state: string; ig: string }>();
-  media = new Map<string, { params: Record<string, string>; comments: string[]; kind: 'ig' }>();
+  media = new Map<string, { params: Record<string, string>; comments: string[]; kind: 'ig'; ig?: string; at?: number }>();
+  /**
+   * The next media_publish publishes the container and then answers with a server error, as a lost answer looks from our side. Meta
+   * does not document what a second media_publish of the same container does: this stand-in assumes the worst and makes a second post.
+   */
+  loseNextPublishAnswer = false;
   posts = new Map<string, { page: string; kind: 'post' | 'video'; params: Record<string, string>; comments: string[] }>();
   reels = new Map<string, { page: string; fileUrl?: string; finished?: Record<string, string>; processingPolls: number }>();
 
@@ -194,6 +199,25 @@ export class FakeMeta {
     if ((m = /^(\d+)\/content_publishing_limit$/.exec(c.path))) {
       return { data: [{ quota_usage: this.igQuota.usage, config: { quota_total: this.igQuota.total, quota_duration: 86400 } }] };
     }
+    if ((m = /^(\d+)\/(media|stories)$/.exec(c.path)) && c.method === 'GET') {
+      // The account's latest posts, newest first (stories have their own edge), as the IG User Media reference lists them.
+      const ig = m[1]!;
+      const stories = m[2] === 'stories';
+      const list = [...this.media.entries()]
+        .filter(([, x]) => x.ig === ig && (x.params.media_type === 'STORIES') === stories)
+        .sort(([, a], [, b]) => (b.at ?? 0) - (a.at ?? 0))
+        .slice(0, Number(c.query.limit ?? 25))
+        .map(([id, x]) => {
+          const type = x.params.media_type;
+          return {
+            id, timestamp: new Date(x.at ?? 0).toISOString().replace(/\.\d{3}Z$/, '+0000'), permalink: `https://www.instagram.com/p/${id}/`,
+            ...(x.params.caption !== undefined ? { caption: x.params.caption } : {}),
+            media_type: type === 'CAROUSEL' ? 'CAROUSEL_ALBUM' : x.params.video_url ? 'VIDEO' : 'IMAGE',
+            media_product_type: type === 'REELS' ? 'REELS' : type === 'STORIES' ? 'STORY' : 'FEED',
+          };
+        });
+      return { data: list };
+    }
     if ((m = /^(\d+)\/media$/.exec(c.path)) && c.method === 'POST') {
       // The AI disclosure is "not available for carousel children" (IG User Media reference).
       if (c.body.is_carousel_item === 'true' && c.body.is_ai_generated !== undefined) return this.err(100, '(#100) The parameter is_ai_generated is not supported for carousel items');
@@ -205,8 +229,14 @@ export class FakeMeta {
       const cont = this.containers.get(c.body.creation_id ?? '');
       if (!cont) return this.err(100, 'Invalid creation_id');
       const id = this.id('m-');
-      this.media.set(id, { params: cont.params, comments: [], kind: 'ig' });
+      this.media.set(id, { params: cont.params, comments: [], kind: 'ig', ig: m[1]!, at: this.now() });
+      // A published container says so: its status_code is PUBLISHED from now on.
+      cont.state = 'PUBLISHED';
       this.igQuota.usage++;
+      if (this.loseNextPublishAnswer) {
+        this.loseNextPublishAnswer = false;
+        return { error: { message: 'An unexpected error has occurred. Please retry your request later.', type: 'OAuthException', code: 2, is_transient: true } };
+      }
       return { id };
     }
     if ((m = /^(c-\d+)$/.exec(c.path))) {
