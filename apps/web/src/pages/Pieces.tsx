@@ -1,22 +1,39 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { api, type PieceSummary } from '../api';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { api, type PieceDetail, type PieceSummary, type VersionDetail } from '../api';
+import type { Campaign } from '../components/Layout';
+import { Icon, type IconName } from '../components/icons';
+import { NetMark } from '../components/NetworkOptions';
 import { PageBar } from '../components/PageBar';
-import { Chip, Dialog, Empty, ErrorBox, Field, Spinner, useToast } from '../components/ui';
-import { t, tMaybe, type Key } from '../i18n';
-import { fmtDay, fmtShort } from '../lib/format';
+import { ScheduleDialog } from '../components/publications';
+import { Dialog, ErrorBox, Field, errorMessage, useToast } from '../components/ui';
+import { t, type Key } from '../i18n';
+import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
+import { Dropdown } from './pieces/Dropdown';
+import {
+  DEFAULT_LOOK, DEFAULT_SORT, inState, isLook, isSort, isView, MENU_SORTS, sortPieces, STATE_FILTERS, stageOf, useStored, VIEWS,
+  type Look, type Sort, type Stage, type View,
+} from './pieces/model';
+import { BoardSkeleton, BoardView, discardLocked, EmptyState, GridSkeleton, GridView, ListSkeleton, ListView, type CardActions } from './pieces/views';
+import '../styles/pieces.css';
 
-const FILTERS = ['', 'in_review', 'changes_requested', 'approved', 'draft'] as const;
 const KINDS = ['video', 'carousel', 'post', 'story', 'pdf'] as const;
+const VIEW_ICON: Record<View, IconName> = { grid: 'grid', board: 'columns', list: 'list' };
+const STATE_DOT: Record<string, string> = {
+  draft: 'var(--muted)', in_review: 'var(--warn)', changes_requested: 'var(--bad)', approved: 'var(--good)', scheduled: 'var(--info)', published: 'var(--live)', discarded: 'var(--faint)',
+};
+const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
-function NewPiece({ onClose }: { onClose: () => void }) {
+// ───────────────────────────── new piece ─────────────────────────────
+
+function NewPiece({ campaigns, campaignId, onClose }: { campaigns: Campaign[]; campaignId: string | null; onClose: () => void }) {
   const { brand } = useSession();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
-  const [form, setForm] = useState({ title: '', kind: 'video', brief: '', targetDate: '', aiGenerated: false });
+  const [form, setForm] = useState({ title: '', kind: 'video', brief: '', targetDate: '', aiGenerated: false, campaignId: campaignId ?? '', source: '' });
   const create = useMutation({
     mutationFn: () =>
       api.post<{ id: string }>(`/api/brands/${brand.id}/pieces`, {
@@ -25,6 +42,8 @@ function NewPiece({ onClose }: { onClose: () => void }) {
         brief: form.brief,
         targetDate: form.targetDate || null,
         aiGenerated: form.aiGenerated,
+        campaignId: form.campaignId || null,
+        source: form.source.trim() || null,
       }),
     onSuccess: (p) => {
       qc.invalidateQueries({ queryKey: ['pieces'] });
@@ -38,21 +57,43 @@ function NewPiece({ onClose }: { onClose: () => void }) {
   };
   return (
     <Dialog title={t('pieces.newTitle')} onClose={onClose}>
-      <form className="stack" onSubmit={submit}>
+      <form className="stack pz-form" onSubmit={submit}>
         <Field label={t('pieces.field.title')}>
           <input type="text" required autoFocus maxLength={200} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
         </Field>
-        <Field label={t('pieces.field.kind')}>
-          <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
-            {KINDS.map((k) => <option key={k} value={k}>{t(`pieces.kindOption.${k}` as Key)}</option>)}
-          </select>
-        </Field>
+        <div className="pz-form-row">
+          <Field label={t('pieces.field.kind')}>
+            <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+              {KINDS.map((k) => <option key={k} value={k}>{t(`pieces.kindOption.${k}` as Key)}</option>)}
+            </select>
+          </Field>
+          <Field label={t('pieces.field.campaign')}>
+            <select value={form.campaignId} onChange={(e) => setForm({ ...form, campaignId: e.target.value })}>
+              <option value="">{t('pieces.field.noCampaign')}</option>
+              {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </Field>
+        </div>
         <Field label={t('pieces.field.brief')} hint={t('pieces.field.briefHint')}>
           <textarea value={form.brief} onChange={(e) => setForm({ ...form, brief: e.target.value })} />
         </Field>
-        <Field label={t('pieces.field.target')}>
-          <input type="date" value={form.targetDate} onChange={(e) => setForm({ ...form, targetDate: e.target.value })} />
-        </Field>
+        <div className="pz-form-row">
+          <Field label={t('pieces.field.target')}>
+            <input type="date" value={form.targetDate} onChange={(e) => setForm({ ...form, targetDate: e.target.value })} />
+          </Field>
+          <Field label={t('pieces.field.source')}>
+            <input
+              type="text"
+              className="pz-mono-input"
+              maxLength={500}
+              spellCheck={false}
+              placeholder={t('pieces.field.sourcePlaceholder')}
+              value={form.source}
+              onChange={(e) => setForm({ ...form, source: e.target.value.replace(/[\r\n\t]/g, '') })}
+            />
+          </Field>
+        </div>
+        <p className="pz-hint">{t('pieces.field.sourceHint')}</p>
         <label className="check">
           <input type="checkbox" checked={form.aiGenerated} onChange={(e) => setForm({ ...form, aiGenerated: e.target.checked })} />
           <span>{t('pieces.field.ai')}<br /><span className="muted small">{t('pieces.field.aiHint')}</span></span>
@@ -67,111 +108,541 @@ function NewPiece({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** The piece's preview, or a placeholder when it has nothing to draw yet (no version, or a PDF). */
-function Thumb({ piece }: { piece: PieceSummary }) {
-  const [failed, setFailed] = useState(false);
-  if (failed || piece.variant_count === 0) {
-    return (
-      <span className="ph">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-          {piece.kind === 'pdf' ? (
-            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h4" />
-          ) : (
-            <path d="M4 5h16v14H4zM4 15l4-4 4 4 3-3 5 5" />
-          )}
-        </svg>
-        {t('pieces.noPreview')}
-      </span>
-    );
-  }
-  return <img src={`/api/pieces/${piece.id}/thumb?w=480`} alt="" loading="lazy" onError={() => setFailed(true)} />;
-}
+// ───────────────────────────── bulk actions ─────────────────────────────
 
-function PieceCard({ p }: { p: PieceSummary }) {
+function MoveDialog({ pieces, campaigns, onClose, onDone }: { pieces: PieceSummary[]; campaigns: Campaign[]; onClose: () => void; onDone: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const same = pieces.every((p) => p.campaign_id === pieces[0]?.campaign_id) ? pieces[0]?.campaign_id ?? null : undefined;
+  const move = useMutation({
+    mutationFn: async (target: Campaign | null) => {
+      for (const p of pieces) if (p.campaign_id !== (target?.id ?? null)) await api.patch(`/api/pieces/${p.id}`, { campaignId: target?.id ?? null });
+      return target;
+    },
+    onSuccess: (target) => {
+      toast(target ? t('pieces.move.done', { count: pieces.length, campaign: target.name }) : t('pieces.move.doneNone', { count: pieces.length }));
+      onDone();
+      onClose();
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['pieces'] }),
+  });
+  const option = (c: Campaign | null) => {
+    const current = same !== undefined && (c?.id ?? null) === same;
+    return (
+      <button key={c?.id ?? 'none'} type="button" className={`pz-option ${current ? 'is-current' : ''}`} disabled={move.isPending} onClick={() => move.mutate(c)}>
+        <Icon name={c ? 'folder' : 'x'} />
+        <span className="pz-option-name">{c ? c.name : t('pieces.move.none')}</span>
+        {current && <span className="pz-option-note">{t('pieces.move.current')}</span>}
+      </button>
+    );
+  };
   return (
-    <Link to={`/pieces/${p.id}`} className="pcard">
-      <div className="pcard-thumb">
-        <Thumb piece={p} />
-        <span className="ov ov-l">{tMaybe(`kind.${p.kind}`, p.kind)}</span>
-        {p.variant_count > 1 && <span className="ov ov-r">{t('common.variants', { count: p.variant_count })}</span>}
+    <Dialog title={t('pieces.move.title', { count: pieces.length })} onClose={onClose}>
+      {pieces.length === 1 && <p className="muted pz-dlg-sub">«{pieces[0]!.title}»</p>}
+      <div className="pz-options" role="group" aria-label={t('pieces.list.campaign')}>
+        {campaigns.map(option)}
+        {option(null)}
       </div>
-      <div className="pcard-meta">
-        <h3 title={p.title}>{p.title}</h3>
-        <div className="pcard-line">
-          <Chip state={p.review_state} />
-          <span className="sp" />
-          {p.ai_generated && <span className="tag">{t('common.ai')}</span>}
-        </div>
-        <div className="pcard-line">
-          {p.open_comments > 0 && <span style={{ color: 'var(--accent)' }}>{t('common.openComments', { count: p.open_comments })}</span>}
-          <span className="sp" />
-          <span className="shrink">{p.target_date ? t('pieces.target', { date: fmtDay(p.target_date) }) : fmtShort(p.created_at)}</span>
-        </div>
-      </div>
-    </Link>
+      {!campaigns.length && <p className="muted small">{t('pieces.move.empty')}</p>}
+      {move.error && <ErrorBox error={move.error} />}
+    </Dialog>
   );
 }
 
-export function PiecesPage() {
-  const { brand, can } = useSession();
-  const [params, setParams] = useSearchParams();
-  // The sidebar's folders and collections arrive as query parameters.
-  const state = params.get('state') ?? '';
-  const campaign = params.get('campaign');
-  const byAgent = params.get('by') === 'agent';
-  const [q, setQ] = useState('');
-  const creating = params.get('new') === '1';
-  const setCreating = (open: boolean) => {
-    const next = new URLSearchParams(params);
-    if (open) next.set('new', '1');
-    else next.delete('new');
-    setParams(next, { replace: true });
-  };
-  const setState = (s: string) => {
-    const next = new URLSearchParams(params);
-    if (s) next.set('state', s);
-    else next.delete('state');
-    setParams(next);
-  };
-  const { data: all, error, isLoading } = useQuery({
-    queryKey: ['pieces', brand.id, state, q],
-    queryFn: () => api.get<PieceSummary[]>(`/api/brands/${brand.id}/pieces?${new URLSearchParams({ ...(state ? { state } : {}), ...(q ? { q } : {}) })}`),
+function DiscardDialog({ pieces, canSchedule, onClose, onDone }: { pieces: PieceSummary[]; canSchedule: boolean; onClose: () => void; onDone: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const locked = pieces.filter((p) => discardLocked(p, canSchedule));
+  const go = pieces.filter((p) => !locked.includes(p));
+  const scheduled = go.filter((p) => p.next_publication).length;
+  const discard = useMutation({
+    mutationFn: async () => {
+      const failed: { title: string; reason: string }[] = [];
+      for (const p of go) {
+        try {
+          await api.post(`/api/pieces/${p.id}/discard`);
+        } catch (e) {
+          failed.push({ title: p.title, reason: errorMessage(e) });
+        }
+      }
+      return failed;
+    },
+    onSuccess: (failed) => {
+      const ok = go.length - failed.length;
+      if (ok) toast(t('pieces.discard.done', { count: ok }));
+      if (failed.length) toast(t('pieces.discard.failed', { count: failed.length, reason: failed[0]!.reason }), 'error');
+      onDone();
+      onClose();
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['pieces'] }),
   });
-  const { data: campaigns } = useQuery({ queryKey: ['campaigns', brand.id], queryFn: () => api.get<{ id: string; name: string }[]>(`/api/brands/${brand.id}/campaigns`) });
-  const data = all?.filter((p) => (!campaign || p.campaign_id === campaign) && (!byAgent || p.latest_by_agent));
-  const where = campaign ? campaigns?.find((c) => c.id === campaign)?.name : byAgent ? t('layout.collection.agent') : state ? t(`layout.collection.${state}` as Key) : null;
   return (
-    <>
-      <PageBar
-        crumbs={[{ label: t('pieces.title'), to: '/pieces' }, ...(where ? [{ label: where }] : [])]}
-        actions={can('createPiece') && <button className="btn btn-primary btn-small" onClick={() => setCreating(true)}>{t('pieces.new')}</button>}
-      />
-      <div className="page-head">
-        <div>
-          <h1>{t('pieces.title')}</h1>
-          <p className="muted">{t('pieces.subtitle', { brand: brand.name })}</p>
+    <Dialog title={t('pieces.discard.title', { count: go.length || pieces.length })} onClose={onClose}>
+      <div className="stack">
+        {go.length > 0 && <p>{go.length === 1 ? t('pieces.discard.bodyOne', { title: go[0]!.title }) : t('pieces.discard.bodyMany', { count: go.length })}</p>}
+        {scheduled > 0 && <div className="notice notice-warn">{t('pieces.discard.cancels', { count: scheduled })}</div>}
+        {locked.length > 0 && <div className="notice notice-info">{t('pieces.discard.locked', { count: locked.length })}</div>}
+        {go.length > 0 && <p className="muted small">{t('pieces.discard.final')}</p>}
+        {discard.error && <ErrorBox error={discard.error} />}
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn" onClick={onClose}>{go.length ? t('common.cancel') : t('common.close')}</button>
+          {go.length > 0 && (
+            <button type="button" className="btn btn-danger" disabled={discard.isPending} onClick={() => discard.mutate()}>
+              {t('pieces.discard.submit', { count: go.length })}
+            </button>
+          )}
         </div>
       </div>
-      <div className="toolbar">
-        <div className="search-input">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-          <input type="search" aria-label={t('pieces.searchLabel')} placeholder={t('pieces.search')} value={q} onChange={(e) => setQ(e.target.value)} />
-        </div>
-        <div className="filters" role="group" aria-label={t('pieces.filterLabel')}>
-          {FILTERS.map((f) => (
-            <button key={f || 'all'} className="pill" aria-pressed={state === f} onClick={() => setState(f)}>
-              {t(`pieces.filter.${f || 'all'}` as Key)}
+    </Dialog>
+  );
+}
+
+/** Schedules a piece from the list: finds its approved version and opens the same dialog as the review. */
+function ScheduleFromList({ pieceId, brandId, onClose }: { pieceId: string; brandId: string; onClose: () => void }) {
+  const toast = useToast();
+  const version = useQuery({
+    queryKey: ['schedule-version', pieceId],
+    staleTime: 0,
+    queryFn: async () => {
+      const piece = await api.get<PieceDetail>(`/api/pieces/${pieceId}`);
+      const approved = piece.variants
+        .map((v) => [...v.versions].sort((a, b) => b.number - a.number).find((x) => x.review_state === 'approved'))
+        .find(Boolean);
+      return approved ? api.get<VersionDetail>(`/api/versions/${approved.id}`) : null;
+    },
+  });
+  useEffect(() => {
+    if (version.error) {
+      toast(errorMessage(version.error), 'error');
+      onClose();
+    } else if (version.data === null) {
+      toast(t('pieces.board.noApproved'), 'error');
+      onClose();
+    }
+  }, [version.error, version.data, toast, onClose]);
+  if (!version.data) return version.isLoading ? <div className="toast pz-busy" role="status">{t('pieces.board.opening')}</div> : null;
+  return <ScheduleDialog version={version.data} brandId={brandId} zone={version.data.brand.timezone} onClose={onClose} />;
+}
+
+/** Starts a download of every file of each piece's latest version (not its cover), one after the other. */
+async function downloadLatest(pieces: PieceSummary[]): Promise<number> {
+  const versions = await Promise.all(pieces.filter((p) => p.latest_version).map((p) => api.get<VersionDetail>(`/api/versions/${p.latest_version!.id}`)));
+  const files = versions.flatMap((v) => v.assets.filter((a) => a.kind !== 'cover'));
+  files.forEach((f, i) => {
+    setTimeout(() => {
+      const a = document.createElement('a');
+      a.href = f.url;
+      a.download = f.name;
+      // If the browser ignores the name (files served from another address), the file opens in a tab: this page stays.
+      a.target = '_blank';
+      a.rel = 'noopener';
+      document.body.append(a);
+      a.click();
+      a.remove();
+    }, i * 450);
+  });
+  return files.length;
+}
+
+function SelectionBar({ pieces, actions, onClear, onDownload, downloading }: {
+  pieces: PieceSummary[];
+  actions: CardActions;
+  onClear: () => void;
+  onDownload: () => void;
+  downloading: boolean;
+}) {
+  const single = pieces.length === 1 ? pieces[0]! : null;
+  const live = pieces.filter((p) => p.review_state !== 'discarded');
+  return (
+    <div className="pz-selbar" role="region" aria-label={t('pieces.sel.label')}>
+      <button type="button" className="pz-selbar-x" onClick={onClear} aria-label={t('pieces.sel.clear')} title={t('pieces.sel.clear')}><Icon name="x" /></button>
+      <span className="pz-selbar-count">{t('pieces.sel.count', { count: pieces.length })}</span>
+      <span className="pz-selbar-sep" aria-hidden="true" />
+      <button type="button" className="pz-sbtn" onClick={onDownload} disabled={downloading || !pieces.some((p) => p.latest_version)} title={t('pieces.sel.downloadHint')}>
+        <Icon name="download" /><span>{t('pieces.sel.download')}</span>
+      </button>
+      {actions.canEdit && live.length > 0 && (
+        <>
+          <button type="button" className="pz-sbtn" onClick={() => actions.onMove(live.map((p) => p.id))}><Icon name="folder" /><span>{t('pieces.sel.move')}</span></button>
+          <button type="button" className="pz-sbtn pz-sbtn-danger" onClick={() => actions.onDiscard(live.map((p) => p.id))}><Icon name="x" /><span>{t('pieces.sel.discard')}</span></button>
+        </>
+      )}
+      {single && actions.canSchedule && single.review_state === 'approved' && (
+        <button type="button" className="pz-sbtn pz-sbtn-primary" onClick={() => actions.onSchedule(single.id)}><Icon name="calendar" /><span>{t('pieces.sel.schedule')}</span></button>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────────── toolbar ─────────────────────────────
+
+function Seg<T extends string>({ value, options, onChange, label, render }: { value: T; options: readonly T[]; onChange: (v: T) => void; label: string; render: (v: T) => string }) {
+  return (
+    <div className="pz-seg pz-seg-sm" role="radiogroup" aria-label={label}>
+      {options.map((o) => (
+        <button key={o} type="button" role="radio" aria-checked={value === o} className={value === o ? 'is-on' : ''} onClick={() => onChange(o)}>{render(o)}</button>
+      ))}
+    </div>
+  );
+}
+
+const ASPECT_ICON: Record<Look['aspect'], string> = { '4:5': 'pz-ar pz-ar-45', '1:1': 'pz-ar pz-ar-11', '16:9': 'pz-ar pz-ar-169' };
+
+function AppearancePanel({ look, onChange }: { look: Look; onChange: (l: Look) => void }) {
+  return (
+    <div className="pz-look">
+      <p className="pz-look-note"><Icon name="user" />{t('pieces.look.note')}</p>
+      <div className="pz-look-row">
+        <span>{t('pieces.look.size')}</span>
+        <Seg value={look.size} options={['S', 'M', 'L'] as const} onChange={(size) => onChange({ ...look, size })} label={t('pieces.look.size')} render={(v) => v} />
+      </div>
+      <div className="pz-look-row">
+        <span>{t('pieces.look.aspect')}</span>
+        <div className="pz-seg pz-seg-sm" role="radiogroup" aria-label={t('pieces.look.aspect')}>
+          {(['16:9', '1:1', '4:5'] as const).map((a) => (
+            <button key={a} type="button" role="radio" aria-checked={look.aspect === a} className={look.aspect === a ? 'is-on' : ''} onClick={() => onChange({ ...look, aspect: a })} title={a} aria-label={t(`pieces.look.aspect.${a.replace(':', '')}` as Key)}>
+              <span className={ASPECT_ICON[a]} aria-hidden="true" />
             </button>
           ))}
         </div>
       </div>
-      {isLoading && <Spinner />}
-      {error && <ErrorBox error={error} />}
-      {data && data.length === 0 && <Empty title={t('pieces.empty')}>{can('createPiece') ? t('pieces.emptyCreate') : t('pieces.emptyWait')}</Empty>}
-      <div className="piece-grid">
-        {data?.map((p) => <PieceCard key={p.id} p={p} />)}
+      <div className="pz-look-row">
+        <span>{t('pieces.look.thumb')}</span>
+        <Seg value={look.fit} options={['fit', 'fill'] as const} onChange={(fit) => onChange({ ...look, fit })} label={t('pieces.look.thumb')} render={(v) => t(`pieces.look.${v}` as Key)} />
       </div>
-      {creating && <NewPiece onClose={() => setCreating(false)} />}
-    </>
+      <label className="pz-look-row pz-switch-row">
+        <span>{t('pieces.look.info')}</span>
+        <input type="checkbox" role="switch" className="pz-switch" checked={look.info} onChange={(e) => onChange({ ...look, info: e.target.checked })} />
+      </label>
+    </div>
+  );
+}
+
+function MenuButton({ icon, label, value, props, active }: { icon: IconName; label: string; value?: string; props: Record<string, unknown>; active?: boolean }) {
+  return (
+    <button type="button" className={`pz-tb ${active ? 'is-active' : ''}`} {...props}>
+      <Icon name={icon} />
+      <span className="pz-tb-label">{label}</span>
+      {value && <span className="pz-tb-value">{value}</span>}
+      <Icon name="chevronDown" className="pz-tb-chev" />
+    </button>
+  );
+}
+
+function MenuOption({ checked, onClick, children }: { checked: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" className="menu-item pz-mi" role="menuitemradio" aria-checked={checked} onClick={onClick}>
+      {children}
+      <Icon name="check" className="pz-mi-check" style={{ visibility: checked ? 'visible' : 'hidden' }} />
+    </button>
+  );
+}
+
+// ───────────────────────────── the page ─────────────────────────────
+
+export function PiecesPage() {
+  const { brand, can } = useSession();
+  const toast = useToast();
+  const [params, setParams] = useSearchParams();
+  // The sidebar's folders and collections arrive as query parameters; the view is one too, and the last one is remembered.
+  const [storedView, setStoredView] = useStored<View>('studio.pieces.view', 'grid', isView);
+  const urlView = params.get('view');
+  const view: View = isView(urlView) ? urlView : storedView;
+  const state = (STATE_FILTERS as readonly string[]).includes(params.get('state') ?? '') ? params.get('state') ?? '' : '';
+  const campaign = params.get('campaign');
+  const byAgent = params.get('by') === 'agent';
+  const creating = params.get('new') === '1';
+  const [net, setNet] = useState('');
+  const [q, setQ] = useState('');
+  const [sort, setSort] = useStored<Sort>('studio.pieces.sort', DEFAULT_SORT, isSort);
+  const [look, setLook] = useStored<Look>('studio.pieces.look', DEFAULT_LOOK, isLook);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const anchor = useRef<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [moving, setMoving] = useState<string[] | null>(null);
+  const [discarding, setDiscarding] = useState<string[] | null>(null);
+  const [scheduling, setScheduling] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<PieceSummary | null>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  const setParam = (key: string, value: string | null, push = true) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setParams(next, { replace: !push });
+  };
+  const setView = (v: View) => {
+    setStoredView(v);
+    setParam('view', v === 'grid' ? null : v, false);
+  };
+
+  // The same request (and cache) as the sidebar's counts: every piece of the brand, filtered here.
+  const { data: all, error, isLoading } = useQuery({
+    queryKey: ['pieces', brand.id, '', ''],
+    queryFn: () => api.get<PieceSummary[]>(`/api/brands/${brand.id}/pieces`),
+  });
+  const { data: campaigns } = useQuery({ queryKey: ['campaigns', brand.id], queryFn: () => api.get<Campaign[]>(`/api/brands/${brand.id}/campaigns`) });
+
+  const scoped = useMemo(() => (all ?? []).filter((p) => (!campaign || p.campaign_id === campaign) && (!byAgent || p.latest_by_agent)), [all, campaign, byAgent]);
+  const networks = useMemo(() => [...new Set(scoped.flatMap((p) => p.networks))].sort(), [scoped]);
+  const shown = useMemo(() => {
+    const needle = fold(q.trim());
+    const list = scoped.filter(
+      (p) => inState(p, state) && (!net || p.networks.includes(net)) && (!needle || fold(`${p.title} ${p.campaign_name ?? ''}`).includes(needle)),
+    );
+    return sortPieces(list, sort);
+  }, [scoped, state, net, q, sort]);
+  const chosen = useMemo(() => shown.filter((p) => selected.has(p.id)), [shown, selected]);
+  const byId = useMemo(() => new Map((all ?? []).map((p) => [p.id, p])), [all]);
+
+  // A new place in the sidebar, or another view, starts with nothing picked.
+  useEffect(() => {
+    setSelected(new Set());
+    anchor.current = null;
+  }, [campaign, state, byAgent, view, brand.id]);
+  useEffect(() => setNet(''), [brand.id, campaign]);
+
+  const toggle = useCallback(
+    (id: string, range: boolean) => {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        const ids = shown.map((p) => p.id);
+        const a = anchor.current ? ids.indexOf(anchor.current) : -1;
+        const b = ids.indexOf(id);
+        if (range && a >= 0 && b >= 0) {
+          for (const x of ids.slice(Math.min(a, b), Math.max(a, b) + 1)) next.add(x);
+        } else if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      anchor.current = id;
+    },
+    [shown],
+  );
+
+  // ⌘A / Ctrl+A picks everything showing, Escape lets go, / goes to the search.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || document.querySelector('dialog[open]')) return;
+      const typing = (e.target as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable="true"]');
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && !typing && view !== 'board' && shown.length) {
+        e.preventDefault();
+        setSelected(new Set(shown.map((p) => p.id)));
+      } else if (e.key === 'Escape' && !typing && selected.size) {
+        setSelected(new Set());
+      } else if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [shown, selected.size, view]);
+
+  const actions: CardActions = {
+    canEdit: can('createPiece'),
+    canSchedule: can('schedule'),
+    onMove: setMoving,
+    onDiscard: setDiscarding,
+    onSchedule: setScheduling,
+  };
+
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const n = await downloadLatest(chosen);
+      toast(n ? t('pieces.download.started', { count: n }) : t('pieces.download.nothing'), n ? 'ok' : 'error');
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  // Dropping on the board: only an approved piece on "Scheduled" means something; the rest of the states come from the review.
+  const scheduleTarget = !!dragging && dragging.review_state === 'approved' && can('schedule');
+  const drop = (to: Stage) => {
+    const p = dragging;
+    setDragging(null);
+    if (!p) return;
+    const from = stageOf(p);
+    if (to === from) return;
+    if (to === 'scheduled') {
+      if (p.review_state !== 'approved') toast(t('pieces.board.refuse.notApproved'), 'error');
+      else if (!can('schedule')) toast(t('pieces.board.refuse.cannotSchedule'), 'error');
+      else setScheduling(p.id);
+      return;
+    }
+    toast(t(`pieces.board.refuse.${to}` as Key), 'error');
+  };
+
+  const campaignName = campaign ? campaigns?.find((c) => c.id === campaign)?.name : undefined;
+  const where = campaign ? campaignName ?? '…' : byAgent ? t('layout.collection.agent') : state ? t(`pieces.filter.crumb.${state}` as Key) : null;
+  const waiting = scoped.filter((p) => p.review_state === 'in_review').length;
+  const filtersOn = !!(net || q.trim());
+  const clearFilters = () => {
+    setNet('');
+    setQ('');
+  };
+
+  const empty = () => {
+    const create = can('createPiece') && (
+      <button type="button" className="btn btn-primary btn-small" onClick={() => setParam('new', '1')}><Icon name="plus" />{t('pieces.new')}</button>
+    );
+    if (q.trim()) return <EmptyState icon="search" title={t('pieces.empty.search.title', { q: q.trim() })} action={<button className="btn btn-small" onClick={clearFilters}>{t('pieces.empty.clear')}</button>}>{t('pieces.empty.search.body')}</EmptyState>;
+    if (net) return <EmptyState icon="filter" title={t('pieces.empty.network.title', { network: NETWORK_LABEL[net] ?? net })} action={<button className="btn btn-small" onClick={clearFilters}>{t('pieces.empty.clear')}</button>}>{t('pieces.empty.network.body')}</EmptyState>;
+    if (byAgent) return <EmptyState icon="bot" title={t('pieces.empty.agent.title')}>{t('pieces.empty.agent.body')}</EmptyState>;
+    if (state) return <EmptyState icon="filter" title={t(`pieces.empty.${state}.title` as Key)} action={<button className="btn btn-small" onClick={() => setParam('state', null)}>{t('pieces.empty.seeAll')}</button>}>{t(`pieces.empty.${state}.body` as Key)}</EmptyState>;
+    if (campaign) return <EmptyState icon="folder" title={t('pieces.empty.campaign.title')} action={create}>{can('createPiece') ? t('pieces.empty.campaign.body', { campaign: campaignName ?? '' }) : t('pieces.empty.wait')}</EmptyState>;
+    return <EmptyState icon="pieces" title={t('pieces.empty.all.title')} action={create}>{can('createPiece') ? t('pieces.empty.all.body') : t('pieces.empty.wait')}</EmptyState>;
+  };
+
+  const sortLabel = MENU_SORTS.includes(sort.key) ? t(`pieces.sort.${sort.key}` as Key) : t(`pieces.list.${sort.key}` as Key);
+  return (
+    <div className="pz">
+      <PageBar
+        crumbs={[{ label: t('pieces.title'), to: '/pieces' }, ...(where ? [{ label: where }] : [])]}
+        actions={can('createPiece') && (
+          <button className="btn btn-primary pz-new" onClick={() => setParam('new', '1')}><Icon name="plus" />{t('pieces.new')}</button>
+        )}
+      />
+
+      <div className="pz-toolbar" role="toolbar" aria-label={t('pieces.toolbar')}>
+        <div className="pz-tools">
+          {view === 'grid' && (
+            <Dropdown
+              kind="dialog"
+              label={t('pieces.look.title')}
+              panelClassName="pz-pop-look"
+              button={(props) => (
+                <button type="button" className="pz-tb" {...props}><Icon name="grid" /><span className="pz-tb-label">{t('pieces.look.title')}</span></button>
+              )}
+            >
+              {() => <AppearancePanel look={look} onChange={setLook} />}
+            </Dropdown>
+          )}
+          <Dropdown label={t('pieces.filter.state')} button={(props) => (
+            <MenuButton icon="filter" label={t('pieces.filter.stateShort')} value={state ? STATE_LABEL[state] : t('pieces.filter.allStates')} props={props} active={!!state} />
+          )}>
+            {(close) => STATE_FILTERS.map((s) => (
+              <MenuOption key={s || 'all'} checked={state === s} onClick={() => { close(); setParam('state', s || null); }}>
+                {s ? <span className="pz-mdot" style={{ background: STATE_DOT[s] }} /> : <Icon name="pieces" />}
+                <span className="grow">{s ? STATE_LABEL[s] : t('pieces.filter.allStatesLong')}</span>
+                <span className="pz-mcount">{scoped.filter((p) => inState(p, s)).length}</span>
+              </MenuOption>
+            ))}
+          </Dropdown>
+          <Dropdown label={t('pieces.filter.network')} button={(props) => (
+            <MenuButton icon="send" label={t('pieces.filter.networkShort')} value={net ? NETWORK_LABEL[net] ?? net : t('pieces.filter.allNetworks')} props={props} active={!!net} />
+          )}>
+            {(close) => (
+              <>
+                <MenuOption checked={!net} onClick={() => { close(); setNet(''); }}><Icon name="globe" /><span className="grow">{t('pieces.filter.allNetworksLong')}</span></MenuOption>
+                {networks.map((n) => (
+                  <MenuOption key={n} checked={net === n} onClick={() => { close(); setNet(n); }}>
+                    <NetMark network={n} /><span className="grow">{NETWORK_LABEL[n] ?? n}</span>
+                    <span className="pz-mcount">{scoped.filter((p) => p.networks.includes(n) && inState(p, state)).length}</span>
+                  </MenuOption>
+                ))}
+                {!networks.length && <p className="pz-menu-note">{t('pieces.filter.noNetworks')}</p>}
+              </>
+            )}
+          </Dropdown>
+          <Dropdown label={t('pieces.sort.label')} button={(props) => <MenuButton icon="sort" label={t('pieces.sort.label')} value={sortLabel} props={props} />}>
+            {(close) => (
+              <>
+                {MENU_SORTS.map((k) => (
+                  <MenuOption key={k} checked={sort.key === k} onClick={() => { close(); setSort({ key: k, dir: k === 'updated' ? 'desc' : 'asc' }); }}>
+                    <span className="grow">{t(`pieces.sort.${k}` as Key)}</span>
+                  </MenuOption>
+                ))}
+                <div className="menu-sep" />
+                <MenuOption checked={false} onClick={() => { close(); setSort({ ...sort, dir: sort.dir === 'asc' ? 'desc' : 'asc' }); }}>
+                  <Icon name="chevronDown" style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : undefined }} />
+                  <span className="grow">{sort.dir === 'asc' ? t('pieces.sort.asc') : t('pieces.sort.desc')}</span>
+                </MenuOption>
+              </>
+            )}
+          </Dropdown>
+          <label className="pz-search">
+            <Icon name="search" />
+            <input
+              ref={searchRef}
+              type="search"
+              aria-label={t('pieces.searchLabel')}
+              placeholder={t('pieces.search')}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && q) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setQ('');
+                }
+              }}
+            />
+            {!q && <kbd className="pz-kbd" aria-hidden="true">/</kbd>}
+          </label>
+        </div>
+        <div className="pz-seg pz-views" role="radiogroup" aria-label={t('pieces.view.label')}>
+          {VIEWS.map((v) => (
+            <button key={v} type="button" role="radio" aria-checked={view === v} className={view === v ? 'is-on' : ''} onClick={() => setView(v)} title={t(`pieces.view.${v}` as Key)}>
+              <Icon name={VIEW_ICON[v]} /><span className="pz-views-label">{t(`pieces.view.${v}` as Key)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {all && (
+        <p className="pz-summary">
+          <span>{filtersOn || state ? t('pieces.summaryOf', { count: shown.length, total: scoped.filter((p) => p.review_state !== 'discarded').length }) : t('pieces.summary', { count: shown.length })}</span>
+          {waiting > 0 && state !== 'in_review' && <><span className="pz-dot" aria-hidden="true">·</span><button type="button" className="pz-linkish" onClick={() => setParam('state', 'in_review')}>{t('pieces.summaryWaiting', { count: waiting })}</button></>}
+          {filtersOn && <><span className="pz-dot" aria-hidden="true">·</span><button type="button" className="pz-linkish" onClick={clearFilters}>{t('pieces.empty.clear')}</button></>}
+          {view === 'board' && can('schedule') && <span className="pz-summary-hint">{t('pieces.board.hint')}</span>}
+          {view === 'list' && shown.length > 0 && <span className="pz-summary-hint">{t('pieces.list.keys')}</span>}
+        </p>
+      )}
+
+      {error && <ErrorBox error={error} />}
+      {isLoading && (view === 'board' ? <BoardSkeleton /> : view === 'list' ? <ListSkeleton /> : <GridSkeleton look={look} />)}
+      {all && shown.length === 0 && view !== 'board' && empty()}
+      {all && (shown.length > 0 || view === 'board') && (
+        view === 'grid' ? (
+          <GridView pieces={shown} look={look} selected={selected} onToggle={toggle} actions={actions} zone={brand.timezone} />
+        ) : view === 'list' ? (
+          <ListView
+            pieces={shown}
+            sort={sort}
+            onSort={setSort}
+            selected={selected}
+            onToggle={toggle}
+            onToggleAll={() => setSelected(chosen.length === shown.length ? new Set() : new Set(shown.map((p) => p.id)))}
+            zone={brand.timezone}
+          />
+        ) : (
+          <BoardView
+            pieces={shown}
+            zone={brand.timezone}
+            dragging={dragging}
+            onDragStart={setDragging}
+            onDragEnd={() => setDragging(null)}
+            onDrop={drop}
+            scheduleTarget={scheduleTarget}
+          />
+        )
+      )}
+
+      {chosen.length > 0 && view !== 'board' && (
+        <SelectionBar pieces={chosen} actions={actions} onClear={() => setSelected(new Set())} onDownload={download} downloading={downloading} />
+      )}
+      {creating && <NewPiece campaigns={campaigns ?? []} campaignId={campaign} onClose={() => setParam('new', null, false)} />}
+      {moving && (
+        <MoveDialog pieces={moving.map((id) => byId.get(id)).filter((p): p is PieceSummary => !!p)} campaigns={campaigns ?? []} onClose={() => setMoving(null)} onDone={() => setSelected(new Set())} />
+      )}
+      {discarding && (
+        <DiscardDialog pieces={discarding.map((id) => byId.get(id)).filter((p): p is PieceSummary => !!p)} canSchedule={can('schedule')} onClose={() => setDiscarding(null)} onDone={() => setSelected(new Set())} />
+      )}
+      {scheduling && <ScheduleFromList pieceId={scheduling} brandId={brand.id} onClose={() => setScheduling(null)} />}
+    </div>
   );
 }
