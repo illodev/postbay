@@ -466,10 +466,13 @@ await step('results: readings come in when they fall due, and each network is sh
   assert(await threads.locator('td.num', { hasText: '9' }).count() > 0, 'Threads likes should show');
   assert((await p.getByText(/all networks/i).count()) === 1, 'only the filter says "All networks": there is no total across networks');
   await shot(p, 'results-by-network');
-  await p.getByLabel('Network').selectOption('x');
-  await p.waitForFunction(() => document.querySelectorAll('section.card[aria-label]').length === 1);
+  // The filter is the app's own select: open it and pick the option.
+  await p.getByRole('combobox', { name: 'Network' }).click();
+  await p.getByRole('option', { name: 'X', exact: true }).click();
+  await p.waitForFunction(() => document.querySelectorAll('section.rs-net').length === 1);
   await shot(p, 'results-filtered-x');
-  await p.getByLabel('Network').selectOption('');
+  await p.getByRole('combobox', { name: 'Network' }).click();
+  await p.getByRole('option', { name: 'All networks' }).click();
   await p.getByRole('region', { name: 'Threads' }).getByRole('button', { name: 'Readings' }).click();
   const d = p.getByRole('dialog');
   await d.getByText('1 hour').waitFor();
@@ -559,7 +562,9 @@ await step('the rule is saved, the message is previewed, and prizes run only wit
   const row = p.getByRole('region', { name: 'Publications' }).locator('tbody tr').filter({ hasText: 'Instagram' });
   await row.getByRole('button', { name: 'Prize…' }).click();
   const d = p.getByRole('dialog');
-  await d.locator('select').selectOption({ label: 'Spring menu PDF (file)' }); // the dialog has loaded once this is possible
+  // The prize is the app's own select; the dialog has loaded once it can be opened.
+  await d.getByRole('combobox', { name: 'Prize' }).click();
+  await p.getByRole('option', { name: 'Spring menu PDF (file)' }).click();
   assert((await d.getByTestId('needs-reconnect').count()) === 0, 'the reconnect notice should be gone');
   await d.getByLabel('Keyword').fill('recipe');
   await d.getByText('What Alex receives').waitFor();
@@ -662,7 +667,8 @@ await step('a network that cannot message gets a public page: Threads, with a li
   await row.getByRole('button', { name: 'Prize…' }).click();
   const d = p.getByRole('dialog');
   await d.getByText(/cannot send private messages here/).waitFor();
-  await d.locator('select').selectOption({ label: 'Recipe on our blog (link)' });
+  await d.getByRole('combobox', { name: 'Prize' }).click();
+  await p.getByRole('option', { name: 'Recipe on our blog (link)' }).click();
   await d.getByLabel('Note to yourself').fill('pinned comment');
   await d.getByLabel(/The text of this post tells people/).check();
   await d.getByRole('button', { name: 'Save', exact: true }).click();
