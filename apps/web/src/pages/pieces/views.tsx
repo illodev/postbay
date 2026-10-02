@@ -3,10 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { PieceSummary } from '../../api';
 import { Avatar } from '../../components/Avatar';
 import { Icon, type IconName } from '../../components/icons';
-import { Chip, NetMark, Skeleton } from '../../components/ui';
+import { Chip, Menu, MenuItem, MenuSeparator, NetMark, Skeleton } from '../../components/ui';
 import { t, tMaybe, type Key } from '../../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../../lib/format';
-import { Dropdown } from './Dropdown';
 import { ago, BOARD, FIRST_DIR, mediaLabel, stageOf, when, type Look, type Sort, type SortKey, type Stage } from './model';
 
 const netName = (n: string) => NETWORK_LABEL[n] ?? n;
@@ -71,50 +70,37 @@ export interface CardActions {
 /** Whether a person may discard this piece themselves: a producer cannot once something is approved or scheduled. */
 export const discardLocked = (p: PieceSummary, canSchedule: boolean) => !canSchedule && (p.review_state === 'approved' || !!p.next_publication);
 
-function CardMenu({ p, actions, align = 'end' }: { p: PieceSummary; actions: CardActions; align?: 'start' | 'end' }) {
+function CardMenu({ p, actions }: { p: PieceSummary; actions: CardActions }) {
   const navigate = useNavigate();
   const locked = discardLocked(p, actions.canSchedule);
   return (
-    <Dropdown
-      align={align}
-      label={t('pieces.card.menu', { title: p.title })}
-      className="pz-more-wrap"
-      button={(props) => (
-        <button type="button" className="pz-more" {...props} aria-label={t('pieces.card.menu', { title: p.title })} title={t('pieces.card.menuShort')}>
-          <Icon name="more" />
-        </button>
-      )}
-    >
-      {(close) => (
-        <>
-          <button className="menu-item" role="menuitem" onClick={() => { close(); navigate(`/pieces/${p.id}`); }}><Icon name="arrow" />{t('pieces.menu.open')}</button>
-          {p.latest_version && (
-            <button className="menu-item" role="menuitem" onClick={() => { close(); navigate(`/review/${p.latest_version!.id}`); }}>
-              <Icon name="play" />{t('pieces.menu.review', { number: p.latest_version.number })}
-            </button>
-          )}
-          {actions.canSchedule && stageOf(p) !== 'discarded' && p.review_state === 'approved' && (
-            <button className="menu-item" role="menuitem" onClick={() => { close(); actions.onSchedule(p.id); }}><Icon name="calendar" />{t('pieces.menu.schedule')}</button>
-          )}
-          {actions.canEdit && p.review_state !== 'discarded' && (
-            <>
-              <button className="menu-item" role="menuitem" onClick={() => { close(); actions.onMove([p.id]); }}><Icon name="folder" />{t('pieces.menu.move')}</button>
-              <div className="menu-sep" />
-              <button
-                className="menu-item pz-danger"
-                role="menuitem"
-                disabled={locked}
-                title={locked ? t('pieces.menu.discardLocked') : undefined}
-                onClick={() => { close(); actions.onDiscard([p.id]); }}
-              >
-                <Icon name="trash" />{t('pieces.menu.discard')}
-              </button>
-              {locked && <p className="pz-menu-note">{t('pieces.menu.discardLocked')}</p>}
-            </>
-          )}
-        </>
-      )}
-    </Dropdown>
+    <span className="pz-more-wrap">
+      <Menu
+        align="start"
+        width={236}
+        trigger={
+          <button type="button" className="pz-more" aria-label={t('pieces.card.menu', { title: p.title })} title={t('pieces.card.menuShort')}>
+            <Icon name="more" />
+          </button>
+        }
+      >
+        <MenuItem icon="arrow" onSelect={() => navigate(`/pieces/${p.id}`)}>{t('pieces.menu.open')}</MenuItem>
+        {p.latest_version && (
+          <MenuItem icon="play" onSelect={() => navigate(`/review/${p.latest_version!.id}`)}>{t('pieces.menu.review', { number: p.latest_version.number })}</MenuItem>
+        )}
+        {actions.canSchedule && p.review_state === 'approved' && (
+          <MenuItem icon="calendar" onSelect={() => actions.onSchedule(p.id)}>{t('pieces.menu.schedule')}</MenuItem>
+        )}
+        {actions.canEdit && p.review_state !== 'discarded' && (
+          <>
+            <MenuItem icon="folder" onSelect={() => actions.onMove([p.id])}>{t('pieces.menu.move')}</MenuItem>
+            <MenuSeparator />
+            <MenuItem icon="trash" danger disabled={locked} onSelect={() => actions.onDiscard([p.id])}>{t('pieces.menu.discard')}</MenuItem>
+            {locked && <p className="pz-menu-note">{t('pieces.menu.discardLocked')}</p>}
+          </>
+        )}
+      </Menu>
+    </span>
   );
 }
 
