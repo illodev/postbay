@@ -5,14 +5,9 @@ import '../styles/publications.css';
 
 export type OptionValues = Record<string, string | boolean>;
 
-/** Two letters for a network, beside an account's name; the full name is always said next to it. */
-const NET_MARK: Record<string, string> = {
-  instagram: 'IG', facebook: 'FB', youtube: 'YT', tiktok: 'TT', linkedin: 'LI', x: 'X', threads: 'TH', pinterest: 'PI', bluesky: 'BS',
-};
-
-export function NetMark({ network }: { network: string }) {
-  return <span className="net" aria-hidden="true">{NET_MARK[network] ?? network.slice(0, 2).toUpperCase()}</span>;
-}
+/** The network's two-letter mark lives in ui.tsx now; re-exported so the imports from here keep working. */
+import { NetMark } from './ui';
+export { NetMark };
 
 /**
  * The fields that apply right now: for the kind of post chosen, and (for a dependent field) while the checkbox it hangs from is
