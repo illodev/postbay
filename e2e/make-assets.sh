@@ -1,5 +1,6 @@
 #!/bin/sh
-# Generates the media the end-to-end test uploads: two short videos, two images and a three-page PDF.
+# Generates the media the end-to-end test uploads: two short videos, two images, a three-page PDF, subtitles for the first video, and a
+# big video (about 18 MB of noise, so it takes three pieces to send) for the resumable upload run of phase 5.
 # WebM because the headless Chromium used for the test has no H.264 decoder; the app accepts MP4 as well.
 set -e
 OUT="${1:-e2e/assets}"
@@ -8,6 +9,21 @@ ffmpeg -v error -y -f lavfi -i testsrc2=size=540x960:rate=30 -f lavfi -i sine=fr
   -c:v libvpx-vp9 -b:v 600k -deadline realtime -cpu-used 8 -c:a libvorbis -shortest "$OUT/reel-v1.webm"
 ffmpeg -v error -y -f lavfi -i smptebars=size=540x960:rate=30 -f lavfi -i sine=frequency=660 -t 6 \
   -c:v libvpx-vp9 -b:v 600k -deadline realtime -cpu-used 8 -c:a libvorbis -shortest "$OUT/reel-v2.webm"
+# Noise does not compress, so a short clip is big. It is only ever uploaded, never played.
+ffmpeg -v error -y -f lavfi -i "nullsrc=size=640x360:rate=25,geq=random(1)*255:128:128" -f lavfi -i sine=frequency=330 -t 8 \
+  -c:v libvpx-vp9 -b:v 20M -minrate 20M -maxrate 20M -deadline realtime -cpu-used 8 -c:a libvorbis -shortest "$OUT/big.webm"
+cat > "$OUT/captions.vtt" <<'VTT'
+WEBVTT
+
+00:00:00.500 --> 00:00:02.000
+Welcome to the <i>spring</i> menu
+
+00:00:02.500 --> 00:00:04.000
+Our flat white is back
+
+00:00:04.500 --> 00:00:05.800
+Come and try it today
+VTT
 ffmpeg -v error -y -f lavfi -i testsrc2=size=1080x1350 -frames:v 1 "$OUT/slide-1.png"
 ffmpeg -v error -y -f lavfi -i smptebars=size=1080x1350 -frames:v 1 "$OUT/slide-2.png"
 python3 - "$OUT/deck.pdf" <<'PY'

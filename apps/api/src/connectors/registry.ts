@@ -47,7 +47,7 @@ export function createConnectorSet(config: Config, now: () => Date = () => new D
   if (config.googleEnabled) {
     const cfg: GoogleConfig = {
       clientId: config.GOOGLE_CLIENT_ID!, clientSecret: config.GOOGLE_CLIENT_SECRET!, oauthUrl: config.GOOGLE_OAUTH_URL,
-      tokenUrl: config.GOOGLE_TOKEN_URL, apiUrl: config.YOUTUBE_API_URL,
+      tokenUrl: config.GOOGLE_TOKEN_URL, apiUrl: config.YOUTUBE_API_URL, analyticsUrl: config.YOUTUBE_ANALYTICS_URL, analytics: config.GOOGLE_ANALYTICS,
     };
     const client = new GoogleClient(cfg);
     providers.set('google', createGoogleOAuth(cfg, now));

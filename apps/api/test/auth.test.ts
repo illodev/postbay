@@ -77,7 +77,7 @@ describe('development sign-in', () => {
   it('is off by default', async () => {
     const r = await env.app.inject({ method: 'POST', url: '/api/auth/dev-login', payload: { email: 'admin@example.com' } });
     expect(r.statusCode).toBe(404);
-    expect((await env.app.inject({ method: 'GET', url: '/api/config' })).json()).toEqual({ devLogin: false });
+    expect((await env.app.inject({ method: 'GET', url: '/api/config' })).json()).toEqual({ devLogin: false, sso: null, emailLinkLogin: true });
   });
 
   it('works when enabled, but never in production', async () => {
@@ -101,6 +101,18 @@ describe('configuration', () => {
     const { loadConfig } = await import('../src/config.js');
     expect(() => loadConfig({ SECRET: 'short' })).toThrow(/at least 32/);
     expect(() => loadConfig({ SECRET: 'x'.repeat(40), STORAGE_DRIVER: 's3' })).toThrow(/S3_BUCKET/);
+  });
+
+  it('reads the YouTube Analytics switch as a yes or a no, off unless asked', async () => {
+    const { loadConfig } = await import('../src/config.js');
+    const base = { SECRET: 'x'.repeat(40) };
+    expect(loadConfig(base).GOOGLE_ANALYTICS).toBe(false);
+    expect(loadConfig({ ...base, GOOGLE_ANALYTICS: '' }).GOOGLE_ANALYTICS).toBe(false);
+    expect(loadConfig({ ...base, GOOGLE_ANALYTICS: 'false' }).GOOGLE_ANALYTICS).toBe(false);
+    expect(loadConfig({ ...base, GOOGLE_ANALYTICS: 'true' }).GOOGLE_ANALYTICS).toBe(true);
+    expect(loadConfig({ ...base, GOOGLE_ANALYTICS: '1' }).GOOGLE_ANALYTICS).toBe(true);
+    expect(() => loadConfig({ ...base, GOOGLE_ANALYTICS: 'yes' })).toThrow();
+    expect(loadConfig(base).YOUTUBE_ANALYTICS_URL).toBe('https://youtubeanalytics.googleapis.com');
   });
 });
 

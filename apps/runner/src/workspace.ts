@@ -30,6 +30,11 @@ const clock = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padSta
 
 export function describeAnchor(a: Comment['anchor']): string {
   if (!a) return 'General: about the piece as a whole';
+  // A comment on one line of the subtitles carries the line's own words: the agent edits that line, not "the video around 3 seconds".
+  if (a.type === 'time' && a.cue !== undefined) {
+    const when = a.t_end !== undefined ? `from ${clock(a.t)} to ${clock(a.t_end)}` : `at ${clock(a.t)}`;
+    return `Subtitle line ${a.cue + 1} of subtitle file ${(a.track ?? 0) + 1}, ${when} (${a.t}–${a.t_end ?? a.t} seconds)${a.cue_text ? `, which says: "${a.cue_text.replace(/\n/g, ' / ')}"` : ''}`;
+  }
   if (a.type === 'time') return a.t_end !== undefined ? `Video, from ${clock(a.t)} to ${clock(a.t_end)} (${a.t}–${a.t_end} seconds)` : `Video, at ${clock(a.t)} (${a.t} seconds)`;
   const pct = (n: number) => `${Math.round(n * 100)}%`;
   return a.w === 0 && a.h === 0

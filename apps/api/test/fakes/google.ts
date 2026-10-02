@@ -23,6 +23,14 @@ export class FakeGoogle {
   audited = false;
   revoked = false;
   statistics: Record<string, number> = { viewCount: 1234, likeCount: 56, commentCount: 7, favoriteCount: 0 };
+  /** When it went up, as the Data API says it in a video's snippet. */
+  publishedAt = '2026-09-01T10:00:00Z';
+  /** What the YouTube Analytics API reports for each video, once it has any. */
+  analytics = new Map<string, { estimatedMinutesWatched: number; averageViewDuration: number; views: number }>();
+  /** Turn off to answer the way Google does for a token that was never given the Analytics permission. */
+  analyticsAllowed = true;
+  /** What the person agreed to when connecting. Google repeats this list in every token answer, the refreshes included. */
+  grantedScope = 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly';
   /** When set, every video reports being rejected for this reason. */
   rejection: string | null = null;
   accessTokens = new Set<string>();
@@ -80,11 +88,11 @@ export class FakeGoogle {
       const b = req.body as Record<string, string>;
       if (b.grant_type === 'authorization_code') {
         if (b.code === 'bad') return reply.code(400).send({ error: 'invalid_grant', error_description: 'Bad Request' });
-        return reply.send({ access_token: this.newAccessToken(), refresh_token: b.code === 'norefresh' ? undefined : 'refresh-1', expires_in: 3600, scope: 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly', token_type: 'Bearer' });
+        return reply.send({ access_token: this.newAccessToken(), refresh_token: b.code === 'norefresh' ? undefined : 'refresh-1', expires_in: 3600, scope: this.grantedScope, token_type: 'Bearer' });
       }
       if (b.grant_type === 'refresh_token') {
         if (this.revoked || !this.refreshTokens.has(b.refresh_token ?? '')) return reply.code(400).send({ error: 'invalid_grant', error_description: 'Token has been expired or revoked.' });
-        return reply.send({ access_token: this.newAccessToken(), expires_in: 3600, scope: 'https://www.googleapis.com/auth/youtube.upload', token_type: 'Bearer' });
+        return reply.send({ access_token: this.newAccessToken(), expires_in: 3600, scope: this.grantedScope, token_type: 'Bearer' });
       }
       return reply.code(400).send({ error: 'unsupported_grant_type' });
     }
@@ -99,6 +107,7 @@ export class FakeGoogle {
       return reply.code(401).send({ error: { code: 401, message: 'Invalid Credentials', errors: [{ reason: 'authError' }] } });
     }
 
+    if (path === '/v2/reports') return this.report(req, reply);
     if (path === '/youtube/v3/channels') {
       return reply.send({ items: this.channels.map((c) => ({ id: c.id, snippet: { title: c.title } })) });
     }
@@ -122,9 +131,36 @@ export class FakeGoogle {
       if (!v) return reply.send({ items: [] });
       // Counts come back as strings, as the real API sends them.
       const stats = String(req.query.part ?? '').includes('statistics') ? { statistics: Object.fromEntries(Object.entries(this.statistics).map(([k, n]) => [k, String(n)])) } : {};
-      return reply.send({ items: [{ id: v.id, status: this.statusOf(v), ...stats }] });
+      const snippet = String(req.query.part ?? '').includes('snippet') ? { snippet: { publishedAt: this.publishedAt } } : {};
+      return reply.send({ items: [{ id: v.id, status: this.statusOf(v), ...stats, ...snippet }] });
     }
     return reply.code(404).send({ error: { code: 404, message: `Unknown path ${path}`, errors: [{ reason: 'notFound' }] } });
+  }
+
+  /**
+   * The Analytics API's report, strict about what it is asked the way the real one is: the channel must be MINE, a video report is filtered to
+   * one video and has the video dimension, dates are days and do not run backwards, and only known metrics are offered. Without the permission
+   * it answers 403 insufficientPermissions. Rows come back as numbers, after the columns that name them.
+   */
+  private report(req: any, reply: any) {
+    const q = req.query as Record<string, string>;
+    const bad = (message: string) => reply.code(400).send({ error: { code: 400, message, errors: [{ reason: 'badRequest' }] } });
+    if (!this.analyticsAllowed) return reply.code(403).send({ error: { code: 403, message: 'Insufficient Permission: Request had insufficient authentication scopes.', errors: [{ reason: 'insufficientPermissions' }] } });
+    if (q.ids !== 'channel==MINE') return bad('ids must be channel==MINE');
+    const filter = /^video==([\w-]+)$/.exec(q.filters ?? '');
+    if (!filter) return bad('filters must name one video: video==ID');
+    if (q.dimensions !== 'video') return bad('a video report needs dimensions=video');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(q.startDate ?? '') || !/^\d{4}-\d{2}-\d{2}$/.test(q.endDate ?? '')) return bad('startDate and endDate are days: YYYY-MM-DD');
+    if (q.startDate! > q.endDate!) return bad('startDate is after endDate');
+    const metrics = String(q.metrics ?? '').split(',');
+    const known = ['views', 'estimatedMinutesWatched', 'averageViewDuration', 'subscribersGained'];
+    if (!metrics.every((m) => known.includes(m))) return bad('unknown metric');
+    const a = this.analytics.get(filter[1]!);
+    return reply.send({
+      kind: 'youtubeAnalytics#resultTable',
+      columnHeaders: [{ name: 'video', columnType: 'DIMENSION', dataType: 'STRING' }, ...metrics.map((name) => ({ name, columnType: 'METRIC', dataType: 'INTEGER' }))],
+      rows: a ? [[filter[1], ...metrics.map((m) => (a as Record<string, number>)[m] ?? 0)]] : [],
+    });
   }
 
   private statusOf(v: VideoRecord) {

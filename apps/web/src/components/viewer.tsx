@@ -4,6 +4,7 @@ import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import type { Anchor, Asset, CommentThread } from '../api';
 import { fmtTime } from '../lib/format';
+import { playhead } from '../lib/playhead';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -252,6 +253,9 @@ function VideoPlayer({ asset, poster, threads, firstVideoPosition, draft, onDraf
     v.currentTime = clamp((clientX - r.left) / r.width, 0, 1) * dur;
     setT(v.currentTime);
   };
+
+  // The subtitle list follows the video.
+  useEffect(() => { playhead.set(t); }, [t]);
 
   const mine = threads.filter((c): c is CommentThread & { anchor: Extract<Anchor, { type: 'time' }> } =>
     c.anchor?.type === 'time' && (c.anchor.position ?? firstVideoPosition) === asset.position);

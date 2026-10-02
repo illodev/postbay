@@ -120,7 +120,7 @@ export function Layout() {
         </nav>
         <Bell />
         <div className="row">
-          <span className="muted small user-name" title={me.user.email}>{me.user.name ?? me.user.email}</span>
+          <NavLink to="/security" className="muted small user-name" title={`${me.user.email}: your account (notifications and sign-in)`}>{me.user.name ?? me.user.email}</NavLink>
           <button className="btn btn-small" onClick={signOut}>Sign out</button>
         </div>
       </header>

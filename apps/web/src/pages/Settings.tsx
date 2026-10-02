@@ -6,10 +6,12 @@ import { CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, Spinner, useT
 import { fmtDateTime, fmtShort, NETWORK_LABEL, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
 import { AgentTab } from '../components/AgentTab';
+import { AccountCheckDialog, ServerCheckDialog } from '../components/CheckDialog';
 import { PrizesSettings } from '../components/PrizesSettings';
+import { SlackSettingsCard } from '../components/SlackSettings';
 import { Webhooks } from '../components/Webhooks';
 
-type Tab = 'general' | 'members' | 'accounts' | 'prizes' | 'schedule' | 'tokens' | 'webhooks' | 'agent' | 'audit';
+type Tab = 'general' | 'members' | 'accounts' | 'prizes' | 'notifications' | 'schedule' | 'tokens' | 'webhooks' | 'agent' | 'audit';
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const ROLES: Role[] = ['admin', 'approver', 'reviewer', 'producer', 'reader'];
@@ -107,7 +109,7 @@ function Members({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const { me } = useSession();
-  const { data, error } = useQuery({ queryKey: ['members', brandId], queryFn: () => api.get<{ id: string; role: Role; user_id: string; email: string; name: string | null }[]>(`/api/brands/${brandId}/members`) });
+  const { data, error } = useQuery({ queryKey: ['members', brandId], queryFn: () => api.get<{ id: string; role: Role; user_id: string; email: string; name: string | null; second_factor: boolean }[]>(`/api/brands/${brandId}/members`) });
   const [form, setForm] = useState({ email: '', name: '', role: 'reviewer' as Role });
   const refresh = () => qc.invalidateQueries({ queryKey: ['members', brandId] });
   const add = useMutation({
@@ -122,6 +124,11 @@ function Members({ brandId }: { brandId: string }) {
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/api/brands/${brandId}/members/${id}`),
     onSuccess: refresh,
+    onError: (e) => toast(errorMessage(e), 'error'),
+  });
+  const reset = useMutation({
+    mutationFn: (id: string) => api.post(`/api/brands/${brandId}/members/${id}/reset-2fa`),
+    onSuccess: () => { refresh(); toast('Authenticator removed: they set one up again at their next sign-in'); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
   return (
@@ -140,7 +147,14 @@ function Members({ brandId }: { brandId: string }) {
                       {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                     </select>
                   </td>
-                  <td><button className="btn btn-small btn-danger" onClick={() => confirm(`Remove ${m.email} from this brand?`) && remove.mutate(m.id)}>Remove</button></td>
+                  <td>
+                    <div className="row">
+                      {m.second_factor && m.user_id !== me.user.id && (
+                        <button className="btn btn-small" title="For someone who lost their phone and their recovery codes" onClick={() => confirm(`Remove ${m.email}'s authenticator? They will set one up again the next time they sign in.`) && reset.mutate(m.id)}>Reset authenticator</button>
+                      )}
+                      <button className="btn btn-small btn-danger" onClick={() => confirm(`Remove ${m.email} from this brand?`) && remove.mutate(m.id)}>Remove</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -274,6 +288,7 @@ function Accounts({ brandId }: { brandId: string }) {
   const { data: integ } = useQuery({ queryKey: ['integrations', brandId], queryFn: () => api.get<Integrations>(`/api/brands/${brandId}/integrations`) });
   const [form, setForm] = useState({ network: 'instagram', externalId: '', displayName: '' });
   const [typing, setTyping] = useState<{ provider: Provider; reconnect?: Account } | null>(null);
+  const [checking, setChecking] = useState<Account | 'server' | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ['accounts', brandId] });
   const openPicker = (pendingId: string) => { const p = new URLSearchParams(params); p.set('connection', pendingId); setParams(p, { replace: true }); setTyping(null); };
   /** A sign-in page takes the browser away; a form opens here. */
@@ -328,6 +343,7 @@ function Accounts({ brandId }: { brandId: string }) {
             </button>
           ))}
         </div>
+        <div><button className="btn btn-small" onClick={() => setChecking('server')}>Is this server ready?</button></div>
         {integ?.providers.some((p) => !p.configured) && (
           <p className="muted small" style={{ margin: 0 }}>Greyed-out buttons need the network's app credentials on the server: see the setup guide in the repository (docs/phase-2.md).</p>
         )}
@@ -378,6 +394,7 @@ function Accounts({ brandId }: { brandId: string }) {
                         {a.connected && a.status === 'active' && provider?.configured && (
                           <button className="btn btn-small" onClick={() => start(provider, a)}>Renew</button>
                         )}
+                        {a.connected && <button className="btn btn-small" onClick={() => setChecking(a)}>Check</button>}
                         {a.connected && (
                           <button className="btn btn-small" onClick={() => confirm(`Disconnect ${a.display_name}? It goes back to being published by hand.`) && disconnect.mutate(a.id)}>Disconnect</button>
                         )}
@@ -405,6 +422,8 @@ function Accounts({ brandId }: { brandId: string }) {
         <div><button className="btn btn-primary" disabled={add.isPending}>Add account</button></div>
       </form>
       {pendingId && <ConnectionDialog brandId={brandId} pendingId={pendingId} onClose={clearParams} />}
+      {checking === 'server' && <ServerCheckDialog brandId={brandId} onClose={() => setChecking(null)} />}
+      {checking && checking !== 'server' && <AccountCheckDialog brandId={brandId} account={checking} onClose={() => setChecking(null)} />}
       {typing && <CredentialsDialog brandId={brandId} provider={typing.provider} reconnect={typing.reconnect} onClose={() => setTyping(null)} onDone={openPicker} />}
     </div>
   );
@@ -551,6 +570,7 @@ export function SettingsPage() {
     ['members', 'People', can('manage')],
     ['accounts', 'Accounts', can('manage')],
     ['prizes', 'Prizes', can('manage')],
+    ['notifications', 'Notifications', can('manage')],
     ['schedule', 'Slots & dates', can('manage')],
     ['tokens', 'API tokens', can('manage')],
     ['webhooks', 'Webhooks', can('manage')],
@@ -575,6 +595,7 @@ export function SettingsPage() {
       {current === 'members' && <Members brandId={brand.id} />}
       {current === 'accounts' && <Accounts brandId={brand.id} />}
       {current === 'prizes' && <PrizesSettings brandId={brand.id} />}
+      {current === 'notifications' && <SlackSettingsCard brandId={brand.id} />}
       {current === 'schedule' && <Schedule brandId={brand.id} />}
       {current === 'tokens' && <Tokens brandId={brand.id} />}
       {current === 'webhooks' && <Webhooks brandId={brand.id} />}

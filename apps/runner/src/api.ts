@@ -16,7 +16,7 @@ export interface Comment {
   version_id: string;
   version_number: number;
   body: string;
-  anchor: { type: 'time'; t: number; t_end?: number; position?: number } | { type: 'region'; page: number; x: number; y: number; w: number; h: number } | null;
+  anchor: { type: 'time'; t: number; t_end?: number; position?: number; track?: number; cue?: number; cue_text?: string } | { type: 'region'; page: number; x: number; y: number; w: number; h: number } | null;
   status: 'open' | 'resolved';
   author: string;
   carried: boolean;

@@ -1,12 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { ApiError } from './api';
+import { ApiError, type PublicConfig } from './api';
 import { Layout } from './components/Layout';
 import { Empty, ErrorBox, Spinner } from './components/ui';
 import { SessionProvider, useMe } from './lib/session';
 import { CalendarPage } from './pages/Calendar';
 import { Login, AuthCallback } from './pages/Login';
+import { SecondFactorPage } from './pages/SecondFactor';
+import { SecurityPage } from './pages/Security';
 import { PiecePage } from './pages/Piece';
 import { PiecesPage } from './pages/Pieces';
 import { DataDeletionPage, PublicPrizePage } from './pages/PublicPrize';
@@ -20,6 +22,8 @@ const ReviewPage = lazy(() => import('./pages/Review').then((m) => ({ default: m
 function Authed() {
   const { data: me, error, isLoading } = useMe();
   if (isLoading) return <Spinner />;
+  // A session that has done the first step of signing in but owes the second is sent to give it.
+  if (error instanceof ApiError && error.code === 'second_factor_required') return <Navigate to="/second-factor" replace />;
   if (error instanceof ApiError && error.status === 401) return <Navigate to="/login" replace />;
   if (error) return <div className="page"><ErrorBox error={error} /></div>;
   if (!me) return null;
@@ -42,6 +46,7 @@ function Authed() {
           <Route path="today" element={<PublishPage />} />
           <Route path="results" element={<ResultsPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="security" element={<SecurityPage />} />
           <Route path="*" element={<Empty title="Page not found" />} />
         </Route>
       </Routes>
@@ -54,6 +59,7 @@ export function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
+      <Route path="/second-factor" element={<SecondFactorPage />} />
       <Route path="/prize/:token" element={<PublicPrizePage />} />
       <Route path="/data-deletion" element={<DataDeletionPage />} />
       <Route path="/*" element={<Authed />} />
@@ -63,5 +69,5 @@ export function App() {
 
 // Re-exported so pages can share one query for the public config.
 export function useConfig() {
-  return useQuery({ queryKey: ['config'], queryFn: () => fetch('/api/config').then((r) => r.json() as Promise<{ devLogin: boolean }>) });
+  return useQuery({ queryKey: ['config'], queryFn: () => fetch('/api/config').then((r) => r.json() as Promise<PublicConfig>) });
 }

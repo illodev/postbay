@@ -11,6 +11,10 @@ export const anchorSchema = z.union([
       t_end: z.number().min(0).optional(),
       /** Which video of a carousel; without it, the first one. */
       position: z.number().int().min(0).optional(),
+      /** A comment on one line of the subtitles: which subtitle file and which line of it. The times and the words are filled in from the file. */
+      track: z.number().int().min(0).optional(),
+      cue: z.number().int().min(0).optional(),
+      cue_text: z.string().max(1000).optional(),
     })
     .refine((a) => a.t_end === undefined || a.t_end >= a.t, { message: 't_end must be greater than or equal to t' }),
   z

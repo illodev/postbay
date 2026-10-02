@@ -42,6 +42,19 @@ x-app-env: &app-env
   # Webhooks (docs/phase-3.md) need TOKEN_KEY above to seal their secrets. In production they go to public addresses over https only;
   # set this to true to let them reach private ones (a runner on the same network, for example). Never needed for a public receiver.
   WEBHOOK_ALLOW_PRIVATE_NETWORKS: ${WEBHOOK_ALLOW_PRIVATE_NETWORKS:-}
+  # Signing in and notifications (docs/phase-5.md). Single sign-on switches on with the OIDC_* values; a second factor (an authenticator app)
+  # is asked of admins and approvers by default in production; Slack needs TOKEN_KEY above, and push messages need nothing.
+  SECOND_FACTOR_REQUIRED: ${SECOND_FACTOR_REQUIRED:-}
+  EMAIL_LINK_LOGIN: ${EMAIL_LINK_LOGIN:-}
+  OIDC_ISSUER: ${OIDC_ISSUER:-}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+  OIDC_LABEL: ${OIDC_LABEL:-single sign-on}
+  OIDC_ALLOWED_DOMAINS: ${OIDC_ALLOWED_DOMAINS:-}
+  OIDC_SECOND_FACTOR: ${OIDC_SECOND_FACTOR:-app}
+  OIDC_TRUST_EMAIL: ${OIDC_TRUST_EMAIL:-}
+  # Ask YouTube for the Analytics permission so watch time can be read (a sensitive scope: the Google project has to be verified for it).
+  GOOGLE_ANALYTICS: ${GOOGLE_ANALYTICS:-}
 
 services:
   db:
@@ -94,6 +107,9 @@ services:
       <<: *app-env
       PORT: 3000
       RUN_WORKERS: 'false'
+    # Big uploads arrive here in pieces and are checked before they go to the bucket; on a volume, an upload survives a restart.
+    volumes:
+      - staging:/var/lib/estudio/staging
 
   # Prepares, publishes and checks posts: the queue (pg-boss, in the same PostgreSQL), transcoding with ffmpeg, retries.
   # Safe to run more than once: each publication is leased to one worker at a time.
@@ -127,4 +143,5 @@ services:
 volumes:
   db:
   media:
+  staging:
   caddy_data:

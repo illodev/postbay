@@ -15,6 +15,7 @@ export const normalizeEmail = (e: string) => e.trim().toLowerCase();
  * so the endpoint cannot be used to find out who has an account.
  */
 export async function requestMagicLink(ctx: Ctx, rawEmail: string): Promise<void> {
+  if (!ctx.config.emailLinkLogin) return; // everyone signs in with single sign-on: no link is sent, and it answers the same way
   const email = normalizeEmail(rawEmail);
   const user = await ctx.db.one('select id from app_user where lower(email) = $1', [email]);
   if (!user) return;
@@ -27,43 +28,74 @@ export async function requestMagicLink(ctx: Ctx, rawEmail: string): Promise<void
   await ctx.mailer.send(email, 'Your sign-in link', `Use this link to sign in (valid for ${LINK_MINUTES} minutes, works once):\n\n${link}\n`);
 }
 
-async function startSession(ctx: Ctx, userId: string): Promise<{ token: string; expiresAt: Date }> {
+/**
+ * Starts a session. It begins without the second step done (unless the identity provider's own is trusted, see `secondFactorDone`);
+ * whether that step is asked for is decided on each request by sessionState, not here.
+ */
+export async function startSession(ctx: Ctx, userId: string, via: 'link' | 'sso' | 'dev', secondFactorDone = false): Promise<{ token: string; expiresAt: Date }> {
   const token = randomBytes(32).toString('base64url');
   const row = await ctx.db.one<{ expires_at: Date }>(
-    `insert into session (token_hash, user_id, expires_at) values ($1,$2, now() + make_interval(days => $3)) returning expires_at`,
-    [sha(token), userId, SESSION_DAYS],
+    `insert into session (token_hash, user_id, expires_at, via, second_factor_at)
+     values ($1,$2, now() + make_interval(days => $3), $4, case when $5::boolean then now() else null end) returning expires_at`,
+    [sha(token), userId, SESSION_DAYS, via, secondFactorDone],
   );
   return { token, expiresAt: row!.expires_at };
 }
 
 /** Exchanges a link token for a session. A link works once. */
 export async function verifyMagicLink(ctx: Ctx, token: string) {
+  if (!ctx.config.emailLinkLogin) return null;
   const row = await ctx.db.one<{ email: string }>(
     `update login_token set used_at = now() where token_hash = $1 and used_at is null and expires_at > now() returning email`,
     [sha(token)],
   );
   if (!row) return null;
   const user = await ctx.db.one<{ id: string }>('select id from app_user where lower(email) = $1', [row.email]);
-  return user ? startSession(ctx, user.id) : null;
+  return user ? startSession(ctx, user.id, 'link') : null;
 }
 
 /** Development only (AUTH_DEV_LOGIN): sign in as an existing user without a link. */
 export async function devLogin(ctx: Ctx, rawEmail: string) {
   if (!ctx.config.devLogin) return null;
   const user = await ctx.db.one<{ id: string }>('select id from app_user where lower(email) = $1', [normalizeEmail(rawEmail)]);
-  return user ? startSession(ctx, user.id) : null;
+  return user ? startSession(ctx, user.id, 'dev') : null;
 }
 
 export async function endSession(ctx: Ctx, token: string) {
   await ctx.db.query('delete from session where token_hash = $1', [sha(token)]);
 }
 
-export async function principalFromSession(ctx: Ctx, token: string): Promise<Principal | null> {
-  const row = await ctx.db.one<{ id: string; email: string }>(
-    `select u.id, u.email from session s join app_user u on u.id = s.user_id where s.token_hash = $1 and s.expires_at > now()`,
+/** Where a browser session stands: signed in, or still owing the second step (and whether it has an authenticator to give it from). */
+export interface SessionState {
+  userId: string;
+  email: string;
+  /** none: signed in. verify: has an authenticator, owes a code. enroll: must set one up first. */
+  pending: 'none' | 'verify' | 'enroll';
+}
+
+export async function sessionState(ctx: Ctx, token: string): Promise<SessionState | null> {
+  const row = await ctx.db.one<{ id: string; email: string; second_factor_at: Date | null; enrolled: boolean; privileged: boolean }>(
+    `select u.id, u.email, s.second_factor_at,
+            exists(select 1 from user_totp t where t.user_id = u.id and t.confirmed_at is not null) as enrolled,
+            exists(select 1 from member m where m.user_id = u.id and m.role in ('admin','approver')) as privileged
+     from session s join app_user u on u.id = s.user_id where s.token_hash = $1 and s.expires_at > now()`,
     [sha(token)],
   );
-  return row ? { kind: 'user', userId: row.id, email: row.email } : null;
+  if (!row) return null;
+  // Asked of anyone who set an authenticator up, and of admins and approvers once the deployment requires it.
+  const needed = row.enrolled || (ctx.config.secondFactorRequired && row.privileged);
+  const pending = !needed || row.second_factor_at ? 'none' : row.enrolled ? 'verify' : 'enroll';
+  return { userId: row.id, email: row.email, pending };
+}
+
+export async function principalFromSession(ctx: Ctx, token: string): Promise<Principal | null> {
+  const s = await sessionState(ctx, token);
+  return s && s.pending === 'none' ? { kind: 'user', userId: s.userId, email: s.email } : null;
+}
+
+/** The person has given the second step in this session. */
+export async function markSecondFactor(ctx: Ctx, token: string): Promise<void> {
+  await ctx.db.query('update session set second_factor_at = now() where token_hash = $1', [sha(token)]);
 }
 
 export async function principalFromApiToken(ctx: Ctx, token: string): Promise<Principal | null> {

@@ -3,10 +3,11 @@ import { call } from '../http.js';
 import { validateAgainst } from '../validate.js';
 import {
   ConnectorError,
-  type Account, type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
+  type Account, type Capabilities, type CommonMetrics, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
   type MediaItem, type MetricsResult, type PrepareResult, type Published, type PublishInput, type VerifyResult,
 } from '../types.js';
 import { classifyGoogle, type GoogleClient } from './client.js';
+import { ANALYTICS_SCOPE } from './oauth.js';
 
 /**
  * YouTube publishing through the Data API: a resumable upload of the video, set to private with a `publishAt` time.
@@ -34,6 +35,12 @@ const CAPS: Capabilities = {
   aiLabel: true,
   nativeScheduling: { minLeadMinutes: 1, maxLeadDays: 3650 },
 };
+
+/** What the YouTube Analytics API answers: the names of the columns, then a row of numbers for each video asked about. */
+interface AnalyticsReport {
+  columnHeaders?: { name: string }[];
+  rows?: (string | number)[][];
+}
 
 const TITLE_MAX = 100;
 const mainVideo = (input: PublishInput): MediaItem | undefined => input.media.find((m) => m.kind === 'video');
@@ -225,16 +232,55 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
     },
 
     async fetchMetrics(_account, externalId, _handle, env): Promise<MetricsResult> {
-      const token = (await env.token()).accessToken;
-      const r = await client.get<{ items?: { statistics?: Record<string, string> }[] }>('/youtube/v3/videos', token, { part: 'statistics', id: externalId });
-      const s = r.items?.[0]?.statistics;
+      const tokens = await env.token();
+      const token = tokens.accessToken;
+      const r = await client.get<{ items?: { snippet?: { publishedAt?: string }; statistics?: Record<string, string> }[] }>(
+        '/youtube/v3/videos', token, { part: 'statistics,snippet', id: externalId },
+      );
+      const item = r.items?.[0];
+      const s = item?.statistics;
       if (!s) throw new ConnectorError('file_rejected', 'YouTube does not return this video any more');
       const n = (k: string) => (s[k] === undefined ? undefined : Number(s[k]));
-      return {
-        common: { views: n('viewCount'), likes: n('likeCount'), comments: n('commentCount') },
-        raw: r,
-        note: 'These are the figures of the Data API. Watch time and subscribers gained come from the YouTube Analytics API, which needs a permission this app does not ask for yet',
-      };
+      const common: CommonMetrics = { views: n('viewCount'), likes: n('likeCount'), comments: n('commentCount') };
+      if (!client.cfg.analytics) {
+        return {
+          common, raw: r,
+          note: 'These are the figures of the Data API. Watch time comes from the YouTube Analytics API: turn on GOOGLE_ANALYTICS and connect the channel again to give this app that permission',
+        };
+      }
+      if (tokens.scopes && !tokens.scopes.includes(ANALYTICS_SCOPE)) {
+        return { common, raw: r, note: 'Watch time needs the YouTube Analytics permission, and this connection was made without it. Connect the channel again and accept it' };
+      }
+      // The Data API's figures stand even if Analytics cannot answer; only a failure worth trying again makes the whole reading wait.
+      try {
+        const report = await client.report<AnalyticsReport>('/v2/reports', token, {
+          ids: 'channel==MINE',
+          metrics: 'estimatedMinutesWatched,averageViewDuration,views',
+          dimensions: 'video',
+          filters: `video==${externalId}`,
+          // From the day the video went up (YouTube's own first upload day if that is not known) to today.
+          startDate: (item?.snippet?.publishedAt ?? '2005-04-23').slice(0, 10),
+          endDate: env.now().toISOString().slice(0, 10),
+        });
+        const row = report.rows?.[0];
+        if (!row) return { common, raw: { ...r, analytics: report }, note: 'YouTube Analytics has no figures for this video yet; it usually takes a day or two' };
+        const at = (name: string) => {
+          const i = (report.columnHeaders ?? []).findIndex((h) => h.name === name);
+          return i >= 0 && typeof row[i] === 'number' ? (row[i] as number) : undefined;
+        };
+        const minutes = at('estimatedMinutesWatched');
+        const average = at('averageViewDuration');
+        return { common: { ...common, ...(minutes !== undefined ? { watchMinutes: minutes } : {}), ...(average !== undefined ? { avgWatchSeconds: average } : {}) }, raw: { ...r, analytics: report } };
+      } catch (err) {
+        if (err instanceof ConnectorError && (err.errorClass === 'transient' || err.errorClass === 'rate_limit')) throw err;
+        if (!(err instanceof ConnectorError)) {
+          // An answer in a shape this app does not know. The counts are still good, so they are kept and the gap is explained.
+          env.log.warn({ err: String(err) }, 'YouTube Analytics answered in a way this app could not read');
+          return { common, raw: r, note: 'Watch time is missing: YouTube Analytics answered in a way this app does not understand' };
+        }
+        const why = err.errorClass === 'auth' ? 'This connection is not allowed to read YouTube Analytics: connect the channel again and accept every permission' : `YouTube Analytics refused the question (${err.message})`;
+        return { common, raw: r, note: `Watch time is missing. ${why}` };
+      }
     },
 
     async health(_account, env): Promise<HealthResult> {

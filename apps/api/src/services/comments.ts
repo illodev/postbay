@@ -4,6 +4,7 @@ import { actorCols, authorize, type Principal } from '../auth/principal.js';
 import { mediaSource, type Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { anchorSchema, type Anchor } from '../domain/anchors.js';
+import { trackAt } from './subtitles.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { audit } from './audit.js';
 import { commentRef, emit } from './events.js';
@@ -44,8 +45,8 @@ export async function openCommentCount(db: Queryable, variantId: string): Promis
   return r?.n ?? 0;
 }
 
-async function checkAnchor(db: Queryable, versionId: string, anchor: Anchor) {
-  const assets = await db.query<{ kind: string; position: number; duration_ms: number | null; storage_key: string }>(
+async function checkAnchor(ctx: Ctx, versionId: string, anchor: Anchor): Promise<{ video: { storage_key: string } | null; anchor: Anchor }> {
+  const assets = await ctx.db.query<{ kind: string; position: number; duration_ms: number | null; storage_key: string }>(
     `select kind, position, duration_ms, storage_key from asset where version_id = $1 order by position, kind`,
     [versionId],
   );
@@ -53,15 +54,27 @@ async function checkAnchor(db: Queryable, versionId: string, anchor: Anchor) {
   if (anchor.type === 'time') {
     const video = assets.find((a) => a.kind === 'video' && (anchor.position === undefined || a.position === anchor.position));
     if (!video) throw badRequest('invalid_anchor', 'This version has no video to anchor a moment to');
-    if (video.duration_ms !== null && anchor.t * 1000 > video.duration_ms + 1000) {
-      throw badRequest('invalid_anchor', 'The moment is after the end of the video');
+    const afterEnd = (t: number) => video.duration_ms !== null && t * 1000 > video.duration_ms + 1000;
+    if (anchor.cue === undefined) {
+      if (anchor.track !== undefined || anchor.cue_text !== undefined) throw badRequest('invalid_anchor', 'A subtitle line is named by its number');
+      if (afterEnd(anchor.t)) throw badRequest('invalid_anchor', 'The moment is after the end of the video');
+      return { video, anchor };
     }
-    return video;
+    // A comment on a subtitle line: the line must exist in this version, and its times and words are the file's, not the sender's.
+    const track = await trackAt(ctx, versionId, anchor.track ?? 0);
+    if (!track) throw badRequest('invalid_anchor', 'This version has no such subtitle file');
+    const cue = track.cues[anchor.cue];
+    if (!cue) throw badRequest('invalid_anchor', 'That subtitle line does not exist in this version');
+    if (afterEnd(cue.start)) throw badRequest('invalid_anchor', 'That subtitle line comes after the end of the video');
+    return {
+      video,
+      anchor: { type: 'time', t: cue.start, t_end: cue.end, position: anchor.position, track: track.position, cue: cue.index, cue_text: cue.text.slice(0, 1000) },
+    };
   }
   const hasPdf = assets.some((a) => a.kind === 'pdf');
   if (!hasPdf && anchor.page > primary.length) throw badRequest('invalid_anchor', `The version only has ${primary.length} page(s)`);
   if (!hasPdf && primary.length === 0) throw badRequest('invalid_anchor', 'This version has no pages to anchor a region to');
-  return null;
+  return { video: null, anchor };
 }
 
 export async function createComment(ctx: Ctx, p: Principal, versionId: string, raw: unknown) {
@@ -69,8 +82,9 @@ export async function createComment(ctx: Ctx, p: Principal, versionId: string, r
   const version = await loadVersion(ctx.db, versionId);
   await authorize(ctx.db, p, version.brand_id, 'comment.create');
   if (!LIVE.includes(version.review_state)) throw conflict('version_closed', 'This version no longer accepts new comments');
-  const anchor = input.anchor ?? null;
-  const video = anchor ? await checkAnchor(ctx.db, versionId, anchor) : null;
+  const checked = input.anchor ? await checkAnchor(ctx, versionId, input.anchor) : null;
+  const anchor = checked?.anchor ?? null;
+  const video = checked?.video ?? null;
 
   // Commenting on a moment also stores the frame: it is what the agent receives later.
   const id = randomUUID();

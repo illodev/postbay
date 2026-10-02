@@ -180,7 +180,7 @@ export interface VersionDetail {
 }
 
 export type Anchor =
-  | { type: 'time'; t: number; t_end?: number; position?: number }
+  | { type: 'time'; t: number; t_end?: number; position?: number; track?: number; cue?: number; cue_text?: string }
   | { type: 'region'; page: number; x: number; y: number; w: number; h: number };
 
 export interface Reply {
@@ -450,6 +450,8 @@ export interface CommonMetrics {
   shares?: number;
   saves?: number;
   avgWatchSeconds?: number;
+  /** All the time spent watching, in minutes. */
+  watchMinutes?: number;
 }
 
 export type MetricAge = '1h' | '6h' | '22h' | '1d' | '7d' | '28d';
@@ -526,4 +528,93 @@ export interface PrizeDelivery {
   downloads: number;
   expires_at: string | null;
   purge_after: string;
+}
+
+// ───────────────────────────── readiness checks ─────────────────────────────
+
+export interface CheckResult {
+  id: string;
+  status: 'pass' | 'warn' | 'fail' | 'skip';
+  title: string;
+  detail: string;
+  /** What to do about it, when it is not a pass. */
+  hint?: string;
+}
+
+export interface AccountReport {
+  account: { id: string; network: string; display_name: string };
+  results: CheckResult[];
+  ok: boolean;
+}
+
+
+// ───────────────────────────── signing in ─────────────────────────────
+
+export interface PublicConfig {
+  devLogin: boolean;
+  /** Single sign-on, when the server has it: what the button says. */
+  sso: { label: string } | null;
+  emailLinkLogin: boolean;
+}
+
+/** Where a sign-in stands: none, or still owing the second step (verify: has an authenticator; enroll: has to set one up). */
+export interface AuthState {
+  signedIn: boolean;
+  secondFactor: 'none' | 'verify' | 'enroll';
+}
+
+export interface SecondFactorStatus {
+  enrolled: boolean;
+  required: boolean;
+  requiredByRole: boolean;
+  recoveryCodesLeft: number;
+}
+
+export interface Enrollment {
+  secret: string;
+  otpauthUrl: string;
+}
+
+// ───────────────────────────── notifications ─────────────────────────────
+
+export interface NotificationPreferences {
+  kinds: { kind: string; label: string }[];
+  emailKinds: string[];
+  pushKinds: string[];
+  /** How many browsers have push set up for this person. */
+  pushDevices: number;
+}
+
+export interface SlackSettings {
+  /** False when the server has no TOKEN_KEY to seal the address with. */
+  available: boolean;
+  allKinds: { kind: string; label: string; default: boolean }[];
+  configured: boolean;
+  /** The end of the address, enough to recognise it. The address itself is never sent back. */
+  hint: string | null;
+  kinds: string[];
+  lastOkAt: string | null;
+  lastError: string | null;
+  disabledReason: string | null;
+}
+
+
+// ───────────────────────────── subtitles ─────────────────────────────
+
+export interface SubtitleCue {
+  index: number;
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface SubtitleTrack {
+  assetId: string;
+  /** Which subtitle file of the version. */
+  position: number;
+  name: string;
+  cues: SubtitleCue[];
+  skipped: number;
+  truncated: boolean;
+  problem?: string;
 }

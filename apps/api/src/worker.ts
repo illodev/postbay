@@ -100,7 +100,7 @@ export async function startWorker(ctx: Ctx): Promise<Worker> {
   const timer = setInterval(() => void sweep(), ctx.config.WORKER_SWEEP_SECONDS * 1000);
   timer.unref();
   void sweep();
-  const stopBackground = startBackground(ctx);
+  const stopBackground = startBackground(ctx, ctx.config.NOTIFY_SECONDS * 1000);
 
   return {
     sweep,

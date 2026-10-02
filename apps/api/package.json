@@ -11,6 +11,8 @@
     "test": "vitest run",
     "migrate": "tsx --env-file-if-exists=../../.env src/cli.ts migrate",
     "bootstrap": "tsx --env-file-if-exists=../../.env src/cli.ts bootstrap",
+    "check": "tsx --env-file-if-exists=../../.env src/cli.ts check",
+    "reset-2fa": "tsx --env-file-if-exists=../../.env src/cli.ts reset-2fa",
     "worker": "tsx watch --env-file-if-exists=../../.env src/worker-main.ts"
   },
   "dependencies": {

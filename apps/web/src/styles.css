@@ -252,3 +252,12 @@ progress { accent-color: var(--accent); height: .6rem; }
 .options { border: 1px solid var(--border); border-radius: 8px; padding: .75rem .9rem; margin: 0; }
 .options legend { padding: 0 .35rem; }
 th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* subtitles beside the video */
+.cue-list { max-height: 14rem; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+.cue { display: flex; gap: .6rem; align-items: baseline; padding: .35rem .6rem; border-bottom: 1px solid var(--border); }
+.cue:last-child { border-bottom: none; }
+.cue.now { background: var(--accent-soft); }
+.cue-time { appearance: none; border: none; background: none; font: inherit; font-variant-numeric: tabular-nums; color: var(--accent); cursor: pointer; padding: 0; min-width: 4.2rem; text-align: left; }
+.cue-text { flex: 1; white-space: pre-line; overflow-wrap: anywhere; }
+.cue-quote { margin: 0; padding: .25rem .6rem; border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 0 6px 6px 0; white-space: pre-line; font-style: italic; }

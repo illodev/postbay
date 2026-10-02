@@ -6,8 +6,15 @@ import { Dialog, ErrorBox, errorMessage, useToast } from './ui';
 
 export function anchorLabel(a: Anchor | null): string {
   if (!a) return 'General';
+  if (a.type === 'time' && a.cue !== undefined) return `Subtitle ${a.cue + 1} · ${fmtTime(a.t)}`;
   if (a.type === 'time') return a.t_end !== undefined ? `${fmtTime(a.t)} – ${fmtTime(a.t_end)}` : fmtTime(a.t);
   return a.w === 0 && a.h === 0 ? `Page ${a.page} · point` : `Page ${a.page} · area`;
+}
+
+/** The words of the subtitle line a comment is about, quoted, so the comment reads on its own. */
+export function CueQuote({ anchor }: { anchor: Anchor | null }) {
+  if (anchor?.type !== 'time' || anchor.cue === undefined || !anchor.cue_text) return null;
+  return <blockquote className="cue-quote" data-testid="cue-quote">“{anchor.cue_text}”</blockquote>;
 }
 
 const REPLY_LABEL = { fixed: 'Fixed', cannot_do: 'Cannot do', needs_human: 'Needs a person' } as const;
@@ -68,6 +75,7 @@ function Thread({ c, focus, canReply, canResolve, canReopen, onJump, onFocus, ve
           <span className="chip chip-approved">{c.resolved_in_number ? `resolved in v${c.resolved_in_number}` : `resolved${c.resolved_by ? ` by ${c.resolved_by}` : ''}`}</span>
         )}
       </div>
+      <CueQuote anchor={c.anchor} />
       {c.frame_url && <img className="frame-thumb" src={c.frame_url} alt="Frame this comment points at" loading="lazy" onClick={(e) => { e.stopPropagation(); setZoom(true); }} />}
       <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{c.body}</p>
       {c.replies.map((r) => (
@@ -171,6 +179,7 @@ export function CommentsPanel({ versionId, threads, draft, onClearDraft, canComm
               <span className="muted small">General · or pick a moment or area on the left</span>
             )}
           </div>
+          <CueQuote anchor={draft} />
           <textarea aria-label="Comment" value={body} onChange={(e) => setBody(e.target.value)} placeholder="What should change?" />
           <label className="check small">
             <input type="checkbox" checked={peopleOnly} onChange={(e) => setPeopleOnly(e.target.checked)} />

@@ -110,7 +110,7 @@ export async function createEnv(overrides: Partial<Record<string, string>> = {},
     ? {
         TOKEN_KEY: Buffer.alloc(32, 7).toString('base64'),
         META_APP_ID: 'app', META_APP_SECRET: 'secret', META_GRAPH_URL: meta.url, META_OAUTH_URL: meta.url,
-        GOOGLE_CLIENT_ID: 'gid', GOOGLE_CLIENT_SECRET: 'gsecret', GOOGLE_OAUTH_URL: `${google.url}/auth`, GOOGLE_TOKEN_URL: `${google.url}/token`, YOUTUBE_API_URL: google.url,
+        GOOGLE_CLIENT_ID: 'gid', GOOGLE_CLIENT_SECRET: 'gsecret', GOOGLE_OAUTH_URL: `${google.url}/auth`, GOOGLE_TOKEN_URL: `${google.url}/token`, YOUTUBE_API_URL: google.url, YOUTUBE_ANALYTICS_URL: google.url,
         WORKER_SWEEP_SECONDS: '1',
       }
     : {};
@@ -126,6 +126,7 @@ export async function createEnv(overrides: Partial<Record<string, string>> = {},
     SECRET: 'test-secret-test-secret-test-secret-test-secret',
     DATABASE_URL: ADMIN_URL.replace(/\/postgres$/, `/${dbName}`),
     STORAGE_LOCAL_DIR: dir,
+    STAGING_DIR: path.join(dir, '.staging'),
     APP_URL: 'http://app.test',
     MEDIA_URL: 'http://media.test',
     ...fakeConfig,

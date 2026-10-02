@@ -1,6 +1,6 @@
 # End-to-end tests
 
-Four browser runs: [phase 1's flow](#phase-1-smoke-test), [phase 2's publishing against fake networks](#phase-2-publishing-against-fake-networks), [phase 3's agent loop](#phase-3-the-agent-loop) and [phase 4's other networks, results and prizes](#phase-4-the-other-networks-results-and-prizes).
+Five browser runs: [phase 1's flow](#phase-1-smoke-test), [phase 2's publishing against fake networks](#phase-2-publishing-against-fake-networks), [phase 3's agent loop](#phase-3-the-agent-loop), [phase 4's other networks, results and prizes](#phase-4-the-other-networks-results-and-prizes) and [phase 5's sign-in, notifications, subtitles and big uploads](#phase-5-signing-in-notifications-subtitles-and-big-uploads).
 
 ## Phase 1 smoke test
 
@@ -132,3 +132,41 @@ page, one section per network and never a total across them; prizes (switching t
 message, the rule and its checks, Meta's signed webhook and its handshake, a private reply within seconds, once per person, the public page and the
 download of the exact file, a public link for a network that cannot message, erasing a person, Meta's data-deletion callback and its status page, the
 retention purge); and phone-sized screens.
+
+## Phase 5: signing in, notifications, subtitles and big uploads
+
+Drives the second factor, single sign-on, Slack, push messages, subtitle comments, interrupted uploads and the readiness checks through the real
+screens. The services are stand-ins in `apps/api/test/fakes` (an OpenID provider, Slack and a push service, besides the networks), started by
+`e2e/fakes.mts` when `FAKES_ACCESS=1` (the earlier runs do not set it, so they see the app as they always did).
+
+```sh
+npm install && npm run build && npm run e2e:assets          # once; phase5.sh makes big.webm and captions.vtt if your assets predate them
+TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres npm run e2e:phase5
+```
+
+`e2e/phase5.sh` creates a clean database (`estudio_e2e_phase5`), starts the fakes (port 4050), bootstraps a brand, starts the API with its worker
+(port 3500, `SECOND_FACTOR_REQUIRED=true`, `GOOGLE_ANALYTICS=true`, notifications sent every 3 seconds, a staging directory for big uploads), runs
+`e2e/phase5.mjs` and stops everything. Screenshots land in `e2e/shots-phase5` (override with `SHOTS`).
+
+**What it can and cannot tell you.** It proves the app's own behaviour from the browser down to the database. It cannot prove that a real identity
+provider, Slack, push service or network answers the way the stand-ins do. Two things are replaced on purpose:
+
+- **The browser's push API.** Chromium here cannot reach a real push service, so `PushManager.subscribe` is replaced by one that hands out a
+  subscription whose keys the test knows. Everything else (the permission, the service worker, the studio's own calls) is real, and what the studio
+  sends is decrypted with that subscription's keys. Whether Chrome's, Firefox's or Apple's push service accepts what the studio sends is not tested.
+- **The authenticator app.** The test computes the codes itself (its own HMAC-SHA1 and base32, not the app's) from the key the page shows.
+
+It covers: an admin sent to set up a second factor before anything else is reachable; the key and ten recovery codes shown once and stored sealed
+or hashed; a wrong code and a spent code refused; a recovery code that works once; five wrong codes locking someone out, and an admin's reset
+(audited) lifting it; recovery codes renewed with a current code; single sign-on (the button, a person who exists signed in and linked, a stranger and a
+foreign domain refused with no account made, an admin still asked for the authenticator, a token for another app refused); Slack (a foreign address
+refused, the address sealed and never sent back, a test message, one post per event for the team, posting stopped when Slack says the address is gone
+and the admin told once, a new address starting it again); push (turned on in a browser, a test message, a new version pushed and decrypted, a kind
+turned off not pushed, turned off again, a browser the push service says is gone forgotten); subtitles (the lines beside the video, the line being said
+marked, a click going there, a comment on a line storing the file's own words and times, a forged line refused); big uploads (a piece whose answer
+was lost not sent twice, and a tab closed in the middle picked up where it stopped when the same file is chosen again); the readiness checks (the
+Check dialogs, YouTube asked for its Analytics permission, the command line check with a real test post through the publishing code and a transcript with
+the secrets removed); and phone-sized screens.
+
+It does not cover YouTube watch time in the browser: that is proven through the API tests against the stand-in (`apps/api/test/connectors-metrics.test.ts`
+and `metrics.test.ts`), and here only the permission request and its grant are seen.

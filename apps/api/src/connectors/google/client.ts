@@ -8,6 +8,10 @@ export interface GoogleConfig {
   oauthUrl: string;
   tokenUrl: string;
   apiUrl: string;
+  /** Where the YouTube Analytics API lives (a different host from the Data API). */
+  analyticsUrl: string;
+  /** Whether sign-in also asks for the permission to read YouTube Analytics. */
+  analytics: boolean;
 }
 
 /** YouTube's daily quota resets at midnight Pacific Time, so that is when a quota failure is worth retrying. */
@@ -70,5 +74,13 @@ export class GoogleClient {
 
   async get<T = any>(path: string, token: string, query: CallOptions['query'] = {}): Promise<T> {
     return (await this.request(path, token, { query })).body;
+  }
+
+  /** A report from the YouTube Analytics API. */
+  async report<T = any>(path: string, token: string, query: CallOptions['query']): Promise<T> {
+    const r = await call(`${this.cfg.analyticsUrl}${path}`, { query, headers: { authorization: `Bearer ${token}` } });
+    const err = classifyGoogle(r);
+    if (err) throw err;
+    return r.body;
   }
 }

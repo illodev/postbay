@@ -5,7 +5,7 @@ import { createEnv, type Env } from './helpers.js';
 let env: Env;
 let ig: string, fb: string, yt: string;
 beforeAll(async () => {
-  env = await createEnv({}, { fakes: true });
+  env = await createEnv({ GOOGLE_ANALYTICS: 'true' }, { fakes: true });
   ig = await env.connect('instagram');
   fb = await env.connect('facebook');
   yt = await env.connect('youtube');
@@ -111,7 +111,27 @@ describe('reading them', () => {
     expect((await byAge(id))['1d'].status).toBe('pending');
   });
 
-  it('keeps each age as it was read, so growth can be seen', async () => {
+  it("reads YouTube's watch time from Analytics and keeps it with the counts, totalling watch time but not the average", async () => {
+    env.google.audited = true;
+    await env.db.query(`update social_account set provider_data = provider_data || '{"audited":true}' where id = $1`, [yt]);
+    const { id } = await published(yt);
+    expect((await pub(id)).visibility).toBe('public');
+    const videoId = (await pub(id)).external_id as string;
+    env.google.analytics.set(videoId, { estimatedMinutesWatched: 321, averageViewDuration: 47.5, views: 1200 });
+    env.clock.advance(HOUR + 1000);
+    await scanMetrics(env.ctx);
+    const one = (await byAge(id))['1h'];
+    expect(one).toMatchObject({ status: 'ok' });
+    expect(one.metrics).toEqual({ views: 1234, likes: 56, comments: 7, watchMinutes: 321, avgWatchSeconds: 47.5 });
+    expect(one.raw.analytics.rows).toEqual([[videoId, 321, 47.5, 1200]]);
+
+    const r = await env.call(env.users.reader, 'GET', `/api/brands/${env.brandId}/metrics?network=youtube`);
+    const net = r.body.networks.find((n: any) => n.network === 'youtube');
+    expect(net.totals.watchMinutes).toBeGreaterThanOrEqual(321);
+    expect(net.totals.avgWatchSeconds).toBeUndefined();
+  });
+
+  it("keeps each age as it was read, so growth can be seen", async () => {
     const { id } = await published(ig);
     env.clock.advance(HOUR + 1000);
     await scanMetrics(env.ctx);

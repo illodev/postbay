@@ -86,7 +86,9 @@ export const memberInput = z.object({
 export async function listMembers(ctx: Ctx, p: Principal, brandId: string) {
   await authorize(ctx.db, p, brandId, 'brand.manage');
   return ctx.db.query(
-    `select m.id, m.role, u.id as user_id, u.email, u.name from member m join app_user u on u.id = m.user_id
+    `select m.id, m.role, u.id as user_id, u.email, u.name,
+            exists(select 1 from user_totp t where t.user_id = u.id and t.confirmed_at is not null) as second_factor
+     from member m join app_user u on u.id = m.user_id
      where m.brand_id = $1 order by u.email`,
     [brandId],
   );

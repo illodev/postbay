@@ -19,6 +19,38 @@ export interface CallOptions {
   timeoutMs?: number;
 }
 
+/** One exchange with a network, as the self-check records it: what was asked and answered, with every secret removed. */
+export interface Exchange {
+  at: string;
+  method: string;
+  url: string;
+  status: number | null;
+  ms: number;
+  request?: unknown;
+  response?: unknown;
+  error?: string;
+}
+
+let tap: ((e: Exchange) => void) | null = null;
+/** Whoever sets a tap sees every call this process makes, until it sets null. Only the self-check does, to record a real run. */
+export function setTap(fn: ((e: Exchange) => void) | null): void {
+  tap = fn;
+}
+
+/**
+ * A body is recorded only if it is small and not a file: a transcript is for reading, not for replaying. Secrets are removed, and an
+ * address inside it loses its query string, because that is where a signed upload or download address keeps its signature.
+ */
+function recordable(value: unknown): unknown {
+  const r = JSON.parse(JSON.stringify(redact(value)) ?? 'null', (_k, v) => {
+    if (typeof v !== 'string' || !/^https?:\/\/\S+$/.test(v)) return v;
+    const q = v.indexOf('?');
+    return q === -1 ? v : `${v.slice(0, q)}?[query removed]`;
+  });
+  const text = JSON.stringify(r);
+  return text && text.length > 6000 ? `${text.slice(0, 6000)}…[cut]` : r;
+}
+
 /**
  * One HTTP call. A reply with an error status is returned for the connector to read (each network words its errors its own
  * way); only a call that never got an answer (no connection, a timeout) throws, as a transient failure.
@@ -38,11 +70,22 @@ export async function call(url: string, o: CallOptions = {}): Promise<Reply> {
     body = f.toString();
   }
   const timeout = AbortSignal.timeout(o.timeoutMs ?? 60_000);
+  const started = Date.now();
+  const record = (e: Partial<Exchange>) => {
+    if (!tap) return;
+    try {
+      const requestBody = o.json !== undefined ? o.json : o.form ?? (typeof body === 'string' ? body : body ? '[a file or a stream]' : undefined);
+      tap({ at: new Date(started).toISOString(), method: o.method ?? 'GET', url: redactUrl(u.toString()), status: null, ms: Date.now() - started, request: requestBody === undefined ? undefined : recordable(requestBody), ...e });
+    } catch {
+      // Recording must never change what a call does.
+    }
+  };
   let res: Response;
   try {
     res = await fetch(u, { method: o.method ?? 'GET', headers, body, signal: timeout, ...(o.duplex ? { duplex: o.duplex } : {}) } as RequestInit);
   } catch (err) {
     const reason = (err as Error).name === 'TimeoutError' ? 'timed out' : `could not connect (${(err as Error).message})`;
+    record({ error: `${u.host} ${reason}` });
     throw new ConnectorError('transient', `${u.host} ${reason}`, { detail: { url: redactUrl(u.toString()) } });
   }
   const text = await res.text();
@@ -54,6 +97,7 @@ export async function call(url: string, o: CallOptions = {}): Promise<Reply> {
       parsed = text;
     }
   }
+  record({ status: res.status, response: parsed === null ? undefined : recordable(parsed) });
   return { status: res.status, ok: res.ok, headers: res.headers, body: parsed };
 }
 

@@ -21,8 +21,11 @@ export interface Storage {
   /** Size and sha256 of the stored object, or null if it does not exist. */
   stat(key: string): Promise<StoredStat | null>;
   put(key: string, data: Buffer, mime: string): Promise<void>;
-  /** Stores a file from disk without loading it into memory (a transcoded video can be hundreds of megabytes). */
-  putFile(key: string, path: string, mime: string): Promise<void>;
+  /**
+   * Stores a file from disk without loading it into memory (a transcoded video can be hundreds of megabytes). With `sha256` (the hash
+   * of the file, already checked) the object carries it, which is what `stat` reads back from S3.
+   */
+  putFile(key: string, path: string, mime: string, opts?: { sha256?: string }): Promise<void>;
   get(key: string): Promise<Buffer | null>;
   /** A stored file as a stream from a byte offset, with its total size: what a resumable upload needs. */
   open(key: string, start?: number): Promise<{ stream: Readable; size: number }>;

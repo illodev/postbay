@@ -201,6 +201,8 @@ export interface CommonMetrics {
   saves?: number;
   /** Average time watched, in seconds. */
   avgWatchSeconds?: number;
+  /** All the time spent watching, in minutes. */
+  watchMinutes?: number;
 }
 
 export interface MetricsResult {

@@ -15,6 +15,8 @@ const schema = z.object({
   SECRET: z.string().min(32, 'SECRET must be at least 32 characters'),
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
   STORAGE_LOCAL_DIR: z.string().default('.data/media'),
+  // Where the pieces of a resumable upload wait until the whole file has arrived (see services/resumable.ts). Needs room for the largest upload in progress.
+  STAGING_DIR: z.string().default('.data/staging'),
   S3_ENDPOINT: z.string().optional(),
   // Address browsers use for signed URLs when it differs from the one the app uses inside its network.
   S3_PUBLIC_ENDPOINT: z.string().optional(),
@@ -27,6 +29,26 @@ const schema = z.object({
   MAIL_FROM: z.string().default('Estudio <no-reply@localhost>'),
   AUTH_DEV_LOGIN: bool,
   WEB_DIST: z.string().optional(),
+  /** The host Slack incoming webhook addresses are on. Only that host is accepted; this is changed only to point tests at a stand-in. */
+  SLACK_HOOK_HOST: z.string().default('hooks.slack.com'),
+
+  // Access (phase 5)
+  /** A second factor (an authenticator app) for admins and approvers. On in production unless set to false; in development it is off unless set to true. */
+  SECOND_FACTOR_REQUIRED: z.enum(['true', 'false', '1', '0', '']).optional(),
+  /** Whether people can still sign in with an emailed link. Set false when everyone signs in with single sign-on. */
+  EMAIL_LINK_LOGIN: z.enum(['true', 'false', '1', '0', '']).optional(),
+  /** Single sign-on with any OpenID Connect provider: Google Workspace (https://accounts.google.com) or Microsoft Entra (https://login.microsoftonline.com/<tenant>/v2.0). */
+  OIDC_ISSUER: z.string().optional(),
+  OIDC_CLIENT_ID: z.string().optional(),
+  OIDC_CLIENT_SECRET: z.string().optional(),
+  /** What the button says: "Google Workspace", "Microsoft"… */
+  OIDC_LABEL: z.string().default('single sign-on'),
+  /** Email domains that may sign in this way, comma separated. Required: a provider that is open to anyone must not be open to everyone. */
+  OIDC_ALLOWED_DOMAINS: z.string().optional(),
+  /** "app": admins and approvers also give an authenticator code after signing in. "idp": the provider's own second step is trusted (you attest it is enforced there). */
+  OIDC_SECOND_FACTOR: z.enum(['app', 'idp']).default('app'),
+  /** Accept an email the provider does not say is verified (Microsoft Entra does not send the claim). Only for a single-tenant issuer whose admin controls the addresses. */
+  OIDC_TRUST_EMAIL: bool,
 
   // Connected accounts (phase 2)
   /** Master key for the stored network tokens, 32 bytes in base64: openssl rand -base64 32 */
@@ -41,6 +63,9 @@ const schema = z.object({
   GOOGLE_OAUTH_URL: z.string().default('https://accounts.google.com/o/oauth2/v2/auth'),
   GOOGLE_TOKEN_URL: z.string().default('https://oauth2.googleapis.com/token'),
   YOUTUBE_API_URL: z.string().default('https://www.googleapis.com'),
+  YOUTUBE_ANALYTICS_URL: z.string().default('https://youtubeanalytics.googleapis.com'),
+  /** Also ask for the YouTube Analytics permission, so watch time can be read. Google treats it as a sensitive scope: it needs the OAuth app to be verified. */
+  GOOGLE_ANALYTICS: z.enum(['true', 'false', '1', '0', '']).default('false').transform((v) => v === 'true' || v === '1'),
   /** How long the files handed to a network by URL stay downloadable. */
   PUBLIC_MEDIA_TTL_SECONDS: z.coerce.number().int().min(300).default(6 * 3600),
   // Workers (phase 2)
@@ -48,6 +73,8 @@ const schema = z.object({
   RUN_WORKERS: z.enum(['true', 'false', '1', '0', '']).default('true').transform((v) => v !== 'false' && v !== '0'),
   /** How often the worker looks for publications that need attention. */
   WORKER_SWEEP_SECONDS: z.coerce.number().int().min(1).default(15),
+  /** How often notifications are sent by email, Slack and push, in seconds. */
+  NOTIFY_SECONDS: z.coerce.number().int().min(1).default(30),
   // Extra origins the browser may load media from or upload to (space separated), e.g. a bucket host.
   MEDIA_ORIGINS: z.string().default(''),
   // Webhooks (phase 3)
@@ -104,6 +131,10 @@ export type Config = z.infer<typeof schema> & {
   enabled: Record<'meta' | 'google' | 'threads' | 'tiktok' | 'linkedin' | 'x' | 'pinterest' | 'bluesky', boolean>;
   /** Resolved from WEBHOOK_ALLOW_PRIVATE_NETWORKS and the environment. */
   webhookAllowPrivate: boolean;
+  secondFactorRequired: boolean;
+  emailLinkLogin: boolean;
+  /** Single sign-on, when OIDC_ISSUER and the client are set. */
+  sso: null | { issuer: string; clientId: string; clientSecret: string; label: string; allowedDomains: string[]; secondFactor: 'app' | 'idp'; trustEmail: boolean };
 };
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -141,6 +172,27 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (c.META_WEBHOOK_VERIFY_TOKEN && !metaEnabled) {
     throw new Error('Invalid configuration: META_WEBHOOK_VERIFY_TOKEN needs META_APP_ID and META_APP_SECRET (the webhook is signed with the app secret)');
   }
+  const flag = (v: string | undefined, fallback: boolean) => (v === undefined || v === '' ? fallback : v === 'true' || v === '1');
+  let sso: Config['sso'] = null;
+  if (c.OIDC_ISSUER || c.OIDC_CLIENT_ID || c.OIDC_CLIENT_SECRET) {
+    if (!(c.OIDC_ISSUER && c.OIDC_CLIENT_ID && c.OIDC_CLIENT_SECRET)) {
+      throw new Error('Invalid configuration: single sign-on needs OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET together');
+    }
+    const allowedDomains = (c.OIDC_ALLOWED_DOMAINS ?? '').split(',').map((d) => d.trim().toLowerCase().replace(/^@/, '')).filter(Boolean);
+    if (!allowedDomains.length) {
+      throw new Error('Invalid configuration: set OIDC_ALLOWED_DOMAINS to the email domains that may sign in with single sign-on (for example example.com)');
+    }
+    if (isProd && !c.OIDC_ISSUER.startsWith('https://')) throw new Error('Invalid configuration: OIDC_ISSUER must be an https address in production');
+    sso = {
+      issuer: c.OIDC_ISSUER.replace(/\/$/, ''), clientId: c.OIDC_CLIENT_ID, clientSecret: c.OIDC_CLIENT_SECRET, label: c.OIDC_LABEL,
+      allowedDomains, secondFactor: c.OIDC_SECOND_FACTOR, trustEmail: c.OIDC_TRUST_EMAIL,
+    };
+  }
+  const secondFactorRequired = flag(c.SECOND_FACTOR_REQUIRED, isProd);
+  const emailLinkLogin = flag(c.EMAIL_LINK_LOGIN, true);
+  if (!emailLinkLogin && !sso && !c.AUTH_DEV_LOGIN) {
+    throw new Error('Invalid configuration: EMAIL_LINK_LOGIN=false leaves no way to sign in unless single sign-on is set up (OIDC_*)');
+  }
   const webhookAllowPrivate = c.WEBHOOK_ALLOW_PRIVATE_NETWORKS ? ['true', '1'].includes(c.WEBHOOK_ALLOW_PRIVATE_NETWORKS) : !isProd;
-  return { ...c, isProd, devLogin: c.AUTH_DEV_LOGIN && !isProd, metaEnabled, googleEnabled, enabled, webhookAllowPrivate };
+  return { ...c, isProd, devLogin: c.AUTH_DEV_LOGIN && !isProd, metaEnabled, googleEnabled, enabled, webhookAllowPrivate, secondFactorRequired, emailLinkLogin, sso };
 }

@@ -102,7 +102,7 @@ export interface PostResult {
  * POSTs a body without following redirects, with the address policy applied to whatever the name resolves to at the
  * moment of connecting.
  */
-export function post(url: URL, headers: Record<string, string>, body: string, policy: NetPolicy, timeoutMs = 10_000): Promise<PostResult> {
+export function post(url: URL, headers: Record<string, string>, body: string | Buffer, policy: NetPolicy, timeoutMs = 10_000): Promise<PostResult> {
   return new Promise((resolve, reject) => {
     const host = url.hostname.replace(/^\[|\]$/g, '');
     if (isIP(host)) {

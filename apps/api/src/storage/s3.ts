@@ -75,9 +75,18 @@ export class S3Storage implements Storage {
     await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: data, ContentType: mime }));
   }
 
-  async putFile(key: string, source: string, mime: string): Promise<void> {
+  async putFile(key: string, source: string, mime: string, opts?: { sha256?: string }): Promise<void> {
     const { size } = await stat(source);
-    await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: createReadStream(source), ContentLength: size, ContentType: mime }));
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: createReadStream(source),
+        ContentLength: size,
+        ContentType: mime,
+        ...(opts?.sha256 ? { ChecksumSHA256: Buffer.from(opts.sha256, 'hex').toString('base64') } : {}),
+      }),
+    );
   }
 
   async open(key: string, start = 0): Promise<{ stream: Readable; size: number }> {

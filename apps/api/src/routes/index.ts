@@ -2,16 +2,23 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { requirePrincipal, setSessionCookie, SESSION_COOKIE } from '../http.js';
 import type { Ctx } from '../context.js';
-import { badRequest, forbidden, unauthorized } from '../errors.js';
+import { badRequest, conflict, forbidden, unauthorized } from '../errors.js';
 import * as agent from '../services/agent.js';
 import * as metrics from '../services/metrics.js';
 import * as prizes from '../services/prizes.js';
+import * as push from '../services/push.js';
+import * as selfcheck from '../services/selfcheck.js';
+import * as slack from '../services/slack.js';
+import * as subtitles from '../services/subtitles.js';
+import * as secondFactor from '../services/secondfactor.js';
+import * as sso from '../services/sso.js';
 import * as approvals from '../services/approvals.js';
 import * as authSvc from '../services/auth.js';
 import * as brand from '../services/brand.js';
 import * as comments from '../services/comments.js';
 import * as connections from '../services/connections.js';
 import * as pieces from '../services/pieces.js';
+import * as resumable from '../services/resumable.js';
 import * as pubs from '../services/publications.js';
 import * as versions from '../services/versions.js';
 import * as webhooks from '../services/webhooks.js';
@@ -32,7 +39,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ───────────────────────────── authentication ─────────────────────────────
 
-  app.get('/api/config', async () => ({ devLogin: ctx.config.devLogin }));
+  app.get('/api/config', async () => ({ devLogin: ctx.config.devLogin, sso: sso.ssoInfo(ctx), emailLinkLogin: ctx.config.emailLinkLogin }));
 
   app.post('/api/auth/magic-link', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { email } = z.object({ email: z.string().email().max(200) }).parse(req.body);
@@ -64,9 +71,95 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true };
   });
 
+  // ───────────────────────────── single sign-on ─────────────────────────────
+
+  const ssoCookie = { path: '/api/auth/sso', httpOnly: true, sameSite: 'lax' as const, secure: ctx.config.isProd };
+  app.get('/api/auth/sso/start', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => {
+    if (!ctx.config.sso) return reply.code(404).send({ error: { code: 'not_found', message: 'Not found' } });
+    try {
+      const { url, state } = await sso.startSso(ctx);
+      reply.setCookie(sso.SSO_COOKIE, state, { ...ssoCookie, maxAge: 600 });
+      return reply.redirect(url);
+    } catch (err) {
+      ctx.log.warn({ err: String(err) }, 'single sign-on could not start');
+      return reply.redirect('/login?error=provider');
+    }
+  });
+  app.get('/api/auth/sso/callback', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    if (!ctx.config.sso) return reply.code(404).send({ error: { code: 'not_found', message: 'Not found' } });
+    const q = z.object({ code: z.string().max(4000).optional(), state: z.string().max(200).optional(), error: z.string().max(200).optional() }).parse(req.query ?? {});
+    const r = await sso.finishSso(ctx, q, req.cookies[sso.SSO_COOKIE]);
+    reply.clearCookie(sso.SSO_COOKIE, { path: ssoCookie.path });
+    if ('failure' in r) return reply.redirect(`/login?error=${r.failure}`);
+    setSessionCookie(ctx, reply, r.session.token, r.session.expiresAt);
+    return reply.redirect('/');
+  });
+
+  // ───────────────────────────── second factor ─────────────────────────────
+
+  // Who may use these: a person signed in, or one who owes the second step (that is what these are for).
+  const actor = (req: FastifyRequest) => {
+    if (req.principal?.kind === 'user') return { userId: req.principal.userId, email: req.principal.email, pending: 'none' as const };
+    if (req.secondFactor) return req.secondFactor;
+    throw unauthorized();
+  };
+  const code = z.object({ code: z.string().trim().min(6).max(20) });
+  const codeLimit = { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } };
+
+  // Not an error when nobody is signed in: the sign-in screens ask this to know which step to show.
+  app.get('/api/auth/state', async (req) => ({
+    signedIn: !!req.principal || !!req.secondFactor,
+    secondFactor: req.secondFactor?.pending ?? 'none',
+  }));
+  app.get('/api/auth/2fa', async (req) => secondFactor.status(ctx, userOnly(req).userId));
+  app.post('/api/auth/2fa/verify', codeLimit, async (req) => {
+    const a = actor(req);
+    if (a.pending !== 'verify') throw conflict('not_pending', 'There is no code to give right now.');
+    await secondFactor.verifySecondFactor(ctx, a.userId, code.parse(req.body).code);
+    await authSvc.markSecondFactor(ctx, req.cookies[SESSION_COOKIE]!);
+    return { ok: true };
+  });
+  app.post('/api/auth/2fa/enroll', codeLimit, async (req) => {
+    const a = actor(req);
+    if (a.pending === 'verify') throw conflict('already_enrolled', 'An authenticator is already set up: give its code.');
+    return secondFactor.startEnrollment(ctx, a.userId, a.email);
+  });
+  app.post('/api/auth/2fa/enroll/confirm', codeLimit, async (req) => {
+    const a = actor(req);
+    const r = await secondFactor.confirmEnrollment(ctx, a.userId, code.parse(req.body).code);
+    // Whoever has just proved they hold the authenticator has given the second step.
+    await authSvc.markSecondFactor(ctx, req.cookies[SESSION_COOKIE]!);
+    return r;
+  });
+  app.post('/api/auth/2fa/disable', codeLimit, async (req) => {
+    await secondFactor.disable(ctx, userOnly(req).userId, code.parse(req.body).code);
+    return { ok: true };
+  });
+  app.post('/api/auth/2fa/recovery-codes', codeLimit, async (req) => secondFactor.regenerateRecoveryCodes(ctx, userOnly(req).userId, code.parse(req.body).code));
+  app.post('/api/brands/:brandId/members/:memberId/reset-2fa', async (req) => {
+    const { brandId, memberId } = params(req, 'brandId', 'memberId');
+    return secondFactor.resetForMember(ctx, P(req), brandId, memberId);
+  });
+
+  app.get('/api/versions/:versionId/subtitles', async (req) => subtitles.getSubtitles(ctx, P(req), params(req, 'versionId').versionId));
   app.get('/api/me', async (req) => authSvc.me(ctx, userOnly(req).userId));
   // What a producer token needs to find its way: which brand it belongs to.
   app.get('/api/token', async (req) => authSvc.tokenInfo(ctx, P(req)));
+
+  // ───────────────────────────── notifications: preferences, push, Slack ─────────────────────────────
+
+  app.get('/api/notifications/preferences', async (req) => push.getPreferences(ctx, userOnly(req).userId));
+  app.put('/api/notifications/preferences', async (req) => push.setPreferences(ctx, userOnly(req).userId, req.body));
+  // The key a browser needs to subscribe with: the deployment's public signing key.
+  app.get('/api/push/key', async (req) => { userOnly(req); return { publicKey: (await push.vapidKeys(ctx)).publicKey }; });
+  app.post('/api/push/subscriptions', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => push.subscribe(ctx, userOnly(req).userId, req.body));
+  app.post('/api/push/unsubscribe', async (req) => push.unsubscribe(ctx, userOnly(req).userId, z.object({ endpoint: z.string().max(1500) }).parse(req.body).endpoint));
+  app.post('/api/push/test', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => push.sendTest(ctx, userOnly(req).userId));
+
+  app.get('/api/brands/:brandId/slack', async (req) => slack.getSlack(ctx, P(req), params(req, 'brandId').brandId));
+  app.put('/api/brands/:brandId/slack', async (req) => slack.setSlack(ctx, P(req), params(req, 'brandId').brandId, req.body));
+  app.delete('/api/brands/:brandId/slack', async (req) => slack.removeSlack(ctx, P(req), params(req, 'brandId').brandId));
+  app.post('/api/brands/:brandId/slack/test', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => slack.testSlack(ctx, P(req), params(req, 'brandId').brandId));
 
   // ───────────────────────────── brand settings ─────────────────────────────
 
@@ -119,6 +212,13 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/brands/:brandId/connections/:pendingId/select', async (req) => {
     const { brandId, pendingId } = params(req, 'brandId', 'pendingId');
     return connections.selectCandidates(ctx, P(req), brandId, pendingId, req.body);
+  });
+  // Read-only checks that say whether this server and an account are ready for real use (docs/phase-5.md). Each asks the network a few questions.
+  app.get('/api/brands/:brandId/server-check', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) =>
+    selfcheck.checkServerFor(ctx, P(req), params(req, 'brandId').brandId));
+  app.post('/api/brands/:brandId/accounts/:accountId/check', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => {
+    const { brandId, accountId } = params(req, 'brandId', 'accountId');
+    return selfcheck.checkAccountFor(ctx, P(req), brandId, accountId);
   });
   app.post('/api/brands/:brandId/accounts/:accountId/disconnect', async (req) => {
     const { brandId, accountId } = params(req, 'brandId', 'accountId');
@@ -271,6 +371,19 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/variants/:id/uploads', async (req) => ({ uploads: await versions.requestUploads(ctx, P(req), params(req, 'id').id, req.body) }));
   app.post('/api/variants/:id/versions', async (req, reply) =>
     reply.code(201).send(await versions.closeVersion(ctx, P(req), params(req, 'id').id, req.body)));
+
+  // Sending a big file in pieces (services/resumable.ts). A piece is raw bytes, so this content type is read as they are and only here.
+  await app.register(async (up) => {
+    up.addContentTypeParser('application/offset+octet-stream', { parseAs: 'buffer', bodyLimit: resumable.MAX_CHUNK_BYTES }, (_req, body, done) => done(null, body));
+    up.get('/api/uploads/:id/resumable', async (req, reply) => reply.header('cache-control', 'no-store').send(await resumable.uploadProgress(ctx, P(req), params(req, 'id').id)));
+    up.patch('/api/uploads/:id/resumable', { bodyLimit: resumable.MAX_CHUNK_BYTES }, async (req, reply) => {
+      // Digits only: Number() would read '' as 0 and '1e3' as 1000.
+      const offset = Number(z.string().regex(/^\d{1,15}$/, 'Upload-Offset must be the number of bytes already sent').parse(req.headers['upload-offset']));
+      if (!Buffer.isBuffer(req.body)) throw badRequest('invalid_piece', 'Send the bytes with the content type application/offset+octet-stream');
+      return reply.header('cache-control', 'no-store').send(await resumable.appendPiece(ctx, P(req), params(req, 'id').id, offset, req.body));
+    });
+    up.post('/api/uploads/:id/resumable/finish', async (req) => resumable.finishUpload(ctx, P(req), params(req, 'id').id));
+  });
 
   // ───────────────────────────── versions, comments, approvals ─────────────────────────────
 

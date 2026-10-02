@@ -11,6 +11,9 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/youtube.force-ssl',
 ];
 
+/** Read-only access to YouTube Analytics: watch time and subscribers gained. Asked for only when the deployment turns it on (GOOGLE_ANALYTICS). */
+export const ANALYTICS_SCOPE = 'https://www.googleapis.com/auth/yt-analytics.readonly';
+
 function toTokenSet(body: { access_token: string; refresh_token?: string; expires_in?: number; scope?: string }, now: Date, previous?: TokenSet): TokenSet {
   return {
     accessToken: body.access_token,
@@ -38,7 +41,7 @@ export function createGoogleOAuth(cfg: GoogleConfig, now: () => Date = () => new
       u.searchParams.set('client_id', cfg.clientId);
       u.searchParams.set('redirect_uri', redirectUri);
       u.searchParams.set('response_type', 'code');
-      u.searchParams.set('scope', GOOGLE_SCOPES.join(' '));
+      u.searchParams.set('scope', [...GOOGLE_SCOPES, ...(cfg.analytics ? [ANALYTICS_SCOPE] : [])].join(' '));
       u.searchParams.set('state', state);
       // Offline access and a forced consent screen: the refresh token only comes back when the person is asked again.
       u.searchParams.set('access_type', 'offline');

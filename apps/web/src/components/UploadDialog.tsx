@@ -74,7 +74,7 @@ export function UploadDialog({ variant, latestVersionId, onClose }: {
     ? progress.step === 'hashing'
       ? `Checking file ${progress.file + 1} of ${files.length}…`
       : progress.step === 'uploading'
-        ? `Uploading file ${progress.file + 1} of ${files.length}… ${Math.round(progress.fraction * 100)}%`
+        ? `Uploading file ${progress.file + 1} of ${files.length}… ${Math.round(progress.fraction * 100)}%${progress.note ? ` · ${progress.note}` : ''}`
         : 'Creating the version…'
     : null;
 

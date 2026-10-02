@@ -8,16 +8,18 @@ It does not generate content, it orchestrates it. The producer can be an AI agen
 same kind of client (a producer token or a signed-in user). It serves one brand or several, and nothing in it is
 specific to any client: names, time zones, languages and review rules are configuration, never code.
 
-> **Status: phase 4 of 4.** Review, approval, calendar and assisted publishing work end to end (phase 1); the app can
+> **Status: the four phases of the plan are done, plus a fifth that the plan did not have.** Review, approval, calendar and assisted publishing work end to end (phase 1); the app can
 > publish by itself to Instagram, Facebook Pages and YouTube (phase 2); a comment can become a new version without
 > anyone's hands: signed webhooks, an agent runner with safeguards, and automatic checks (phase 3); and it now also
 > publishes to TikTok, LinkedIn, X, Threads, Pinterest and Bluesky, reads the numbers each post earned, and gives prizes
-> to people who comment a keyword (phase 4). **Phases 2 and 4 were built and tested against stand-ins for the networks
-> that I wrote from their documentation: no real network was reachable, so a first run with real accounts is still to do
-> for every one of them, and TikTok in particular may refuse an app like this. Phase 3 was proven in a browser with a
-> scripted agent and with real Claude Code on a few simple requests.** See [docs/phase-1.md](docs/phase-1.md),
-> [docs/phase-2.md](docs/phase-2.md), [docs/phase-3.md](docs/phase-3.md) and [docs/phase-4.md](docs/phase-4.md) for exactly what
-> is done, what is left out, and the decisions taken where the spec left room.
+> to people who comment a keyword (phase 4). Phase 5 makes it ready for a first real run and for a team: a command that checks
+> a real setup, single sign-on and a second factor, Slack and push notifications, subtitles beside the video, big uploads that
+> resume, and YouTube watch time. **Phases 2, 4 and 5 were built and tested against stand-ins for the networks, the identity
+> provider, Slack and the push services that I wrote from their documentation: none of them was reachable, so a first run with
+> real accounts is still to do for every one of them, and TikTok in particular may refuse an app like this. Phase 3 was proven in
+> a browser with a scripted agent and with real Claude Code on a few simple requests.** See [docs/phase-1.md](docs/phase-1.md),
+> [docs/phase-2.md](docs/phase-2.md), [docs/phase-3.md](docs/phase-3.md), [docs/phase-4.md](docs/phase-4.md) and
+> [docs/phase-5.md](docs/phase-5.md) for exactly what is done, what is left out, and the decisions taken where the spec left room.
 
 ## What phase 1 does
 
@@ -82,6 +84,20 @@ specific to any client: names, time zones, languages and review rules are config
 - **Prizes for commenting.** A post can carry a prize: whoever comments the keyword gets a file or a link by private message on
   Instagram and Facebook (a public page on the other networks). Switched on per brand, with a confirmation that the post says the reply
   is automatic, Meta's signed webhook, data kept for as short a time as you set, and erasing a person on request or when Meta says so.
+
+## What phase 5 adds
+
+- **A way to check a real setup.** `npm run check` looks at the server (addresses, keys, ffmpeg, the LinkedIn version) and at every
+  connected account (is the token accepted, were all the permissions granted, can the numbers be read), and says what to fix. It
+  can make one real test post per account, and write a transcript of everything it sent with the secrets removed, so a disagreement
+  with a real network can be reported. The same read-only checks are buttons in *Settings → Accounts*.
+- **Signing in safely.** Single sign-on with any OpenID Connect provider (Google Workspace, Microsoft Entra), for people who already
+  exist; and an authenticator app with recovery codes, required of admins and approvers in production.
+- **Slack and push.** A brand posts chosen events to a Slack channel once for the team; each person chooses what they get by email
+  and by push in each browser they turned it on in.
+- **Review polish.** Subtitle files are shown beside the video, the line being said is marked, and a comment can be written on a line.
+  Files of 64 MB and more are sent in pieces that resume after a dropped connection or a closed tab. With one setting on, YouTube watch
+  time appears in the results.
 
 ## Quick start
 
@@ -168,7 +184,8 @@ scripts use `Authorization: Bearer <producer token>`.
 | Method and path | What it does |
 | --- | --- |
 | `POST /brands/:id/pieces`, `POST /pieces/:id/variants` | Create a piece and add a variant |
-| `POST /variants/:id/uploads` | Declare files with their sha256 and get signed upload URLs |
+| `POST /variants/:id/uploads` | Declare files with their sha256 and get signed upload URLs; with `resumable: true` for a big file, an upload to send in pieces instead |
+| `GET`, `PATCH /uploads/:id/resumable`, `POST /uploads/:id/resumable/finish` | Ask how much of a big file has arrived, send the next piece (`Upload-Offset`, raw bytes), and have the whole checked and stored |
 | `POST /variants/:id/versions` | Close a version: the uploaded files, notes and the comments it resolves |
 | `GET /versions/:id/comments?status=open&carried=true` | Open comments with their anchor and frame |
 | `POST /comments/:id/replies` | Reply: fixed, cannot do (and why), or needs a person |
@@ -202,6 +219,11 @@ See [`.env.example`](.env.example). The ones that matter:
 | `WEBHOOK_ALLOW_PRIVATE_NETWORKS` | Whether webhooks may point at loopback and private addresses. Default: yes in development, no in production |
 | `META_APP_ID`, `META_APP_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | The developer apps ([setup in docs/phase-2.md](docs/phase-2.md#setting-up-the-networks)). Without them accounts stay manual |
 | `THREADS_*`, `TIKTOK_*`, `LINKEDIN_*` (and `LINKEDIN_VERSION`), `X_*`, `PINTEREST_*` | The other networks' apps ([setup in docs/phase-4.md](docs/phase-4.md#setting-up-the-networks)). Each switches on with its credentials; Bluesky needs only `TOKEN_KEY` |
+| `SECOND_FACTOR_REQUIRED`, `EMAIL_LINK_LOGIN` | Whether admins and approvers must give an authenticator code (default: yes in production), and whether the emailed link still signs people in ([docs/phase-5.md](docs/phase-5.md#signing-in)) |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_ALLOWED_DOMAINS` (and `OIDC_LABEL`, `OIDC_SECOND_FACTOR`, `OIDC_TRUST_EMAIL`) | Single sign-on. The allowed domains are required |
+| `GOOGLE_ANALYTICS` | Also ask YouTube for its Analytics permission, so watch time can be read. Off by default: Google treats it as sensitive |
+| `STAGING_DIR` | Where big uploads wait while they arrive in pieces (a volume in the compose file) |
+| `NOTIFY_SECONDS` | How often notifications are sent by email, Slack and push (30 by default) |
 | `META_WEBHOOK_VERIFY_TOKEN` | For prizes: the token Meta sends back when you register `$APP_URL/api/meta/webhook` |
 | `METRICS_SWEEP_SECONDS`, `PRIZE_POLL_SECONDS`, `PRIZE_PURGE_SECONDS` | How often readings are taken, comments of posts with a prize are read, and expired people are deleted (120, 180 and 3600 seconds by default) |
 | `RUN_WORKERS` | `true` (default) runs the queue inside the API process; `false` when a separate worker runs |
@@ -235,6 +257,7 @@ be reachable from the internet, because Meta downloads the files it publishes fr
 
 ## Not yet
 
-SSO and two-factor sign-in, push and Slack notifications, subtitle display, and anything run against a real network (see
-the box at the top). Details and reasons in [docs/phase-1.md](docs/phase-1.md), [docs/phase-2.md](docs/phase-2.md),
-[docs/phase-3.md](docs/phase-3.md) and [docs/phase-4.md](docs/phase-4.md), which also list what could not be verified.
+Anything run against a real network, identity provider, Slack or push service (see the box at the top), and the things each phase's
+document lists as left out: S3 multipart upload, Slack buttons and replies, watch time per day, and more. Details and reasons in
+[docs/phase-1.md](docs/phase-1.md), [docs/phase-2.md](docs/phase-2.md), [docs/phase-3.md](docs/phase-3.md),
+[docs/phase-4.md](docs/phase-4.md) and [docs/phase-5.md](docs/phase-5.md), which also list what could not be verified.

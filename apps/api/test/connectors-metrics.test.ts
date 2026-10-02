@@ -4,7 +4,7 @@ import { loadConfig } from '../src/config.js';
 import { createConnectorSet } from '../src/connectors/registry.js';
 import { FakeGoogle } from './fakes/google.js';
 import { FakeMeta } from './fakes/meta.js';
-import { account, env, expectError } from './connector-helpers.js';
+import { account, env, expectError, redirect } from './connector-helpers.js';
 
 const meta = new FakeMeta();
 const google = new FakeGoogle();
@@ -93,9 +93,124 @@ describe('YouTube numbers', () => {
     const m = await set.connector('youtube')!.fetchMetrics!(yt, 'vid-1', {}, env('tok'), post('video'));
     expect(m.common).toEqual({ views: 1234, likes: 56, comments: 7 });
     expect(m.note).toContain('Analytics API');
+    expect(m.note).toContain('GOOGLE_ANALYTICS');
+    // Without the permission switched on, Analytics is never asked.
+    expect(google.calls.filter((c) => c.path === '/v2/reports')).toEqual([]);
   });
 
   it('says a video that is gone is gone', async () => {
     await expectError(set.connector('youtube')!.fetchMetrics!(yt, 'nope', {}, env('tok'), post('video')), 'file_rejected');
+  });
+});
+
+describe('YouTube watch time, when the Analytics permission is on', () => {
+  let withAnalytics: ReturnType<typeof createConnectorSet>;
+  const ANALYTICS = 'https://www.googleapis.com/auth/yt-analytics.readonly';
+  const UPLOAD = 'https://www.googleapis.com/auth/youtube.upload';
+  beforeAll(() => {
+    withAnalytics = createConnectorSet(loadConfig({
+      NODE_ENV: 'test', SECRET: 'x'.repeat(40), TOKEN_KEY: randomBytes(32).toString('base64'),
+      GOOGLE_CLIENT_ID: 'gid', GOOGLE_CLIENT_SECRET: 'gsecret', GOOGLE_OAUTH_URL: `${google.url}/auth`, GOOGLE_TOKEN_URL: `${google.url}/token`,
+      YOUTUBE_API_URL: google.url, YOUTUBE_ANALYTICS_URL: google.url, GOOGLE_ANALYTICS: 'true',
+    }));
+  });
+  beforeEach(() => {
+    google.analyticsAllowed = true;
+    google.analytics.clear();
+    google.videos.set('vid-1', { id: 'vid-1', snippet: {}, status: {}, bytes: 1, uploaded: true });
+  });
+  const read = (scopes?: string[], now = () => new Date('2026-09-10T12:00:00Z')) => {
+    const e = env('tok', {}, now);
+    if (scopes) e.token = async () => ({ accessToken: 'tok', scopes });
+    return withAnalytics.connector('youtube')!.fetchMetrics!(yt, 'vid-1', {}, e, post('video'));
+  };
+
+  it('asks for the permission when signing in, and only then', () => {
+    const asked = (set: ReturnType<typeof createConnectorSet>) => new URL(set.provider('google')!.authorizeUrl!('s', redirect)).searchParams.get('scope')!.split(' ');
+    expect(asked(withAnalytics)).toContain(ANALYTICS);
+    expect(asked(withAnalytics)).toContain(UPLOAD);
+    expect(asked(set)).not.toContain(ANALYTICS);
+  });
+
+  it('adds watch time and the average to the counts, from the day the video went up to today', async () => {
+    google.analytics.set('vid-1', { estimatedMinutesWatched: 321, averageViewDuration: 47.5, views: 1200 });
+    const m = await read([UPLOAD, ANALYTICS]);
+    // Views, likes and comments stay the Data API's; Analytics is a few days behind and says 1200.
+    expect(m.common).toEqual({ views: 1234, likes: 56, comments: 7, watchMinutes: 321, avgWatchSeconds: 47.5 });
+    expect(m.note).toBeUndefined();
+    const q = google.calls.find((c) => c.path === '/v2/reports')!.query;
+    expect(q).toMatchObject({ ids: 'channel==MINE', filters: 'video==vid-1', dimensions: 'video', startDate: '2026-09-01', endDate: '2026-09-10' });
+    expect(google.calls.find((c) => c.path === '/v2/reports')!.headers.authorization).toBe('Bearer tok');
+    expect((m.raw as { analytics: unknown }).analytics).toMatchObject({ rows: [['vid-1', 321, 47.5, 1200]] });
+  });
+
+  it('asks when the grant is not known, and reads the answer', async () => {
+    google.analytics.set('vid-1', { estimatedMinutesWatched: 10, averageViewDuration: 5, views: 3 });
+    expect((await read()).common.watchMinutes).toBe(10);
+  });
+
+  it('says so, and does not ask Analytics, for a connection made without the permission', async () => {
+    google.analytics.set('vid-1', { estimatedMinutesWatched: 10, averageViewDuration: 5, views: 3 });
+    const m = await read([UPLOAD]);
+    expect(m.common).toEqual({ views: 1234, likes: 56, comments: 7 });
+    expect(m.note).toMatch(/connect the channel again/i);
+    expect(google.calls.filter((c) => c.path === '/v2/reports')).toEqual([]);
+  });
+
+  it('keeps the counts and says why when Google refuses the permission after all', async () => {
+    google.analyticsAllowed = false;
+    const m = await read([UPLOAD, ANALYTICS]);
+    expect(m.common).toEqual({ views: 1234, likes: 56, comments: 7 });
+    expect(m.note).toMatch(/Watch time is missing/);
+    expect(m.note).toMatch(/connect the channel again/i);
+  });
+
+  it('keeps the counts and says why when Google refuses the question', async () => {
+    google.fail((p) => p === '/v2/reports', { error: { code: 400, message: 'Unknown identifier (x)', errors: [{ reason: 'badRequest' }] } }, 400);
+    const m = await read([UPLOAD, ANALYTICS]);
+    expect(m.common).toEqual({ views: 1234, likes: 56, comments: 7 });
+    expect(m.note).toMatch(/Watch time is missing.*Unknown identifier/);
+  });
+
+  it('says it is too early when Analytics has no row for the video yet', async () => {
+    const m = await read([UPLOAD, ANALYTICS]);
+    expect(m.common).toEqual({ views: 1234, likes: 56, comments: 7 });
+    expect(m.note).toMatch(/no figures for this video yet/);
+  });
+
+  it('does not take a reading for a busy or failing Analytics API: it is tried again later', async () => {
+    google.fail((p) => p === '/v2/reports', { error: { code: 503, message: 'Backend Error', errors: [{ reason: 'backendError' }] } }, 503);
+    await expectError(read([UPLOAD, ANALYTICS]), 'transient');
+    google.fail((p) => p === '/v2/reports', google.quotaError(), 403);
+    await expectError(read([UPLOAD, ANALYTICS]), 'rate_limit');
+  });
+
+  it('keeps the counts, and says so, when Analytics answers in a shape nobody expected', async () => {
+    google.fail((p) => p === '/v2/reports', { columnHeaders: 'none', rows: [['vid-1', 1]] }, 200);
+    const m = await read([UPLOAD, ANALYTICS]);
+    expect(m.common).toEqual({ views: 1234, likes: 56, comments: 7 });
+    expect(m.note).toMatch(/Watch time is missing.*does not understand/);
+  });
+
+  it('reads a video that went up today (the first and last day are the same)', async () => {
+    google.publishedAt = '2026-09-10T08:00:00Z';
+    google.analytics.set('vid-1', { estimatedMinutesWatched: 2, averageViewDuration: 30, views: 4 });
+    try {
+      expect((await read([UPLOAD, ANALYTICS])).common.watchMinutes).toBe(2);
+    } finally {
+      google.publishedAt = '2026-09-01T10:00:00Z';
+    }
+  });
+
+  it('reads watch time from the columns by name, wherever they are', async () => {
+    google.analytics.set('vid-1', { estimatedMinutesWatched: 5, averageViewDuration: 6, views: 7 });
+    // The same numbers with the columns in another order and an extra one: reading by position would swap them.
+    google.fail((p) => p === '/v2/reports', {
+      columnHeaders: [{ name: 'video' }, { name: 'subscribersGained' }, { name: 'averageViewDuration' }, { name: 'estimatedMinutesWatched' }],
+      rows: [['vid-1', 9, 61, 777]],
+    }, 200);
+    const m = await read([UPLOAD, ANALYTICS]);
+    expect(m.common.watchMinutes).toBe(777);
+    expect(m.common.avgWatchSeconds).toBe(61);
   });
 });

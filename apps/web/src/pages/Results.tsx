@@ -18,6 +18,7 @@ const COLUMNS: { key: keyof CommonMetrics; label: string }[] = [
   { key: 'shares', label: 'Shares' },
   { key: 'saves', label: 'Saves' },
   { key: 'avgWatchSeconds', label: 'Avg watch' },
+  { key: 'watchMinutes', label: 'Watch time (min)' },
 ];
 
 const cell = (key: keyof CommonMetrics, v: number | undefined) =>

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type Account, type Anchor, type CommentThread, type Integrations, type VersionDetail } from '../api';
 import { CommentsPanel } from '../components/comments';
+import { SubtitlePanel } from '../components/Subtitles';
 import { approvedAccountIds, ScheduleDialog } from '../components/publications';
 import { Chip, CopyButton, Dialog, ErrorBox, Field, Spinner, useToast } from '../components/ui';
 import { CompareStage, Stage, type Jump, type SafeZone } from '../components/viewer';
@@ -243,6 +244,17 @@ export function ReviewPage() {
               onFocus={(id) => { setFocus(id); setTab('comments'); }}
               jump={jump}
               safeZone={safeZones.find((z) => z.id === zoneId) ?? null}
+            />
+          )}
+          {!compareId && assets.some((a) => a.kind === 'subtitles') && (
+            <SubtitlePanel
+              versionId={v.id}
+              threads={stableThreads}
+              canAnnotate={can('comment') && live}
+              firstVideoPosition={assets.find((a) => a.kind === 'video')?.position ?? 0}
+              onDraft={(a) => { setDraft(a); setTab('comments'); }}
+              onSeek={(t, position) => setJump({ nonce: Date.now(), t, position })}
+              onFocus={(id) => { setFocus(id); setTab('comments'); }}
             />
           )}
           {v.notes && <div className="card"><h3>What changed</h3><p style={{ whiteSpace: 'pre-wrap', margin: '.25rem 0 0' }}>{v.notes}</p></div>}

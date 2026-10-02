@@ -42,6 +42,7 @@ export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; c
 
   app.decorateRequest('principal', null);
   app.decorateRequest('viaCookie', false);
+  app.decorateRequest('secondFactor', null);
 
   // Who is asking: a producer token (Authorization: Bearer) or a browser session (cookie).
   app.addHook('preHandler', async (req) => {
@@ -53,8 +54,13 @@ export async function buildApp(deps: AppDeps): Promise<{ app: FastifyInstance; c
     }
     const sid = req.cookies[SESSION_COOKIE];
     if (sid) {
-      req.principal = await authSvc.principalFromSession(ctx, sid);
-      req.viaCookie = req.principal !== null;
+      const state = await authSvc.sessionState(ctx, sid);
+      if (state) {
+        // A session that owes the second step is still a browser session (so it needs the CSRF header) but is nobody yet.
+        req.viaCookie = true;
+        if (state.pending === 'none') req.principal = { kind: 'user', userId: state.userId, email: state.email };
+        else req.secondFactor = { userId: state.userId, email: state.email, pending: state.pending };
+      }
     }
     // Cookie-authenticated writes must come from our own front end: browsers cannot add this header cross-site.
     if (req.viaCookie && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !req.headers[CSRF_HEADER]) {
