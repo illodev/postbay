@@ -15,6 +15,8 @@ interface Container {
   is_carousel_item: boolean;
   reply_to_id?: string;
   polls: number;
+  /** Set once the container has been published: its status reads PUBLISHED from then on. */
+  published?: boolean;
 }
 
 const graphError = (message: string, code: number, extra: Record<string, unknown> = {}) => ({ error: { message, type: 'OAuthException', code, ...extra } });
@@ -32,6 +34,11 @@ export class FakeThreads extends FakeServer {
   /** Containers whose processing fails, with the reason. */
   rejectVideoWith: string | null = null;
   revoked = false;
+  /**
+   * The next threads_publish publishes the container and then answers with a server error, as a lost answer looks from our side.
+   * What a second publish of the same container does is not documented: this stand-in assumes the worst and makes a second post.
+   */
+  loseNextPublishAnswer = false;
 
   private newToken() {
     const t = `long-${++this.tokenSeq}`;
@@ -84,8 +91,23 @@ export class FakeThreads extends FakeServer {
       if (cont.media_type === 'CAROUSEL' && (cont.children?.length ?? 0) < 2) return reply.code(400).send(graphError('A carousel needs at least 2 items', 100));
       const id = this.id('post');
       this.posts.set(id, { ...cont, permalink: `https://www.threads.net/@${this.users[0]!.username}/post/${id}`, publishedAt: this.now() });
+      cont.published = true;
       this.quota.usage++;
+      if (this.loseNextPublishAnswer) {
+        this.loseNextPublishAnswer = false;
+        return reply.code(500).send(graphError('An unexpected error has occurred. Please retry your request later.', 2, { is_transient: true }));
+      }
       return reply.send({ id });
+    }
+    m = /^\/v1\.0\/([^/]+)\/threads$/.exec(c.path);
+    if (m && c.method === 'GET') {
+      // The account's own threads, newest first; replies are not threads of their own.
+      const data = [...this.posts.entries()]
+        .filter(([, p]) => !p.reply_to_id)
+        .sort(([, a], [, b]) => b.publishedAt - a.publishedAt)
+        .slice(0, Number(q.limit ?? 25))
+        .map(([id, p]) => ({ id, text: p.text, permalink: p.permalink, media_type: p.media_type, timestamp: new Date(p.publishedAt).toISOString().replace(/\.\d{3}Z$/, '+0000') }));
+      return reply.send({ data });
     }
     m = /^\/v1\.0\/([^/]+)\/insights$/.exec(c.path);
     if (m) {
@@ -100,6 +122,7 @@ export class FakeThreads extends FakeServer {
         cont.polls++;
         const isVideo = cont.media_type === 'VIDEO';
         if (isVideo && this.rejectVideoWith) return reply.send({ id: cont.id, status: 'ERROR', error_message: this.rejectVideoWith });
+        if (cont.published) return reply.send({ id: cont.id, status: 'PUBLISHED' });
         if (isVideo && cont.polls <= this.processingPolls) return reply.send({ id: cont.id, status: 'IN_PROGRESS' });
         return reply.send({ id: cont.id, status: 'FINISHED' });
       }

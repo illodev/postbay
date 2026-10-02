@@ -1,5 +1,5 @@
 import { call } from '../http.js';
-import { validateAgainst } from '../validate.js';
+import { issue, validateAgainst } from '../validate.js';
 import {
   ConnectorError,
   type Account, type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
@@ -107,10 +107,10 @@ export function createLinkedIn(client: LinkedInClient): Connector {
       const issues = validateAgainst(CAPS, input);
       if (input.placement === 'document') {
         const pdf = pdfOf(input);
-        if (!pdf) issues.push({ severity: 'error', code: 'media.count', field: 'media', message: 'A LinkedIn document needs exactly one PDF in this version' });
-        else if (pdf.bytes > MAX_DOCUMENT_BYTES) issues.push({ severity: 'error', code: 'media.size', field: 'media', message: `${pdf.name} is larger than 100 MB, which is what LinkedIn takes for a document` });
+        if (!pdf) issues.push(issue('error', 'media.count', { variant: 'linkedinDocument' }, 'media'));
+        else if (pdf.bytes > MAX_DOCUMENT_BYTES) issues.push(issue('error', 'media.size', { name: pdf.name }, 'media'));
         if (input.media.some((m) => m.kind === 'video' || m.kind === 'image')) {
-          issues.push({ severity: 'warning', code: 'document.extra', field: 'media', message: 'The pictures and videos in this version are not sent: only the PDF is posted as a document' });
+          issues.push(issue('warning', 'document.extra', {}, 'media'));
         }
       }
       return issues;
@@ -221,6 +221,28 @@ export function createLinkedIn(client: LinkedInClient): Connector {
         await env.persist(h);
       }
       return { externalId: h.postUrn as string, url: `https://www.linkedin.com/feed/update/${h.postUrn}/` };
+    },
+
+    /**
+     * A post an earlier try made although its answer was lost, found without posting again: the page's latest posts (Posts API, "find
+     * posts by author"), the one made since a minute before the try that carries the file this publication uploaded.
+     */
+    async find(_input, account, handle: Handle, env: ConnectorEnv): Promise<Handle | null> {
+      if (handle.postUrn) return handle;
+      if (!handle.attemptedAt) return null;
+      const token = (await env.token()).accessToken;
+      const ours = new Set<string>([
+        ...((handle.images as string[] | undefined) ?? []), (handle.video as { urn?: string } | undefined)?.urn ?? '', String(handle.document ?? ''),
+      ].filter(Boolean));
+      if (!ours.size) return null;
+      const since = new Date(handle.attemptedAt as string).getTime() - 60_000;
+      const r = (await client.request(`/rest/posts?q=author&author=${urn(orgUrn(account))}&count=20&sortBy=CREATED`, token)).body as {
+        elements?: { id: string; createdAt?: number; content?: { media?: { id?: string }; multiImage?: { images?: { id?: string }[] } } }[];
+      };
+      const carries = (p: NonNullable<typeof r.elements>[number]) =>
+        [p.content?.media?.id, ...(p.content?.multiImage?.images ?? []).map((i) => i.id)].some((id) => !!id && ours.has(id));
+      const found = (r?.elements ?? []).find((p) => Number(p.createdAt ?? 0) >= since && carries(p));
+      return found ? { ...handle, postUrn: found.id, recovered: true } : null;
     },
 
     async verify(_account, externalId, _handle, env): Promise<VerifyResult> {

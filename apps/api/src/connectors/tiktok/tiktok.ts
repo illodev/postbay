@@ -1,5 +1,6 @@
 import { call } from '../http.js';
-import { validateAgainst } from '../validate.js';
+import { isKnown, msg, render, requestLocale, type Key, type Localized, type Params } from '../../i18n/index.js';
+import { issue, validateAgainst } from '../validate.js';
 import {
   ConnectorError,
   type Account, type AccountOptions, type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
@@ -102,6 +103,11 @@ function optionFields(privacyOptions: string[], info: CreatorInfo, audited = tru
 
 const creatorInfoOf = (a: Account): CreatorInfo => (a.providerData.creatorInfo ?? {}) as CreatorInfo;
 const PRIVACY_LABEL = (v: string) => PRIVACY.find((p) => p.value === v)?.label ?? v;
+/** A privacy choice's name, in the reader's language (TikTok's own value when it is one this app does not know). */
+const privacyName = (v: string): Localized | string => {
+  const key = `option.tiktok.privacy.choice.${v}`;
+  return isKnown(key) ? msg(key as Key) : (PRIVACY.find((p) => p.value === v)?.label ?? v);
+};
 
 const mainOf = (input: PublishInput): MediaItem[] =>
   input.media.filter((m) => m.kind === 'video' || m.kind === 'image').sort((a, b) => a.position - b.position);
@@ -161,45 +167,40 @@ export function createTikTok(client: TikTokClient, opts: TikTokOptions = {}): Co
 
     validate(input, account): Issue[] {
       const issues = validateAgainst(CAPS, input);
-      const err = (code: string, message: string, field: Issue['field'] = 'placement'): Issue => ({ severity: 'error', code, message, field });
+      const err = (code: string, params: Params = {}, field: Issue['field'] = 'placement'): Issue => issue('error', code, params, field);
       const privacy = String(input.options.privacy ?? '');
       // What TikTok said this creator may choose, when the post was being written; every choice TikTok has, if it was never asked.
       const info = creatorInfoOf(account);
       const offered = info.privacyLevelOptions ?? PRIVACY.map((p) => p.value);
       if (!privacy) {
-        issues.push(err('tiktok.privacy', 'Choose who can see this post. TikTok asks that nobody is chosen for you.'));
+        issues.push(err('tiktok.privacy'));
       } else if (!offered.includes(privacy)) {
-        issues.push(err('tiktok.privacy.unavailable', `TikTok does not offer "${PRIVACY_LABEL(privacy)}" for this account. Choose one of: ${offered.map(PRIVACY_LABEL).join(', ')}.`));
+        // The list of what is offered is put into words now, in the language of whoever is scheduling.
+        issues.push(err('tiktok.privacy.unavailable', { choice: privacyName(privacy), choices: offered.map((v) => { const n = privacyName(v); return typeof n === 'string' ? n : render(requestLocale(), n); }).join(', ') }));
       }
       if (flag(input, 'commercial') && !flag(input, 'yourBrand') && !flag(input, 'brandedContent')) {
-        issues.push(err('tiktok.commercial', 'You said the post promotes something: say whether it is your own brand, branded content, or both.'));
+        issues.push(err('tiktok.commercial'));
       }
-      if (flag(input, 'brandedContent') && privacy === 'SELF_ONLY') issues.push(err('tiktok.branded.private', 'Branded content cannot be private on TikTok.'));
+      if (flag(input, 'brandedContent') && privacy === 'SELF_ONLY') issues.push(err('tiktok.branded.private'));
       // One agreement is shown at a time: the branded-content one replaces the plain one.
       if (flag(input, 'brandedContent')) {
-        if (!flag(input, 'consentBranded')) issues.push(err('tiktok.consent.branded', `TikTok needs this agreement for branded content: "${CONSENT_BRANDED}"`));
+        if (!flag(input, 'consentBranded')) issues.push(err('tiktok.consent.branded', { notice: CONSENT_BRANDED }));
       } else if (!flag(input, 'consent')) {
-        issues.push(err('tiktok.consent', `TikTok needs this agreement before posting: "${CONSENT}"`));
+        issues.push(err('tiktok.consent', { notice: CONSENT }));
       }
-      const switchedOff: [string, boolean | undefined, string][] = [['allowComment', info.commentDisabled, 'Comments'], ['allowDuet', info.duetDisabled, 'Duets'], ['allowStitch', info.stitchDisabled, 'Stitches']];
-      for (const [key, disabled, what] of switchedOff) {
-        if (disabled && flag(input, key)) issues.push(err(`tiktok.${key}.disabled`, `${what} are turned off for this account in TikTok, so they cannot be allowed on this post.`));
+      const switchedOff: [string, boolean | undefined][] = [['allowComment', info.commentDisabled], ['allowDuet', info.duetDisabled], ['allowStitch', info.stitchDisabled]];
+      for (const [key, disabled] of switchedOff) {
+        if (disabled && flag(input, key)) issues.push(err(`tiktok.${key}.disabled`));
       }
       const video = mainOf(input).find((m) => m.kind === 'video');
       if (input.placement === 'video' && video?.durationMs && info.maxVideoPostDurationSec && video.durationMs / 1000 > info.maxVideoPostDurationSec) {
-        issues.push(err('tiktok.duration', `This account can post videos of up to ${info.maxVideoPostDurationSec} seconds on TikTok; this one is ${Math.round(video.durationMs / 1000)}.`, 'media'));
+        issues.push(err('tiktok.duration', { max: String(info.maxVideoPostDurationSec), seconds: String(Math.round(video.durationMs / 1000)) }, 'media'));
       }
       if (!audited(account)) {
-        issues.push({
-          severity: 'warning', code: 'tiktok.unaudited', field: 'schedule',
-          message: "This TikTok app has not passed TikTok's audit yet: the post will be made private (visible only to the account) whatever is chosen above, TikTok only takes it if the TikTok account itself is set to private in its settings, and a person has to make the post public in TikTok.",
-        });
+        issues.push(issue('warning', 'tiktok.unaudited', {}, 'schedule'));
       }
       if (input.placement === 'photo') {
-        issues.push({
-          severity: 'warning', code: 'tiktok.photo.domain', field: 'media',
-          message: "TikTok downloads photos itself, and only from a domain verified in its developer portal. If the media domain is not verified there, this will be refused.",
-        });
+        issues.push(issue('warning', 'tiktok.photo.domain', {}, 'media'));
       }
       return issues;
     },
