@@ -35,7 +35,10 @@ const schema = z.object({
   // Access (phase 5)
   /** A second factor (an authenticator app) for admins and approvers. On in production unless set to false; in development it is off unless set to true. */
   SECOND_FACTOR_REQUIRED: z.enum(['true', 'false', '1', '0', '']).optional(),
-  /** Whether people can still sign in with an emailed link. Set false when everyone signs in with single sign-on. */
+  /**
+   * Whether people can still sign in with an emailed link. Set false when everyone signs in with single sign-on. Default: on, except
+   * with OIDC_SECOND_FACTOR=idp, where a link would be a way round the provider's second step.
+   */
   EMAIL_LINK_LOGIN: z.enum(['true', 'false', '1', '0', '']).optional(),
   /** Single sign-on with any OpenID Connect provider: Google Workspace (https://accounts.google.com) or Microsoft Entra (https://login.microsoftonline.com/<tenant>/v2.0). */
   OIDC_ISSUER: z.string().optional(),
@@ -189,7 +192,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     };
   }
   const secondFactorRequired = flag(c.SECOND_FACTOR_REQUIRED, isProd);
-  const emailLinkLogin = flag(c.EMAIL_LINK_LOGIN, true);
+  // With the provider's second step trusted (idp), an emailed link is a way in that skips it: off unless asked for. When it is asked
+  // for, a session begun with a link owes the app's own second step, for every role (see sessionState in services/auth.ts).
+  const emailLinkLogin = flag(c.EMAIL_LINK_LOGIN, sso?.secondFactor !== 'idp');
   if (!emailLinkLogin && !sso && !c.AUTH_DEV_LOGIN) {
     throw new Error('Invalid configuration: EMAIL_LINK_LOGIN=false leaves no way to sign in unless single sign-on is set up (OIDC_*)');
   }

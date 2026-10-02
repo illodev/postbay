@@ -137,6 +137,10 @@ development unless set. Anyone else can turn it on in *Your account*.
 - Removing the authenticator, or making new recovery codes, needs a current code. A role that needs a second factor cannot remove it.
 - **A person who lost their phone and their recovery codes** is reset by an admin (*Settings → Members → Reset authenticator*) or from the command line: `npm run reset-2fa -w @estudio/api -- --email them@example.com`. Their sessions have to do the second step again.
 - `OIDC_SECOND_FACTOR=idp` skips the app's second step for single sign-on, **trusting that you enforce one at the provider**. The app cannot see whether you do. The default (`app`) asks anyway.
+- With `OIDC_SECOND_FACTOR=idp` the **emailed link is off by default**: a link signs in without the provider, so it would be a way round
+  the provider's second step (and a stolen link would let its holder set up their own authenticator). Set `EMAIL_LINK_LOGIN=true` to keep
+  it as a way in for when the provider is down; then a session begun with a link owes the **app's** second step whatever the person's role,
+  and cannot set an authenticator up: people set one up after signing in with single sign-on, under *Your account*, and only then can use a link.
 - The secret is sealed with a key made from `SECRET`; losing `SECRET` makes every authenticator unusable and every person would have to be reset.
 
 ## Notifications

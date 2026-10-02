@@ -220,7 +220,7 @@ See [`.env.example`](.env.example). The ones that matter:
 | `WEBHOOK_ALLOW_PRIVATE_NETWORKS` | Whether webhooks may point at loopback and private addresses. Default: yes in development, no in production |
 | `META_APP_ID`, `META_APP_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | The developer apps ([setup in docs/phase-2.md](docs/phase-2.md#setting-up-the-networks)). Without them accounts stay manual |
 | `THREADS_*`, `TIKTOK_*`, `LINKEDIN_*` (and `LINKEDIN_VERSION`), `X_*`, `PINTEREST_*` | The other networks' apps ([setup in docs/phase-4.md](docs/phase-4.md#setting-up-the-networks)). Each switches on with its credentials; Bluesky needs only `TOKEN_KEY` |
-| `SECOND_FACTOR_REQUIRED`, `EMAIL_LINK_LOGIN` | Whether admins and approvers must give an authenticator code (default: yes in production), and whether the emailed link still signs people in ([docs/phase-5.md](docs/phase-5.md#signing-in)) |
+| `SECOND_FACTOR_REQUIRED`, `EMAIL_LINK_LOGIN` | Whether admins and approvers must give an authenticator code (default: yes in production), and whether the emailed link still signs people in (default: yes, except with `OIDC_SECOND_FACTOR=idp`; [docs/phase-5.md](docs/phase-5.md#signing-in)) |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_ALLOWED_DOMAINS` (and `OIDC_LABEL`, `OIDC_SECOND_FACTOR`, `OIDC_TRUST_EMAIL`) | Single sign-on. The allowed domains are required |
 | `GOOGLE_ANALYTICS` | Also ask YouTube for its Analytics permission, so watch time can be read. Off by default: Google treats it as sensitive |
 | `STAGING_DIR` | Where big uploads wait while they arrive in pieces (a volume in the compose file) |

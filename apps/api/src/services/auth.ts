@@ -91,9 +91,15 @@ export interface SessionState {
   pending: 'none' | 'verify' | 'enroll';
 }
 
+/**
+ * Whether a session began with an emailed link on a server that trusts the identity provider's second step (OIDC_SECOND_FACTOR=idp).
+ * Such a session would get round the provider's step, so it owes the app's own, whatever the person's role.
+ */
+const linkPastIdp = (ctx: Ctx, via: string) => via === 'link' && ctx.config.sso?.secondFactor === 'idp';
+
 export async function sessionState(ctx: Ctx, token: string): Promise<SessionState | null> {
-  const row = await ctx.db.one<{ id: string; email: string; second_factor_at: Date | null; enrolled: boolean; privileged: boolean }>(
-    `select u.id, u.email, s.second_factor_at,
+  const row = await ctx.db.one<{ id: string; email: string; via: string; second_factor_at: Date | null; enrolled: boolean; privileged: boolean }>(
+    `select u.id, u.email, s.via, s.second_factor_at,
             exists(select 1 from user_totp t where t.user_id = u.id and t.confirmed_at is not null) as enrolled,
             exists(select 1 from member m where m.user_id = u.id and m.role in ('admin','approver')) as privileged
      from session s join app_user u on u.id = s.user_id where s.token_hash = $1 and s.expires_at > now()`,
@@ -101,7 +107,7 @@ export async function sessionState(ctx: Ctx, token: string): Promise<SessionStat
   );
   if (!row) return null;
   // Asked of anyone who set an authenticator up, and of admins and approvers once the deployment requires it.
-  const needed = row.enrolled || (ctx.config.secondFactorRequired && row.privileged);
+  const needed = row.enrolled || linkPastIdp(ctx, row.via) || (ctx.config.secondFactorRequired && row.privileged);
   const pending = !needed || row.second_factor_at ? 'none' : row.enrolled ? 'verify' : 'enroll';
   return { userId: row.id, email: row.email, pending };
 }
@@ -109,6 +115,18 @@ export async function sessionState(ctx: Ctx, token: string): Promise<SessionStat
 export async function principalFromSession(ctx: Ctx, token: string): Promise<Principal | null> {
   const s = await sessionState(ctx, token);
   return s && s.pending === 'none' ? { kind: 'user', userId: s.userId, email: s.email } : null;
+}
+
+/**
+ * Whether this session may set up an authenticator. Not one that began with an emailed link where the provider's second step is
+ * trusted: whoever holds a stolen link would set up their own phone and be in. Those people set one up after signing in with
+ * single sign-on, and use the link only once they have it.
+ */
+export async function assertMayEnroll(ctx: Ctx, token: string): Promise<void> {
+  const s = await ctx.db.one<{ via: string }>('select via from session where token_hash = $1', [sha(token)]);
+  if (s && linkPastIdp(ctx, s.via)) {
+    throw forbidden(`An authenticator cannot be set up from an emailed link on this server. Sign in with ${ctx.config.sso!.label} and set it up under Your account.`);
+  }
 }
 
 /** The person has given the second step in this session. */

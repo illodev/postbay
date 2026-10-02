@@ -122,10 +122,12 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/auth/2fa/enroll', codeLimit, async (req) => {
     const a = actor(req);
     if (a.pending === 'verify') throw conflict('already_enrolled', 'An authenticator is already set up: give its code.');
+    await authSvc.assertMayEnroll(ctx, req.cookies[SESSION_COOKIE]!);
     return secondFactor.startEnrollment(ctx, a.userId, a.email);
   });
   app.post('/api/auth/2fa/enroll/confirm', codeLimit, async (req) => {
     const a = actor(req);
+    await authSvc.assertMayEnroll(ctx, req.cookies[SESSION_COOKIE]!);
     const r = await secondFactor.confirmEnrollment(ctx, a.userId, code.parse(req.body).code);
     // Whoever has just proved they hold the authenticator has given the second step.
     await authSvc.markSecondFactor(ctx, req.cookies[SESSION_COOKIE]!);

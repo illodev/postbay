@@ -46,6 +46,7 @@ x-app-env: &app-env
   # Signing in and notifications (docs/phase-5.md). Single sign-on switches on with the OIDC_* values; a second factor (an authenticator app)
   # is asked of admins and approvers by default in production; Slack needs TOKEN_KEY above, and push messages need nothing.
   SECOND_FACTOR_REQUIRED: ${SECOND_FACTOR_REQUIRED:-}
+  # Default: on, except with OIDC_SECOND_FACTOR=idp, where an emailed link would skip the provider's second step.
   EMAIL_LINK_LOGIN: ${EMAIL_LINK_LOGIN:-}
   OIDC_ISSUER: ${OIDC_ISSUER:-}
   OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
