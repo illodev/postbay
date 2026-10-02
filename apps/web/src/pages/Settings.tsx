@@ -6,7 +6,7 @@ import { api, type Account, type BrandInvitation, type BrandSettings, type Integ
 import { Avatar, displayName } from '../components/Avatar';
 import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
-import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, MoreMenu, NetMark, Select, Skeleton, Spinner, Switch, Tip, useConfirm, useToast } from '../components/ui';
+import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, MoreMenu, NetMark, Select, Skeleton, Spinner, Switch, Tip, Tipped, useConfirm, useToast } from '../components/ui';
 import { t, tMaybe, type Key } from '../i18n';
 import { fmtDateTime, fmtDay, fmtShort, NETWORK_LABEL, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -215,10 +215,12 @@ function Members({ brandId }: { brandId: string }) {
                     <div className="ent-sub">{m.email}</div>
                   </div>
                   <div className="ent-side">
-                    <span className={`set-2fa ${m.second_factor ? 'on' : ''}`} title={m.second_factor ? t('settings.members.2faOnHint') : t('settings.members.2faOffHint')}>
-                      <Icon name="shield" />
-                      <span>{m.second_factor ? t('settings.members.2faOn') : t('settings.members.2faOff')}</span>
-                    </span>
+                    <Tipped label={m.second_factor ? t('settings.members.2faOnHint') : t('settings.members.2faOffHint')}>
+                      <span className={`set-2fa ${m.second_factor ? 'on' : ''}`}>
+                        <Icon name="shield" />
+                        <span>{m.second_factor ? t('settings.members.2faOn') : t('settings.members.2faOff')}</span>
+                      </span>
+                    </Tipped>
                     <Select className="set-inline-select" label={t('settings.members.roleOf', { email: m.email })} value={m.role} onChange={(role) => change.mutate({ id: m.id, role })} options={ROLE_OPTIONS()} />
                     <MoreMenu
                       label={t('settings.members.actionsOf', { name: who })}
@@ -284,7 +286,7 @@ function Members({ brandId }: { brandId: string }) {
 
       <form className="card set-card" onSubmit={(e) => { e.preventDefault(); add.mutate(); }} aria-labelledby="set-add-member">
         <header className="set-card-top">
-          <h3 id="set-add-member" title={t('settings.members.addHint')}>{t('settings.members.addTitle')}</h3>
+          <Tip label={t('settings.members.addHint')}><h3 id="set-add-member">{t('settings.members.addTitle')}</h3></Tip>
         </header>
         <div className="set-invite">
           <Field label={t('settings.members.email')}><input type="email" required placeholder={t('settings.members.emailPlaceholder')} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
@@ -429,11 +431,13 @@ function EventsState({ a }: { a: Account }) {
   if (!ev) return null;
   if (ev.subscribed) {
     return (
-      <span className="set-note set-note-good" title={ev.fields?.length ? ev.fields.join(', ') : undefined}>
-        <Icon name="check" />
-        {t('settings.accounts.events.on')}
-        {ev.at && <span className="set-note-when"> · {fmtShort(ev.at)}</span>}
-      </span>
+      <Tipped label={ev.fields?.length ? ev.fields.join(', ') : undefined}>
+        <span className="set-note set-note-good">
+          <Icon name="check" />
+          {t('settings.accounts.events.on')}
+          {ev.at && <span className="set-note-when"> · {fmtShort(ev.at)}</span>}
+        </span>
+      </Tipped>
     );
   }
   return (
@@ -661,7 +665,7 @@ function Accounts({ brandId }: { brandId: string }) {
 
       <form className="card set-card" onSubmit={(e) => { e.preventDefault(); add.mutate(); }} aria-labelledby="set-acc-manual-add">
         <header className="set-card-top">
-          <h3 id="set-acc-manual-add" title={t('settings.accounts.manualHint')}>{t('settings.accounts.manualTitle')}</h3>
+          <Tip label={t('settings.accounts.manualHint')}><h3 id="set-acc-manual-add">{t('settings.accounts.manualTitle')}</h3></Tip>
         </header>
         <div className="set-invite">
           <Field label={t('settings.accounts.network')}>
@@ -758,25 +762,27 @@ function Schedule({ brandId }: { brandId: string }) {
                 <div className="set-week-name">{weekdayName(day).slice(0, 3)}</div>
                 {list.length === 0 && <div className="set-week-none" aria-hidden="true">—</div>}
                 {list.map((sl) => (
-                  <div key={sl.id} className="set-slot" title={`${weekdayName(sl.weekday)} ${sl.local_time.slice(0, 5)} · ${NETWORK_LABEL[sl.network] ?? sl.network} · ${sl.account_name}`}>
-                    <div className="set-slot-top">
-                      <span className="set-slot-time">{sl.local_time.slice(0, 5)}</span>
-                      <NetMark network={sl.network} size="xs" />
-                      <Tip label={t('settings.schedule.removeTitle')}>
-                        <button
-                          className="set-slot-x"
-                          aria-label={t('settings.schedule.removeLabel', { day: weekdayName(sl.weekday), time: sl.local_time.slice(0, 5) })}
-                          onClick={async () => {
-                            if (await confirm({ title: t('settings.schedule.removeTitle'), text: t('settings.schedule.removeConfirm', { day: weekdayName(sl.weekday), time: sl.local_time.slice(0, 5) }), confirmLabel: t('settings.schedule.remove'), danger: true })) remove.mutate(sl.id);
-                          }}
-                        >
-                          <Icon name="x" />
-                        </button>
-                      </Tip>
+                  <Tipped key={sl.id} label={`${weekdayName(sl.weekday)} ${sl.local_time.slice(0, 5)} · ${NETWORK_LABEL[sl.network] ?? sl.network} · ${sl.account_name}`}>
+                    <div className="set-slot">
+                      <div className="set-slot-top">
+                        <span className="set-slot-time">{sl.local_time.slice(0, 5)}</span>
+                        <NetMark network={sl.network} size="xs" />
+                        <Tip label={t('settings.schedule.removeTitle')}>
+                          <button
+                            className="set-slot-x"
+                            aria-label={t('settings.schedule.removeLabel', { day: weekdayName(sl.weekday), time: sl.local_time.slice(0, 5) })}
+                            onClick={async () => {
+                              if (await confirm({ title: t('settings.schedule.removeTitle'), text: t('settings.schedule.removeConfirm', { day: weekdayName(sl.weekday), time: sl.local_time.slice(0, 5) }), confirmLabel: t('settings.schedule.remove'), danger: true })) remove.mutate(sl.id);
+                            }}
+                          >
+                            <Icon name="x" />
+                          </button>
+                        </Tip>
+                      </div>
+                      <span className={`set-slot-label ${sl.label ? '' : 'none'}`}>{sl.label || t('settings.schedule.noLabel')}</span>
+                      <span className="set-slot-account">{sl.account_name}</span>
                     </div>
-                    <span className={`set-slot-label ${sl.label ? '' : 'none'}`}>{sl.label || t('settings.schedule.noLabel')}</span>
-                    <span className="set-slot-account">{sl.account_name}</span>
-                  </div>
+                  </Tipped>
                 ))}
               </div>
             ))}
@@ -813,7 +819,7 @@ function Schedule({ brandId }: { brandId: string }) {
 
       <section className="card set-card" aria-labelledby="set-blocked">
         <header className="set-card-top">
-          <h3 id="set-blocked" title={t('settings.schedule.blockedHint')}>{t('settings.schedule.blocked')}</h3>
+          <Tip label={t('settings.schedule.blockedHint')}><h3 id="set-blocked">{t('settings.schedule.blocked')}</h3></Tip>
           {blocked && blocked.length > 0 && <span className="set-count">{blocked.length}</span>}
         </header>
         {blocked?.length === 0 && <p className="set-empty">{t('settings.schedule.noBlocked')}</p>}
@@ -872,15 +878,17 @@ function Tokens({ brandId }: { brandId: string }) {
                     <div className="ent-title">{tk.name}</div>
                     <div className="ent-sub set-token-sub">
                       {by ? (
-                        <span className="set-by" title={tk.created_by_email ?? undefined}>
-                          <Avatar name={tk.created_by_name || tk.created_by_email} size={16} />
-                          {t('settings.tokens.createdBy', { who: by, when: fmtShort(tk.created_at) })}
-                        </span>
+                        <Tipped label={tk.created_by_email ?? undefined}>
+                          <span className="set-by">
+                            <Avatar name={tk.created_by_name || tk.created_by_email} size={16} />
+                            {t('settings.tokens.createdBy', { who: by, when: fmtShort(tk.created_at) })}
+                          </span>
+                        </Tipped>
                       ) : (
                         <span>{t('settings.tokens.created', { when: fmtShort(tk.created_at) })}</span>
                       )}
                       <span aria-hidden="true">·</span>
-                      <span>{tk.last_used_at ? <span title={fmtDateTime(tk.last_used_at, brand.timezone)}>{t('settings.tokens.usedWhen', { when: fmtShort(tk.last_used_at) })}</span> : t('settings.tokens.neverUsed')}</span>
+                      <span>{tk.last_used_at ? <Tipped label={fmtDateTime(tk.last_used_at, brand.timezone)}><span>{t('settings.tokens.usedWhen', { when: fmtShort(tk.last_used_at) })}</span></Tipped> : t('settings.tokens.neverUsed')}</span>
                     </div>
                   </div>
                   <div className="ent-side">
@@ -905,7 +913,7 @@ function Tokens({ brandId }: { brandId: string }) {
       </section>
       <form className="card set-card" onSubmit={(e) => { e.preventDefault(); create.mutate(); }} aria-labelledby="set-new-token">
         <header className="set-card-top">
-          <h3 id="set-new-token" title={t('settings.tokens.newHint')}>{t('settings.tokens.newTitle')}</h3>
+          <Tip label={t('settings.tokens.newHint')}><h3 id="set-new-token">{t('settings.tokens.newTitle')}</h3></Tip>
         </header>
         <div className="set-invite set-invite-token">
           <Field label={t('settings.tokens.name')}><input type="text" required placeholder={t('settings.tokens.namePlaceholder')} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
@@ -946,10 +954,10 @@ function Audit({ brandId, zone }: { brandId: string; zone: string }) {
                 <tr key={e.id}>
                   <td className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(e.at, zone)}</td>
                   <td data-label={t('settings.audit.who')}>
-                    {e.actor ? <span className="set-by" title={e.actor}><Avatar name={e.actor} size={18} />{e.actor.includes('@') ? displayName(null, e.actor) : e.actor}</span> : <span className="muted">{t('settings.audit.system')}</span>}
+                    {e.actor ? <Tipped label={e.actor}><span className="set-by"><Avatar name={e.actor} size={18} />{e.actor.includes('@') ? displayName(null, e.actor) : e.actor}</span></Tipped> : <span className="muted">{t('settings.audit.system')}</span>}
                   </td>
                   <td data-label={t('settings.audit.what')}><span className="tag">{e.action}</span></td>
-                  <td data-label={t('settings.audit.detail')} className="muted mono"><div className="clip" title={e.after ? JSON.stringify(e.after) : undefined}>{e.after ? JSON.stringify(e.after) : ''}</div></td>
+                  <td data-label={t('settings.audit.detail')} className="muted mono"><Tipped label={e.after ? JSON.stringify(e.after) : undefined}><div className="clip">{e.after ? JSON.stringify(e.after) : ''}</div></Tipped></td>
                 </tr>
               ))}
             </tbody>
