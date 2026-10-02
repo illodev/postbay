@@ -174,7 +174,16 @@ service only carries it. A browser the push service says is gone is forgotten. P
 counts as secure) and a browser that supports it; *Your account* says when that is not the case.
 
 **Who gets what.** Each person chooses, for each kind of notification, whether to receive it by email and whether by push; the usual ones
-are on to begin with. A change takes effect for notifications made after it. Whatever is not wanted is still in the bell.
+are on to begin with. A change takes effect for notifications made after it. Whatever is not wanted is still in the bell. Two kinds were split
+from others: `publication.handed_over` (a post given to a person, because its brand was paused or its date blocked past its hour, or the network
+cannot take it; it used to be `publication.failed`) and `agent.timed_out` (a run the studio closed for running out of time; it used to be
+`agent.failed`). Whoever had chosen the old kind for Slack, push or email gets the new one too (migration 012).
+
+**In which language.** Emails, Slack and push are written in Spanish or English: the person's own choice when they made one
+(`PUT /api/notifications/locale` with `es`, `en` or `null`; also `locale` in the preferences), otherwise the brand's language (its locale,
+`es-ES`, `en-GB`…; English only for `en…`). Slack goes in the brand's language. A sign-in link or an authenticator reset, which belong to no
+brand, go in English only when every brand the person belongs to publishes in English. A notification now also says why (the reason kept as
+a code, so in the reader's language), which account it is about, and the post's address once it is out.
 
 ## Review polish
 
@@ -262,6 +271,8 @@ been looked up (so a forged time could pass or fail the wrong check), and an SQL
 - **Subtitles** are shown for files uploaded with the video. Burned-in captions, and times beyond the video's end, are not read.
 - **Watch time** is lifetime to date for the video, not per day, and lags a day or two behind.
 - **A real test post** cannot be deleted by the app.
+- **Two languages, not more.** The API's own words are in Spanish and English; what a network or the agent says is passed on as it came.
+  A text kept from before codes existed (or written by the runner) is shown in its English.
 
 ## Your first real run
 
