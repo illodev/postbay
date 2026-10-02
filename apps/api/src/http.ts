@@ -18,7 +18,7 @@ declare module 'fastify' {
 export function requirePrincipal(req: FastifyRequest): Principal {
   if (!req.principal) {
     if (req.secondFactor) {
-      throw new AppError(401, 'second_factor_required', 'Finish signing in with the code from your authenticator app.', { step: req.secondFactor.pending });
+      throw new AppError(401, 'second_factor_required', { code: 'error.secondFactorRequired' }, { step: req.secondFactor.pending });
     }
     throw unauthorized();
   }

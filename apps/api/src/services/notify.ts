@@ -1,5 +1,6 @@
 import type { Queryable } from '../db.js';
 import type { Role } from '../domain/roles.js';
+import { localeOf, render, t, type Key, type Locale } from '../i18n/index.js';
 
 export type NotifyKind =
   | 'version.uploaded'
@@ -11,47 +12,111 @@ export type NotifyKind =
   | 'publication.on_hold'
   | 'publication.published'
   | 'publication.failed'
+  | 'publication.handed_over'
   | 'publication.private'
   | 'account.reconnect'
   | 'account.expiring'
   | 'webhook.failing'
   | 'slack.failing'
   | 'agent.needs_person'
-  | 'agent.failed';
+  | 'agent.failed'
+  | 'agent.timed_out';
 
-/** What each kind says, to a person: the email subject and push title, the name in settings, and where it is sent unless chosen otherwise. */
-export const KINDS: Record<NotifyKind, { subject: string; label: string; push: boolean; slack: boolean }> = {
-  'version.uploaded': { subject: 'A new version is ready for review', label: 'A new version is ready for review', push: true, slack: true },
-  'comment.created': { subject: 'New comment on a piece', label: 'Someone comments on a piece', push: true, slack: false },
-  'version.changes_requested': { subject: 'Changes were requested on a version', label: 'Changes are requested on a version', push: true, slack: true },
-  'version.approved': { subject: 'A version was approved', label: 'A version is approved', push: false, slack: true },
-  'publication.due': { subject: 'A publication is due: it needs to go out now', label: 'A publication you publish by hand is due', push: true, slack: true },
-  'publication.reapproval': { subject: 'A change to a scheduled publication needs your confirmation', label: 'A change to something scheduled needs confirming', push: true, slack: true },
-  'publication.on_hold': { subject: 'Scheduled publications were put on hold by a new version', label: 'Scheduled publications are put on hold', push: false, slack: true },
-  'publication.published': { subject: 'A post went out', label: 'A post goes out', push: false, slack: true },
-  'publication.failed': { subject: 'A post could not be published', label: 'A post fails to publish', push: true, slack: true },
-  'publication.private': { subject: 'A video was uploaded but is private: a person has to make it public', label: 'A post is uploaded but private', push: true, slack: true },
-  'account.reconnect': { subject: 'An account needs to be reconnected', label: 'An account has to be connected again', push: true, slack: true },
-  'account.expiring': { subject: 'An account connection is about to expire', label: 'An account connection is about to expire', push: false, slack: true },
-  'webhook.failing': { subject: 'A webhook is failing: events are not reaching its receiver', label: 'A webhook is failing', push: false, slack: true },
-  'slack.failing': { subject: 'Slack is not taking messages any more: the webhook address needs replacing', label: 'Slack stops taking messages', push: true, slack: false },
-  'agent.needs_person': { subject: 'The agent has handed a piece back to a person', label: 'The agent hands a piece back to a person', push: true, slack: true },
-  'agent.failed': { subject: 'An agent run failed', label: 'An agent run fails', push: false, slack: true },
+/**
+ * Where each kind is sent unless a person or a brand chose otherwise. What each says (the email subject and push title, and its name in
+ * the settings) is in the dictionary, as `notify.<kind>.subject` and `notify.<kind>.label`.
+ *
+ * `publication.handed_over` (a post the app gave to a person, because its brand was paused or its date blocked past its hour, or the
+ * network cannot take it) and `agent.timed_out` (a run the studio closed because it ran out of time) used to travel as
+ * `publication.failed` (with `handedOver`) and `agent.failed`; notifications of those older shapes still read as they did.
+ */
+export const KINDS: Record<NotifyKind, { push: boolean; slack: boolean }> = {
+  'version.uploaded': { push: true, slack: true },
+  'comment.created': { push: true, slack: false },
+  'version.changes_requested': { push: true, slack: true },
+  'version.approved': { push: false, slack: true },
+  'publication.due': { push: true, slack: true },
+  'publication.reapproval': { push: true, slack: true },
+  'publication.on_hold': { push: false, slack: true },
+  'publication.published': { push: false, slack: true },
+  'publication.failed': { push: true, slack: true },
+  'publication.handed_over': { push: true, slack: true },
+  'publication.private': { push: true, slack: true },
+  'account.reconnect': { push: true, slack: true },
+  'account.expiring': { push: false, slack: true },
+  'webhook.failing': { push: false, slack: true },
+  'slack.failing': { push: true, slack: false },
+  'agent.needs_person': { push: true, slack: true },
+  'agent.failed': { push: false, slack: true },
+  'agent.timed_out': { push: false, slack: true },
 };
 export const KIND_LIST = Object.keys(KINDS) as NotifyKind[];
 
-/** The words and the place for one notification, the same on every channel. `brand` and `pieceTitle` come from the rows around it. */
+const isKind = (k: string): k is NotifyKind => k in KINDS;
+
+/** The kind's subject (email subject, push title) in a language; an unknown kind is said as it is. */
+export function kindSubject(locale: Locale, kind: string): string {
+  return isKind(kind) ? t(locale, `notify.${kind}.subject` as Key) : kind;
+}
+
+/** The kind's name in the settings, in a language. */
+export const kindLabel = (locale: Locale, kind: NotifyKind) => t(locale, `notify.${kind}.label` as Key);
+
+/**
+ * What a notification has to say beyond its subject, in a language: the account it is about, why (a message the studio kept as a code,
+ * or one in a network's or a person's own words), and the post's address once it is out.
+ */
+function detailLines(locale: Locale, kind: string, payload: Record<string, any>): string[] {
+  const lines: string[] = [];
+  if (kind.startsWith('account.') && payload.name && payload.network) lines.push(t(locale, 'notify.account', { name: payload.name, network: payload.network }));
+  const why = render(locale, payload.message_i18n ?? payload.reason_i18n, payload.message ?? payload.reason ?? null);
+  if (why) lines.push(why);
+  if (kind === 'publication.published' && payload.url) lines.push(t(locale, 'notify.post', { url: payload.url }));
+  return lines;
+}
+
+/**
+ * The words and the place for one notification, the same on every channel, in the language of whoever receives it. `brand` and
+ * `pieceTitle` come from the rows around it.
+ */
 export function describeNotification(
-  appUrl: string, kind: string, payload: Record<string, any>, brand: string, pieceTitle: string | null,
+  locale: Locale, appUrl: string, kind: string, payload: Record<string, any>, brand: string, pieceTitle: string | null,
 ): { subject: string; title: string; body: string; url: string } {
-  const subject = KINDS[kind as NotifyKind]?.subject ?? kind;
+  const subject = kindSubject(locale, kind);
   const base = appUrl.replace(/\/$/, '');
   let path = '/';
   if (payload.pieceId) path = `/pieces/${payload.pieceId}`;
   else if (kind.startsWith('account.')) path = '/settings?tab=accounts';
   else if (kind === 'webhook.failing') path = '/settings?tab=webhooks';
   else if (kind === 'slack.failing') path = '/settings?tab=notifications';
-  return { subject, title: `[${brand}] ${subject}`, body: pieceTitle ? `Piece: ${pieceTitle}` : '', url: `${base}${path}` };
+  const body = [...(pieceTitle ? [t(locale, 'notify.piece', { title: pieceTitle })] : []), ...detailLines(locale, kind, payload)].join('\n');
+  return { subject, title: `[${brand}] ${subject}`, body, url: `${base}${path}` };
+}
+
+// ───────────────────────────── whose language ─────────────────────────────
+
+/** A person's own choice of language, kept with their notification preferences; null when they made none. */
+export const chosenLocale = (prefs: { locale?: string } | null | undefined): Locale | null =>
+  prefs?.locale === 'es' || prefs?.locale === 'en' ? prefs.locale : null;
+
+/** The language to write to a person in about a brand: their own choice, or else the brand's language. */
+export const recipientLocale = (prefs: { locale?: string } | null | undefined, brandLocale: string | null | undefined): Locale =>
+  chosenLocale(prefs) ?? localeOf(brandLocale);
+
+/**
+ * The language to write to a person in when no brand is in question (a sign-in link, their authenticator): their own choice, or else
+ * English only when every brand they belong to publishes in English; Spanish otherwise, and for someone with no brand.
+ */
+export async function personLocale(db: Queryable, userId: string): Promise<Locale> {
+  const row = await db.one<{ notify_prefs: { locale?: string } | null; locales: string[] | null }>(
+    `select u.notify_prefs, array(select b.locale from member m join brand b on b.id = m.brand_id where m.user_id = u.id) as locales
+     from app_user u where u.id = $1`,
+    [userId],
+  );
+  const chosen = chosenLocale(row?.notify_prefs);
+  if (chosen) return chosen;
+  const locales = row?.locales ?? [];
+  return locales.length > 0 && locales.every((l) => localeOf(l) === 'en') ? 'en' : 'es';
 }
 
 /**

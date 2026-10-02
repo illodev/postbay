@@ -1,7 +1,8 @@
+import { goneNote, noteOf } from '../notes.js';
 import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { call } from '../http.js';
-import { validateAgainst } from '../validate.js';
+import { issue, validateAgainst } from '../validate.js';
 import {
   ConnectorError,
   type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
@@ -72,6 +73,13 @@ async function uploadForm(env: ConnectorEnv, fields: Record<string, string>, m: 
 }
 
 export function createPinterest(client: PinterestClient): Connector {
+  /** The pin with this title made on the board since a minute before `since`, if there is one: what a try whose answer was lost made. */
+  async function findPin(token: string, board: string, title: string, since: Date): Promise<string | null> {
+    const recent = await client.request<{ items?: { id: string; title?: string; created_at?: string }[] }>(`/v5/boards/${board}/pins`, token, { query: { page_size: 25 } });
+    const from = since.getTime() - 60_000;
+    return (recent.items ?? []).find((p) => p.title === title && (!p.created_at || new Date(p.created_at).getTime() >= from))?.id ?? null;
+  }
+
   const connector: Connector = {
     network: 'pinterest',
     provider: 'pinterest',
@@ -87,24 +95,21 @@ export function createPinterest(client: PinterestClient): Connector {
 
     validate(input, account): Issue[] {
       const issues = validateAgainst(CAPS, input);
-      if (titleOf(input).length === 0) issues.push({ severity: 'error', code: 'title.missing', field: 'text', message: 'A pin needs a title: give the piece one, or write one under the pin options' });
+      if (titleOf(input).length === 0) issues.push(issue('error', 'title.missing', {}, 'text'));
       const link = linkOf(input);
       if (link) {
         try {
           const u = new URL(link);
           if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('protocol');
         } catch {
-          issues.push({ severity: 'error', code: 'link.invalid', field: 'text', message: `"${link}" is not a web address Pinterest can use as the pin's link` });
+          issues.push(issue('error', 'link.invalid', { link }, 'text'));
         }
       }
       if (input.placement === 'video_pin' && !input.media.some((m) => m.kind === 'cover')) {
-        issues.push({ severity: 'error', code: 'cover.missing', field: 'media', message: 'A video pin needs a cover picture: add one to this version' });
+        issues.push(issue('error', 'cover.missing', {}, 'media'));
       }
       if (account.providerData.audited !== true) {
-        issues.push({
-          severity: 'warning', code: 'pinterest.trial', field: 'schedule',
-          message: 'This Pinterest app is on Trial access: the pin will be created, but only you can see it until Pinterest approves the app for Standard access.',
-        });
+        issues.push(issue('warning', 'pinterest.trial', {}, 'schedule'));
       }
       return issues;
     },
@@ -145,10 +150,8 @@ export function createPinterest(client: PinterestClient): Connector {
       if (!h.pinId) {
         // A try that may have gone through is looked for on the board before another is made.
         if (h.attemptedAt) {
-          const recent = await client.request<{ items?: { id: string; title?: string; created_at?: string }[] }>(`/v5/boards/${account.externalId}/pins`, token, { query: { page_size: 25 } });
-          const since = new Date(h.attemptedAt as string).getTime() - 60_000;
-          const found = (recent.items ?? []).find((p) => p.title === title && (!p.created_at || new Date(p.created_at).getTime() >= since));
-          if (found) h = { ...h, pinId: found.id, recovered: true };
+          const found = await findPin(token, account.externalId, title, new Date(h.attemptedAt as string));
+          if (found) h = { ...h, pinId: found, recovered: true };
         }
         if (!h.pinId) {
           h = { ...h, attemptedAt: env.now().toISOString() };
@@ -172,17 +175,26 @@ export function createPinterest(client: PinterestClient): Connector {
       return { externalId: h.pinId as string, url: `https://www.pinterest.com/pin/${h.pinId}/` };
     },
 
+    /** A pin an earlier try made although its answer was lost, on the board, without making another (see findPin). */
+    async find(input, account, handle: Handle, env: ConnectorEnv): Promise<Handle | null> {
+      if (handle.pinId) return handle;
+      if (!handle.attemptedAt) return null;
+      const token = (await env.token()).accessToken;
+      const found = await findPin(token, account.externalId, titleOf(input), new Date(handle.attemptedAt as string));
+      return found ? { ...handle, pinId: found, recovered: true } : null;
+    },
+
     async verify(account, externalId, _handle, env): Promise<VerifyResult> {
       const token = (await env.token()).accessToken;
       const url = `https://www.pinterest.com/pin/${externalId}/`;
       try {
         await client.request(`/v5/pins/${externalId}`, token);
       } catch (err) {
-        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', note: 'Pinterest does not return this pin any more' };
+        if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', ...goneNote('pinterest', 'pin') };
         throw err;
       }
       if (account.providerData.audited !== true) {
-        return { visibility: 'private', url, note: 'The pin is on Pinterest, but only its creator can see it until Pinterest approves the app for Standard access' };
+        return { visibility: 'private', url, ...noteOf('pub.note.pinterest.private') };
       }
       return { visibility: 'public', url };
     },

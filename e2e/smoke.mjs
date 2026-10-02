@@ -24,7 +24,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 let n = 0;
 
 async function newSession(email, viewport = { width: 1280, height: 900 }, mobile = false) {
-  const context = await browser.newContext({ baseURL: BASE, viewport, isMobile: mobile, hasTouch: mobile, acceptDownloads: true });
+  const context = await browser.newContext({ baseURL: BASE, locale: 'en-US', viewport, isMobile: mobile, hasTouch: mobile, acceptDownloads: true });
   const page = await context.newPage();
   page.on('pageerror', (e) => problems.push(`[${email}] page error: ${e.message}`));
   page.on('console', (m) => m.type() === 'error' && !/status of 4\d\d/.test(m.text()) && problems.push(`[${email}] console error: ${m.text()}`));

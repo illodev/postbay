@@ -1,4 +1,5 @@
-import { validateAgainst } from '../validate.js';
+import { goneNote } from '../notes.js';
+import { issue, networkName, validateAgainst } from '../validate.js';
 import {
   ConnectorError,
   type Account, type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
@@ -112,11 +113,11 @@ export function createBluesky(client: BlueskyClient): Connector {
       // The shared checks count characters; Bluesky counts graphemes, so the text is checked here instead.
       const issues = validateAgainst(CAPS, { ...input, text: '', firstComment: '' });
       const n = graphemes(input.text);
-      if (n > CAPS.text.maxChars) issues.push({ severity: 'error', code: 'text.length', field: 'text', message: `The text has ${n} characters; Bluesky allows ${CAPS.text.maxChars}` });
+      if (n > CAPS.text.maxChars) issues.push(issue('error', 'text.length', { count: String(n), network: networkName('bluesky'), max: String(CAPS.text.maxChars) }, 'text'));
       const c = graphemes(input.firstComment);
-      if (c > CAPS.text.maxChars) issues.push({ severity: 'error', code: 'firstComment.length', field: 'firstComment', message: `The first comment has ${c} characters; Bluesky allows ${CAPS.text.maxChars}` });
+      if (c > CAPS.text.maxChars) issues.push(issue('error', 'firstComment.length', { count: String(c), network: networkName('bluesky'), max: String(CAPS.text.maxChars) }, 'firstComment'));
       if (input.placement === 'video' && account.providerData.emailConfirmed === false) {
-        issues.push({ severity: 'error', code: 'bluesky.email', field: 'placement', message: "Bluesky only takes video from accounts whose email address is confirmed. Confirm it in the account's settings." });
+        issues.push(issue('error', 'bluesky.email', {}, 'placement'));
       }
       return issues;
     },
@@ -237,7 +238,7 @@ export function createBluesky(client: BlueskyClient): Connector {
       const r = await client.xrpc<{ posts?: { uri: string }[] }>(pdsOf(account, client), 'app.bsky.feed.getPosts', { token, query: { uris: externalId } });
       const handleName = String(account.providerData.handle ?? account.externalId);
       const rkey = externalId.split('/').pop();
-      if (!r.posts?.length) return { visibility: 'unknown', note: 'Bluesky does not return this post any more' };
+      if (!r.posts?.length) return { visibility: 'unknown', ...goneNote('bluesky', 'post') };
       return { visibility: 'public', url: `https://bsky.app/profile/${handleName}/post/${rkey}` };
     },
 

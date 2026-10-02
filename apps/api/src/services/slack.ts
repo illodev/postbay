@@ -4,7 +4,8 @@ import type { Ctx } from '../context.js';
 import { badRequest, conflict } from '../errors.js';
 import { checkUrl, post, type NetPolicy } from '../net.js';
 import { audit } from './audit.js';
-import { KIND_LIST, KINDS, describeNotification, notifyRoles, type NotifyKind } from './notify.js';
+import { localeOf, msg, requestLocale, t, type Locale, type Localized } from '../i18n/index.js';
+import { KIND_LIST, KINDS, describeNotification, kindLabel, notifyRoles, type NotifyKind } from './notify.js';
 
 /**
  * Slack. A brand gives the address of a Slack *incoming webhook* (a channel's private URL, made in Slack), and chosen kinds of
@@ -15,13 +16,13 @@ const BACKOFF_SECONDS = [60, 300, 900, 3600, 6 * 3600];
 const policyOf = (ctx: Ctx): NetPolicy => ({ allowPrivate: ctx.config.webhookAllowPrivate, httpsForPublic: ctx.config.isProd });
 
 /** Whether an address is one Slack makes: its host, and the path it uses for incoming webhooks and workflow triggers. */
-export function slackAddressError(ctx: Ctx, raw: string): string | null {
+export function slackAddressError(ctx: Ctx, raw: string): string | Localized | null {
   const checked = checkUrl(raw, policyOf(ctx));
   if ('error' in checked) return checked.error;
   const u = checked.url;
-  if (u.host.toLowerCase() !== ctx.config.SLACK_HOOK_HOST.toLowerCase()) return `That is not a Slack webhook address (it should be at ${ctx.config.SLACK_HOOK_HOST})`;
-  if (ctx.config.isProd && u.protocol !== 'https:') return 'A Slack webhook address uses https';
-  if (!/^\/(services|triggers|workflows)\/[A-Za-z0-9_/-]+$/.test(u.pathname)) return 'That does not look like a Slack incoming webhook address (it starts with /services/)';
+  if (u.host.toLowerCase() !== ctx.config.SLACK_HOOK_HOST.toLowerCase()) return msg('error.slack.notSlack', { host: ctx.config.SLACK_HOOK_HOST });
+  if (ctx.config.isProd && u.protocol !== 'https:') return msg('error.slack.https');
+  if (!/^\/(services|triggers|workflows)\/[A-Za-z0-9_/-]+$/.test(u.pathname)) return msg('error.slack.notIncoming');
   return null;
 }
 
@@ -30,10 +31,13 @@ const escapeSlack = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;'
 
 export interface SlackMessage { text: string }
 
-export function slackMessage(appUrl: string, kind: string, payload: Record<string, any>, brand: string, pieceTitle: string | null): SlackMessage {
-  const d = describeNotification(appUrl, kind, payload, brand, pieceTitle);
-  const link = `<${d.url}|${escapeSlack(pieceTitle ?? 'Open in the studio')}>`;
-  return { text: `*${escapeSlack(brand)}* · ${escapeSlack(d.subject)}\n${link}` };
+/** One notification as the brand's channel reads it, in the brand's language: the subject, why (when there is a why), and a link. */
+export function slackMessage(locale: Locale, appUrl: string, kind: string, payload: Record<string, any>, brand: string, pieceTitle: string | null): SlackMessage {
+  const d = describeNotification(locale, appUrl, kind, payload, brand, pieceTitle);
+  const link = `<${d.url}|${escapeSlack(pieceTitle ?? t(locale, 'notify.open'))}>`;
+  // The piece's title is already the link: the other lines of the body (the account, the reason, the post) go above it.
+  const detail = d.body.split('\n').filter((l) => l && !(pieceTitle && l === t(locale, 'notify.piece', { title: pieceTitle })));
+  return { text: [`*${escapeSlack(brand)}* · ${escapeSlack(d.subject)}`, ...detail.map(escapeSlack), link].join('\n') };
 }
 
 type Outcome = { ok: true } | { ok: false; gone: boolean; retryAfterSec?: number; message: string };
@@ -60,7 +64,7 @@ const kindList = z.array(z.enum(KIND_LIST as [NotifyKind, ...NotifyKind[]])).min
 export const slackInput = z.object({ url: z.string().trim().max(500).optional(), kinds: kindList });
 
 const sealer = (ctx: Ctx) => {
-  if (!ctx.vault) throw conflict('no_token_key', 'Slack needs TOKEN_KEY on the server: it seals the webhook address');
+  if (!ctx.vault) throw conflict('no_token_key', msg('error.slack.tokenKey'));
   return ctx.vault;
 };
 const aad = (brandId: string) => `slack:${brandId}`;
@@ -71,7 +75,7 @@ export async function getSlack(ctx: Ctx, p: Principal, brandId: string) {
   const h = await ctx.db.one('select hint, kinds, created_at, last_ok_at, last_error, last_error_at, disabled_reason from slack_hook where brand_id = $1', [brandId]);
   return {
     available: !!ctx.vault,
-    allKinds: KIND_LIST.map((kind) => ({ kind, label: KINDS[kind].label, default: KINDS[kind].slack })),
+    allKinds: KIND_LIST.map((kind) => ({ kind, label: kindLabel(requestLocale(), kind), default: KINDS[kind].slack })),
     configured: !!h,
     hint: h?.hint ?? null,
     kinds: (h?.kinds as string[] | undefined) ?? KIND_LIST.filter((k) => KINDS[k].slack),
@@ -99,7 +103,7 @@ export async function setSlack(ctx: Ctx, p: Principal, brandId: string, raw: unk
     );
     await audit(ctx.db, p, brandId, existing ? 'slack.address_changed' : 'slack.configured', 'brand', brandId, null, { kinds: input.kinds.length });
   } else {
-    if (!existing) throw badRequest('missing_address', 'Paste the webhook address from Slack');
+    if (!existing) throw badRequest('missing_address', msg('error.slack.pasteAddress'));
     await ctx.db.query('update slack_hook set kinds = $2 where brand_id = $1', [brandId, input.kinds]);
     await audit(ctx.db, p, brandId, 'slack.kinds_changed', 'brand', brandId, null, { kinds: input.kinds.length });
   }
@@ -117,10 +121,11 @@ export async function removeSlack(ctx: Ctx, p: Principal, brandId: string) {
 export async function testSlack(ctx: Ctx, p: Principal, brandId: string) {
   await authorize(ctx.db, p, brandId, 'brand.manage');
   const h = await ctx.db.one<{ url_sealed: Buffer }>('select url_sealed from slack_hook where brand_id = $1', [brandId]);
-  if (!h) throw badRequest('missing_address', 'Paste the webhook address from Slack first');
-  const brand = (await ctx.db.one<{ name: string }>('select name from brand where id = $1', [brandId]))!;
+  if (!h) throw badRequest('missing_address', msg('error.slack.pasteAddressFirst'));
+  const brand = (await ctx.db.one<{ name: string; locale: string }>('select name, locale from brand where id = $1', [brandId]))!;
   const url = sealer(ctx).open<string>(h.url_sealed, aad(brandId));
-  const r = await postTo(ctx, url, { text: `*${escapeSlack(brand.name)}* · This is a test message from the content studio. If you can read it, Slack is set up.` });
+  // In the brand's language, like everything posted to its channel.
+  const r = await postTo(ctx, url, { text: `*${escapeSlack(brand.name)}* · ${escapeSlack(t(localeOf(brand.locale), 'notify.slackTest'))}` });
   if (r.ok) {
     await ctx.db.query('update slack_hook set last_ok_at = $2, last_error = null, last_error_at = null, disabled_reason = null where brand_id = $1', [brandId, ctx.now()]);
     return { ok: true as const };
@@ -144,7 +149,7 @@ export async function sendPendingSlack(ctx: Ctx, limit = 200): Promise<number> {
   );
   return ctx.db.tx(async (db) => {
     const rows = await db.query(
-      `select n.id, n.brand_id, n.kind, n.payload, n.slack_tries, b.name as brand, p.title as piece_title
+      `select n.id, n.brand_id, n.kind, n.payload, n.slack_tries, b.name as brand, b.locale as brand_locale, p.title as piece_title
        from notification n join brand b on b.id = n.brand_id
        left join piece p on p.id = nullif(n.payload->>'pieceId', '')::uuid
        where n.slack_at is null and (n.slack_next_at is null or n.slack_next_at <= $2)
@@ -165,7 +170,7 @@ export async function sendPendingSlack(ctx: Ctx, limit = 200): Promise<number> {
         await db.query('update notification set slack_at = $2 where id = any($1)', [ids, ctx.now()]);
         continue;
       }
-      const msg = slackMessage(ctx.config.APP_URL, first.kind, first.payload, first.brand, first.piece_title);
+      const msg = slackMessage(localeOf(first.brand_locale), ctx.config.APP_URL, first.kind, first.payload, first.brand, first.piece_title);
       const r = await postTo(ctx, ctx.vault!.open<string>(hook.url_sealed, aad(first.brand_id)), msg);
       if (r.ok) {
         posted++;

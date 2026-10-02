@@ -103,9 +103,10 @@ them, and the prize dialog says so when a post's account lacks them.
    worker finds it while reading the comments of posts with a running rule every few minutes. Only top-level comments that contain the keyword and are not the account's own count.
    Meta only pushes a Page's events once the app is **subscribed to that Page** (`POST /{page-id}/subscribed_apps`, which needs
    `pages_manage_metadata`, one of the permissions asked for with prizes on). The studio subscribes when a Facebook Page (field `feed`) or an
-   Instagram account (field `comments`, through its Page) is connected with that permission, and again when a rule that answers by message
-   starts; it keeps the other account's fields when both share a Page, and takes its own away when the account is disconnected. The
-   account check (*Check* on the account) says whether Meta pushes its comments.
+   Instagram account (field `comments`, through its Page) is connected with that permission, when prizes are switched on for the brand
+   (every Meta account of the brand, at once), and again when a rule that answers by message starts; it keeps the other account's fields
+   when both share a Page, and takes its own away when the account is disconnected. The account check (*Check* on the account) says
+   whether Meta pushes its comments, and the account list carries the subscription (`details.events`: subscribed, fields, and why not).
 4. **The private reply**: sent by the app to the comment, within Meta's rules: one message per comment, within 7 days of it, and no more than 700 an hour
    per account (Meta's own cap is 750). The same person gets the same prize once, whichever post they commented on, even if two comments arrive at once
    (the database enforces it). If it cannot go yet it is retried with growing waits, never past the seven days.
@@ -216,8 +217,9 @@ each and the stand-ins changed to behave as documented, since they had shared th
 - **A 403** from X, LinkedIn or Pinterest marked the account for reconnection whatever it meant (see above).
 - **`check --capture`** wrote Bluesky's session tokens and most of each signed address into the transcript; secrets are now removed by their
   shape (any JWT, any key that names a credential, every query value of a signed address).
-- The browser run (`e2e/phase4.sh`) was **not** run again after these changes: the TikTok settings now come from the account (with one consent
-  sentence at a time), so its TikTok steps need the stand-in it starts to answer `creator_info`, and may need their expectations brought up to date.
+- The browser run (`e2e/phase4.sh`) was **not** run again after these changes. Its TikTok steps were brought up to date afterwards (the settings
+  come from TikTok through the options endpoint, only "Only me" before the audit, one consent sentence at a time), still without running it:
+  the web is being redesigned.
 
 ## Known limits
 

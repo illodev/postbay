@@ -1,6 +1,7 @@
+import { goneNote, noteOf } from '../notes.js';
 import { Readable } from 'node:stream';
 import { call } from '../http.js';
-import { validateAgainst } from '../validate.js';
+import { issue, validateAgainst } from '../validate.js';
 import {
   ConnectorError,
   type Account, type Capabilities, type CommonMetrics, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
@@ -94,6 +95,20 @@ interface AnalyticsReport {
 const TITLE_MAX = 100;
 const mainVideo = (input: PublishInput): MediaItem | undefined => input.media.find((m) => m.kind === 'video');
 const titleOf = (input: PublishInput) => String(typeof input.options.title === 'string' && input.options.title.trim() ? input.options.title : input.title).replace(/[<>]/g, '');
+
+/**
+ * When to look again at a video whose time has come but is not public yet, from how long ago its time was: 1, 2, 5 and 10 minutes,
+ * then every 15.
+ */
+export function graceRecheckSeconds(elapsedMs: number): number {
+  const steps = [60, 120, 300, 600];
+  let at = 0;
+  for (const s of steps) {
+    at += s;
+    if (elapsedMs < at * 1000) return s;
+  }
+  return 900;
+}
 
 export function createYouTube(client: GoogleClient, uploadUrl: (path: string) => string): Connector {
   /** Opens an upload session. YouTube answers with the address to send the bytes to, in the Location header. */
@@ -196,29 +211,20 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
     validate(input, account): Issue[] {
       const issues = validateAgainst(CAPS, input);
       if (titleOf(input).length > TITLE_MAX) {
-        issues.push({ severity: 'error', code: 'title.length', field: 'text', message: `The title has ${titleOf(input).length} characters; YouTube allows ${TITLE_MAX}. Shorten the piece title.` });
+        issues.push(issue('error', 'title.length', { count: String(titleOf(input).length), max: String(TITLE_MAX) }, 'text'));
       }
       const bytes = bytesOf(cleanDescription(input.text));
       if (bytes > DESCRIPTION_MAX_BYTES) {
-        issues.push({
-          severity: 'error', code: 'text.bytes', field: 'text',
-          message: `YouTube counts the description in bytes: this one takes ${bytes} of ${DESCRIPTION_MAX_BYTES} (accented letters take two, emoji four, and each < or > is sent as ‹ or ›, three). Shorten it.`,
-        });
+        issues.push(issue('error', 'text.bytes', { bytes: String(bytes), max: String(DESCRIPTION_MAX_BYTES) }, 'text'));
       }
       if (/[<>]/.test(input.text)) {
-        issues.push({ severity: 'warning', code: 'text.angle', field: 'text', message: 'YouTube does not allow < or > in a description: they will be sent as ‹ and ›.' });
+        issues.push(issue('warning', 'text.angle', {}, 'text'));
       }
       if (madeForKidsOf(input, account) === undefined) {
-        issues.push({
-          severity: 'warning', code: 'youtube.made_for_kids', field: 'placement',
-          message: "Nobody has said whether this video is made for kids. YouTube requires that declaration: choose it here (or set the channel's default in Settings → Accounts); otherwise YouTube applies the channel's own setting, and asks for it in YouTube Studio if there is none.",
-        });
+        issues.push(issue('warning', 'youtube.made_for_kids', {}, 'placement'));
       }
       if (account.providerData.audited !== true) {
-        issues.push({
-          severity: 'warning', code: 'youtube.unaudited', field: 'schedule',
-          message: "This YouTube project has not passed Google's compliance audit yet: the video will be uploaded as private, and a person has to make it public in YouTube Studio.",
-        });
+        issues.push(issue('warning', 'youtube.unaudited', {}, 'schedule'));
       }
       return issues;
     },
@@ -281,7 +287,7 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
         '/youtube/v3/videos', token, { part: 'status,processingDetails', id: externalId });
       const s = r.items?.[0]?.status;
       const url = `https://www.youtube.com/watch?v=${externalId}`;
-      if (!s) return { visibility: 'unknown', url, note: 'YouTube does not return this video any more' };
+      if (!s) return { visibility: 'unknown', url, ...goneNote('youtube', 'video') };
       if (s.uploadStatus === 'failed' || s.uploadStatus === 'rejected') {
         throw new ConnectorError('file_rejected', `YouTube refused the video (${s.rejectionReason ?? s.failureReason ?? s.uploadStatus})`, { detail: s });
       }
@@ -291,14 +297,18 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
       const publishAt = s.publishAt ? new Date(s.publishAt).getTime() : null;
       if (publishAt !== null && publishAt > env.now().getTime()) return { visibility: 'scheduled', url };
       // Past it, YouTube flips the video to public by itself, but not at the second: an audited project's video is given 45 minutes
-      // (looked at again every minute) before "still private" is taken as YouTube holding it back.
+      // before "still private" is taken as YouTube holding it back, looked at again after 1, 2, 5, 10 and then every 15 minutes
+      // (it usually takes a minute or two, and asking every minute for 45 minutes spends quota for nothing).
       const audited = account.providerData.audited === true;
       if (audited && publishAt !== null && env.now().getTime() - publishAt < PUBLISH_GRACE_MS) {
-        return { visibility: 'processing', url, note: 'Its time has come and YouTube has not made it public yet; it usually does within minutes' };
+        return {
+          visibility: 'processing', url, ...noteOf('pub.note.youtube.notPublicYet'),
+          retryAfterSec: graceRecheckSeconds(env.now().getTime() - publishAt),
+        };
       }
-      if (!audited) return { visibility: 'private', url, note: 'The video is private on YouTube, because the project has not passed its audit: a person has to make it public in YouTube Studio' };
-      if (publishAt === null) return { visibility: 'private', url, note: 'The video is private on YouTube: a person has to make it public in YouTube Studio' };
-      return { visibility: 'private', url, note: 'The video is still private on YouTube 45 minutes after its time: a person has to make it public in YouTube Studio' };
+      if (!audited) return { visibility: 'private', url, ...noteOf('pub.note.youtube.unaudited') };
+      if (publishAt === null) return { visibility: 'private', url, ...noteOf('pub.note.youtube.private') };
+      return { visibility: 'private', url, ...noteOf('pub.note.youtube.stillPrivate') };
     },
 
     async discard(_account, handle, env): Promise<void> {

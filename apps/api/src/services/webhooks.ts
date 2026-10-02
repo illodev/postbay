@@ -4,6 +4,7 @@ import { authorize, type Principal } from '../auth/principal.js';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
+import { msg } from '../i18n/index.js';
 import { checkUrl, PolicyError, post, type NetPolicy } from '../net.js';
 import { audit } from './audit.js';
 import { EVENT_DESCRIPTIONS, EVENT_TYPES, emit, materialize } from './events.js';
@@ -38,7 +39,7 @@ export const signBody = (secret: string, timestamp: number | string, body: strin
   createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
 
 function requireVault(ctx: Ctx) {
-  if (!ctx.vault) throw conflict('token_key_missing', 'Webhooks keep their secrets sealed, so the server needs TOKEN_KEY (openssl rand -base64 32)');
+  if (!ctx.vault) throw conflict('token_key_missing', msg('error.webhook.tokenKey'));
   return ctx.vault;
 }
 
@@ -87,7 +88,7 @@ export async function createWebhook(ctx: Ctx, p: Principal, brandId: string, raw
     await authorize(db, p, brandId, 'brand.manage');
     if (p.kind !== 'user') throw forbidden();
     const count = (await db.one<{ n: number }>('select count(*)::int as n from webhook where brand_id = $1', [brandId]))!.n;
-    if (count >= 20) throw conflict('too_many_webhooks', 'A brand can have at most 20 webhooks');
+    if (count >= 20) throw conflict('too_many_webhooks', msg('error.webhook.tooMany', { max: '20' }));
     const secret = newSecret();
     const id = (await db.one<{ id: string }>('select gen_random_uuid() as id'))!.id;
     const row = (await db.one(
@@ -146,7 +147,7 @@ export async function testWebhook(ctx: Ctx, p: Principal, webhookId: string) {
   return ctx.db.tx(async (db) => {
     const w = await loadWebhook(db, webhookId);
     await authorize(db, p, w.brand_id, 'brand.manage');
-    if (!w.active) throw conflict('webhook_disabled', 'This webhook is disabled: enable it first');
+    if (!w.active) throw conflict('webhook_disabled', msg('error.webhook.disabled'));
     const eventId = await emit(ctx, db, w.brand_id, 'ping', { message: 'This is a test from Studio. If you can read it, the webhook works.', webhook_id: webhookId }, { webhookId });
     const d = (await db.one<{ id: string }>('select id from webhook_delivery where webhook_id = $1 and event_id = $2', [webhookId, eventId]))!;
     return { deliveryId: d.id };
@@ -184,8 +185,8 @@ export async function redeliver(ctx: Ctx, p: Principal, deliveryId: string) {
     const d = await db.one(`select d.*, w.brand_id, w.active from webhook_delivery d join webhook w on w.id = d.webhook_id where d.id = $1 for update of d`, [deliveryId]);
     if (!d) throw notFound('Delivery');
     await authorize(db, p, d.brand_id, 'brand.manage');
-    if (d.status === 'pending') throw conflict('already_pending', 'This delivery is already waiting to be sent');
-    if (!d.active) throw conflict('webhook_disabled', 'This webhook is disabled: enable it first');
+    if (d.status === 'pending') throw conflict('already_pending', msg('error.webhook.alreadyPending'));
+    if (!d.active) throw conflict('webhook_disabled', msg('error.webhook.disabled'));
     const now = ctx.now();
     await db.query(
       `update webhook_delivery set status = 'pending', attempts = 0, next_attempt_at = $2, expires_at = $3, lease_until = null, last_error = null, delivered_at = null where id = $1`,
