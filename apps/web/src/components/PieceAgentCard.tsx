@@ -44,18 +44,20 @@ function Meter({ label, value, cap, fraction }: { label: string; value: string; 
           {cap !== null && <span className="pc-meter-cap"> / {cap}</span>}
         </span>
       </div>
-      <span className={`pc-bar ${full ? 'is-full' : 'is-agent'}`} aria-hidden="true">
-        <i style={{ width: `${Math.round(Math.min(1, fraction ?? 0) * 100)}%` }} />
-      </span>
+      {fraction !== null && (
+        <span className={`pc-bar ${full ? 'is-full' : 'is-agent'}`} aria-hidden="true">
+          <i style={{ width: `${Math.round(Math.min(1, fraction) * 100)}%` }} />
+        </span>
+      )}
     </div>
   );
 }
 
 /** The project the agent worked in during a run: its source, the branch and commit it left, whether that reached the remote. */
-function Project({ p }: { p: ProjectDetail }) {
+function Project({ p, pieceSource }: { p: ProjectDetail; pieceSource?: string | null }) {
   return (
     <div className="pc-proj">
-      {p.source && <code className="pc-proj-src" title={t('piece.agent.project.source')}>{p.source}</code>}
+      {p.source && p.source !== pieceSource && <code className="pc-proj-src" title={t('piece.agent.project.source')}>{p.source}</code>}
       <div className="pc-proj-line">
         {p.mode === 'dir' ? (
           <span className="pc-proj-item">{t('piece.agent.project.dir')}</span>
@@ -86,7 +88,7 @@ function Project({ p }: { p: ProjectDetail }) {
  * the piece has one), and whether a person has to step in. Hidden until the agent has done something with the piece, so brands
  * that do not use one never see it.
  */
-export function PieceAgentCard({ pieceId, zone, className }: { pieceId: string; zone?: string; className?: string }) {
+export function PieceAgentCard({ pieceId, source, zone, className }: { pieceId: string; /** The piece's own project source: a run's is only said when it was another. */ source?: string | null; zone?: string; className?: string }) {
   const { can, brand } = useSession();
   const qc = useQueryClient();
   const toast = useToast();
@@ -171,7 +173,7 @@ export function PieceAgentCard({ pieceId, zone, className }: { pieceId: string; 
               </div>
               {r.notes && r.outcome !== 'blocked' && <p className="pc-run-notes" title={r.notes}>{r.notes}</p>}
               {r.detail?.checks?.summary?.length ? <p className="pc-run-notes is-checks">{t('piece.agent.checks', { summary: r.detail.checks.summary.join('; ') })}</p> : null}
-              {project && <Project p={project} />}
+              {project && <Project p={project} pieceSource={source} />}
             </li>
           );
         })}

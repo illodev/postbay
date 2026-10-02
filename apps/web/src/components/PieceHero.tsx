@@ -230,7 +230,7 @@ const duration = (ms: number) => {
 };
 
 /** What the stage shows, and the line its corner says about it ("0:47", "6 imágenes", "PDF · 12 págs."). */
-function useStage(version: VersionSummary, detail: VersionDetail | undefined, format: string, reviewTo: string): { node: ReactNode; corner: string | null } {
+function useStage(version: VersionSummary, detail: VersionDetail | undefined, format: string, reviewTo: string): { node: ReactNode; corner: string | null; timecode?: boolean } {
   const stable = useStableUrls();
   const [pages, setPages] = useState<{ id: string; n: number } | null>(null);
   const poster = thumbUrl(version.id, 960);
@@ -260,6 +260,7 @@ function useStage(version: VersionSummary, detail: VersionDetail | undefined, fo
     return {
       node: <StageVideo key={version.id} src={stable(one.id, one.url)} poster={cover ? stable(cover.id, cover.url) : poster} label={t('piece.hero.videoOf', { n: version.number })} />,
       corner: one.duration_ms ? duration(one.duration_ms) : null,
+      timecode: true,
     };
   }
   return { node: <div className="pc-media"><img className="pc-media-img" src={stable(one.id, one.url)} alt="" /></div>, corner: null };
@@ -493,11 +494,11 @@ export function PieceStage(p: HeroProps) {
                 <Icon name="bubble" />{comments}
               </Link>
             )}
-            {stage.corner && <span className="pc-ov pc-ov-br">{stage.corner}</span>}
+            {stage.corner && <span className={`pc-ov pc-ov-br ${stage.timecode ? 'is-tc' : ''}`}>{stage.corner}</span>}
           </>
         )}
       </div>
-      {variant && variant.versions.length > 0 && version && <Filmstrip variant={variant} selected={version.id} onSelect={p.onVersion} />}
+      {variant && variant.versions.length > 1 && version && <Filmstrip variant={variant} selected={version.id} onSelect={p.onVersion} />}
     </section>
   );
 }
@@ -510,16 +511,17 @@ export function PieceFacts(p: HeroProps) {
   const { piece, variants, detail, campaigns, canEdit, zone } = p;
   const { variant, version, comments, reviewTo } = shown(p);
   const patch = usePatchPiece(piece.id);
-  const total = variants.reduce((n, v) => n + v.versions.length, 0);
   const campaign = campaigns?.find((c) => c.id === piece.campaign_id);
   const approvals = (detail && version && detail.id === version.id ? detail.approvals : []).filter((a) => a.decision === 'approve' && a.matches_fingerprint);
   const [editingDate, setEditingDate] = useState(false);
+  const state = piece.discarded_at ? 'discarded' : piece.review_state;
+  const approverNames = approvals.map((a) => displayName(a.approver.includes('@') ? null : a.approver, a.approver.includes('@') ? a.approver : null));
   return (
-    <aside className="pc-info" aria-label={t('piece.hero.facts')}>
+    <section className="pc-info" aria-label={t('piece.hero.facts')}>
       <div className="pc-info-top">
-        <Chip state={piece.discarded_at ? 'discarded' : piece.review_state} />
-        {piece.ai_generated && <span className="tag pc-ai" title={t('piece.aiHint')}><Icon name="sparkle" />{t('common.ai')}</span>}
-        <span className="pc-kind">{tMaybe(`kind.${piece.kind}`, piece.kind)}</span>
+        <span className={`chip chip-solid chip-${state}`}>{STATE_LABEL[state] ?? state}</span>
+        <span className="pc-meta">{tMaybe(`kind.${piece.kind}`, piece.kind)}</span>
+        {piece.ai_generated && <span className="pc-meta" title={t('piece.aiHint')}><Icon name="sparkle" />{t('piece.aiLabel')}</span>}
       </div>
       <h1 className="pc-title">
         <InlineText
@@ -535,19 +537,17 @@ export function PieceFacts(p: HeroProps) {
       <dl className="pc-fields">
         <FieldRow label={t('piece.fields.campaign')} icon="folder">
           {canEdit ? (
-            <span className="pc-select-wrap">
-              <select
-                className="pc-inline-select"
-                aria-label={t('piece.fields.campaign')}
-                title={t('piece.inline.edit', { what: t('piece.fields.campaign') })}
-                value={piece.campaign_id ?? ''}
-                disabled={patch.isPending || !campaigns}
-                onChange={(e) => patch.mutate({ campaignId: e.target.value || null })}
-              >
-                <option value="">{t('piece.fields.noCampaign')}</option>
-                {campaigns?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </span>
+            <select
+              className="pc-inline-select"
+              aria-label={t('piece.fields.campaign')}
+              title={t('piece.inline.edit', { what: t('piece.fields.campaign') })}
+              value={piece.campaign_id ?? ''}
+              disabled={patch.isPending || !campaigns}
+              onChange={(e) => patch.mutate({ campaignId: e.target.value || null })}
+            >
+              <option value="">{t('piece.fields.noCampaign')}</option>
+              {campaigns?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
           ) : campaign ? (
             <Link to={`/pieces?campaign=${campaign.id}`} className="pc-field-link">{campaign.name}</Link>
           ) : (
@@ -583,11 +583,7 @@ export function PieceFacts(p: HeroProps) {
             </button>
           ) : piece.target_date ? fmtDay(piece.target_date) : <span className="pc-empty-val">{t('piece.fields.noDate')}</span>}
         </FieldRow>
-        <FieldRow
-          stacked
-          icon="branch"
-          label={<>{t('piece.fields.source')}<Tip text={t('piece.fields.sourceHint')} label={t('piece.fields.sourceWhat')} /></>}
-        >
+        <FieldRow stacked icon="branch" label={<>{t('piece.fields.source')}<Tip text={t('piece.fields.sourceHint')} label={t('piece.fields.sourceWhat')} /></>}>
           <InlineText
             value={piece.source ?? ''}
             canEdit={canEdit}
@@ -596,12 +592,9 @@ export function PieceFacts(p: HeroProps) {
             placeholder={t('piece.fields.sourcePlaceholder')}
             maxLength={500}
             emptyLabel={canEdit ? t('piece.fields.addSource') : t('piece.fields.noSource')}
-            display={piece.source ? <code className="pc-source">{piece.source}</code> : undefined}
+            display={piece.source ? <code className="pc-source" title={piece.source}>{piece.source}</code> : undefined}
             onSave={(source) => patch.mutateAsync({ source: source || null })}
           />
-        </FieldRow>
-        <FieldRow label={t('piece.fields.variants')} icon="pieces">
-          <span>{variants.length}<span className="pc-dot-sep"> · </span>{t('piece.fields.versionCount', { count: total })}</span>
         </FieldRow>
       </dl>
 
@@ -612,37 +605,31 @@ export function PieceFacts(p: HeroProps) {
             <span className="pc-ver-variant" title={variantName(variant)}>{variantName(variant)}</span>
             <Chip state={version.review_state} />
           </div>
-          <div className="pc-ver-by">
-            {version.by_agent ? <Avatar agent size={20} title={version.author ?? undefined} /> : <Avatar name={authorName(version)} size={20} />}
-            <span className={version.by_agent ? 'pc-agent-name' : 'pc-person-name'} title={version.author ?? undefined}>{authorName(version)}</span>
+          <div className="pc-ver-meta">
+            {version.by_agent ? <Avatar agent size={16} title={version.author ?? undefined} /> : <Avatar name={authorName(version)} size={16} />}
+            <span className={version.by_agent ? 'pc-agent-name' : undefined} title={version.author ?? undefined}>{authorName(version)}</span>
             <span className="pc-dot-sep" aria-hidden="true">·</span>
             <time dateTime={version.created_at} title={fmtDateTime(version.created_at, zone)}>{ago(version.created_at)}</time>
+            {comments > 0 && (
+              <>
+                <span className="pc-dot-sep" aria-hidden="true">·</span>
+                <Link to={reviewTo} className="pc-meta-link" title={t('piece.openComments', { count: comments })}><Icon name="bubble" />{comments}</Link>
+              </>
+            )}
           </div>
-          {version.notes && (
-            <div className="pc-ver-notes">
-              <span className="pc-ver-notes-h">{t('piece.hero.whatChanged', { n: version.number })}</span>
-              <p title={version.notes}>{version.notes}</p>
+          {version.notes && <p className="pc-ver-notes" title={version.notes}>{version.notes}</p>}
+          {approvals.length > 0 && (
+            <div className="pc-ver-meta" title={approverNames.join(', ')}>
+              <span className="avatars">{approvals.slice(0, 3).map((a, i) => <Avatar key={a.id} name={approverNames[i]} size={16} />)}</span>
+              <span>{t('piece.hero.approvedBy', { names: approverNames.join(', ') })}</span>
             </div>
           )}
-          {(comments > 0 || approvals.length > 0) && (
-            <div className="pc-ver-stats">
-              {comments > 0 && (
-                <Link to={reviewTo} className="pc-ver-stat is-comments"><Icon name="bubble" />{t('piece.openComments', { count: comments })}</Link>
-              )}
-              {approvals.length > 0 && (
-                <span className="pc-ver-stat is-approved" title={approvals.map((a) => displayName(a.approver.includes('@') ? null : a.approver, a.approver.includes('@') ? a.approver : null)).join(', ')}>
-                  <span className="avatars">{approvals.slice(0, 3).map((a) => <Avatar key={a.id} name={a.approver} size={18} />)}</span>
-                  {t('piece.hero.approvedBy', { count: approvals.length })}
-                </span>
-              )}
-            </div>
-          )}
-          <Link to={reviewTo} className="btn pc-ver-review" title={t('piece.reviewHint', { n: version.number, variant: variantName(variant) })}>
+          <Link to={reviewTo} className="btn btn-block pc-ver-review" title={t('piece.reviewHint', { n: version.number, variant: variantName(variant) })}>
             {t('piece.reviewN', { n: version.number })}
             <Icon name="arrowRight" />
           </Link>
         </div>
       )}
-    </aside>
+    </section>
   );
 }

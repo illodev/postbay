@@ -11,7 +11,7 @@ import { PieceAgentCard } from '../components/PieceAgentCard';
 import { ago, authorName, formatHint, formatName, PieceFacts, PieceStage, variantName } from '../components/PieceHero';
 import { PublicationList } from '../components/publications';
 import { UploadDialog } from '../components/UploadDialog';
-import { Chip, Dialog, Empty, ErrorBox, Field, Skeleton, SkeletonText, useToast } from '../components/ui';
+import { Chip, Dialog, Empty, ErrorBox, errorMessage, Field, Skeleton, SkeletonText, Switch, useConfirm, useToast } from '../components/ui';
 import { t, type Key } from '../i18n';
 import { fmtDateTime, fmtShort, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -48,7 +48,6 @@ function AddVariant({ pieceId, kind, onClose }: { pieceId: string; kind: string;
   return (
     <Dialog title={t('piece.addVariant.title')} onClose={onClose}>
       <form className="stack" onSubmit={(e) => { e.preventDefault(); add.mutate(); }}>
-        <p className="muted pc-lead">{t('piece.addVariant.intro')}</p>
         <fieldset className="pc-formats">
           <legend className="field-label">{t('piece.addVariant.format')}</legend>
           <div className="pc-format-grid">
@@ -101,7 +100,7 @@ function EditPiece({ piece, campaigns, onClose }: { piece: FullPiece; campaigns:
         <Field label={t('piece.edit.fieldTitle')}>
           <input type="text" required maxLength={200} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
         </Field>
-        <Field label={t('piece.edit.brief')} hint={t('piece.edit.briefHint')}>
+        <Field label={t('piece.edit.brief')}>
           <textarea rows={9} value={form.brief} onChange={(e) => setForm({ ...form, brief: e.target.value })} />
         </Field>
         <div className="pc-edit-row">
@@ -118,10 +117,7 @@ function EditPiece({ piece, campaigns, onClose }: { piece: FullPiece; campaigns:
         <Field label={t('piece.fields.source')} hint={t('piece.edit.sourceHint')}>
           <input type="text" className="pc-mono-input" maxLength={500} value={form.source} placeholder={t('piece.fields.sourcePlaceholder')} onChange={(e) => setForm({ ...form, source: e.target.value })} />
         </Field>
-        <label className="check">
-          <input type="checkbox" checked={form.aiGenerated} onChange={(e) => setForm({ ...form, aiGenerated: e.target.checked })} />
-          <span>{t('piece.edit.ai')}<br /><span className="muted small">{t('piece.edit.aiHint')}</span></span>
-        </label>
+        <Switch label={t('piece.edit.ai')} checked={form.aiGenerated} onChange={(aiGenerated) => setForm({ ...form, aiGenerated })} />
         {save.error && <ErrorBox error={save.error} />}
         <div className="row pc-dialog-foot">
           <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
@@ -150,7 +146,6 @@ function MoveToCampaign({ piece, campaigns, onClose }: { piece: FullPiece; campa
   return (
     <Dialog title={t('piece.move.title')} onClose={onClose}>
       <form className="stack" onSubmit={(e) => { e.preventDefault(); move.mutate(); }}>
-        <p className="muted pc-lead">{t('piece.move.intro', { title: piece.title })}</p>
         <div className="pc-choices" role="radiogroup" aria-label={t('piece.fields.campaign')}>
           {options.map((c) => (
             <label key={c.id || 'none'} className="pc-choice" data-on={chosen === c.id || undefined}>
@@ -172,34 +167,37 @@ function MoveToCampaign({ piece, campaigns, onClose }: { piece: FullPiece; campa
   );
 }
 
-function DiscardPiece({ piece, onClose }: { piece: FullPiece; onClose: () => void }) {
+/** Discarding asks first, in the app's confirm dialog: it cannot be undone and it cancels what is scheduled. */
+function useDiscard(piece: FullPiece | undefined) {
+  const ask = useConfirm();
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
-  const pending = piece.publications.filter((p) => PENDING.includes(p.status)).length;
-  const discard = useMutation({
-    mutationFn: () => api.post(`/api/pieces/${piece.id}/discard`),
-    onSuccess: () => {
+  return async () => {
+    if (!piece) return;
+    const pending = piece.publications.filter((p) => PENDING.includes(p.status)).length;
+    const ok = await ask({
+      title: t('piece.discard.title'),
+      text: (
+        <>
+          <p>{t('piece.discard.body', { title: piece.title })}</p>
+          {pending > 0 && <p><strong>{t('piece.discard.cancels', { count: pending })}</strong></p>}
+        </>
+      ),
+      confirmLabel: t('piece.discard.submit'),
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.post(`/api/pieces/${piece.id}/discard`);
       qc.invalidateQueries({ queryKey: ['pieces'] });
       qc.invalidateQueries({ queryKey: ['piece', piece.id] });
       toast(t('piece.discard.done'));
       navigate('/pieces');
-    },
-  });
-  return (
-    <Dialog title={t('piece.discard.title')} onClose={onClose}>
-      <div className="stack">
-        <p>{t('piece.discard.body', { title: piece.title })}</p>
-        {pending > 0 && <div className="notice notice-warn">{t('piece.discard.cancels', { count: pending })}</div>}
-        <p className="muted small">{t('piece.discard.final')}</p>
-        {discard.error && <ErrorBox error={discard.error} />}
-        <div className="row pc-dialog-foot">
-          <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
-          <button type="button" className="btn btn-danger" disabled={discard.isPending} onClick={() => discard.mutate()}>{t('piece.discard.submit')}</button>
-        </div>
-      </div>
-    </Dialog>
-  );
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    }
+  };
 }
 
 // ───────────────────────────── brief ─────────────────────────────
@@ -354,31 +352,38 @@ function VariantRow({ variant, current, canUpload, onUpload, onShow }: {
         {latest?.by_agent && <span className="pc-vthumb-agent" aria-hidden="true"><Icon name="bot" /></span>}
       </button>
       <div className="pc-vrow-name">
-        <span className="pc-vrow-title">
-          <span className="pc-ftag">{formatName(variant.format)}</span>
-          <span className="pc-vrow-style" title={variant.style || formatHint(variant.format)}>{variant.style || formatHint(variant.format)}</span>
+        <span className="pc-vrow-style" title={name}>{variant.style || formatHint(variant.format)}</span>
+        <span className="pc-vrow-meta">
+          <span>{formatName(variant.format)}</span>
+          {latest ? (
+            <>
+              <span className="pc-dot-sep" aria-hidden="true">·</span>
+              <span className="pc-vrow-num">v{latest.number}</span>
+              <span className="pc-dot-sep" aria-hidden="true">·</span>
+              {latest.by_agent ? <Avatar agent size={16} /> : <Avatar name={authorName(latest)} size={16} />}
+              <span className={`pc-vrow-who ${latest.by_agent ? 'pc-agent-name' : ''}`}>{authorName(latest)}</span>
+              <span className="pc-dot-sep" aria-hidden="true">·</span>
+              <time dateTime={latest.created_at} title={fmtShort(latest.created_at)}>{ago(latest.created_at)}</time>
+            </>
+          ) : (
+            <>
+              <span className="pc-dot-sep" aria-hidden="true">·</span>
+              <span>{t('piece.variant.empty')}</span>
+            </>
+          )}
         </span>
-        {latest ? (
-          <span className="pc-vrow-by">
-            <span className={`pc-vnum ${latest.by_agent ? 'is-agent' : ''}`}>v{latest.number}</span>
-            {latest.by_agent ? <Avatar agent size={16} /> : <Avatar name={authorName(latest)} size={16} />}
-            <span className={`pc-vrow-who ${latest.by_agent ? 'pc-agent-name' : ''}`}>{authorName(latest)}</span>
-            <span className="pc-dot-sep" aria-hidden="true">·</span>
-            <time dateTime={latest.created_at} title={fmtShort(latest.created_at)}>{ago(latest.created_at)}</time>
-          </span>
-        ) : (
-          <span className="pc-vrow-by pc-empty-val">{canUpload ? t('piece.noVersionsUpload') : t('piece.noVersions')}</span>
-        )}
       </div>
-      <span className="pc-vrow-state">{latest ? <Chip state={latest.review_state} /> : <Chip state="draft" label={t('piece.variant.empty')} />}</span>
-      <span className="pc-vrow-comments">
-        {open > 0 && latest ? (
-          <Link to={`/review/${latest.id}`} className="pc-ccount" title={t('piece.openComments', { count: open })} aria-label={t('piece.openComments', { count: open })}>
-            <Icon name="bubble" />{open}
-          </Link>
-        ) : (
-          <span className="pc-ccount is-zero" title={t('piece.noOpenComments')}><Icon name="bubble" />0</span>
-        )}
+      <span className="pc-vrow-status">
+        <span className="pc-vrow-state">{latest && <Chip state={latest.review_state} />}</span>
+        <span className="pc-vrow-comments">
+          {open > 0 && latest ? (
+            <Link to={`/review/${latest.id}`} className="pc-ccount" title={t('piece.openComments', { count: open })} aria-label={t('piece.openComments', { count: open })}>
+              <Icon name="bubble" />{open}
+            </Link>
+          ) : (
+            <span className="pc-ccount is-zero" title={t('piece.noOpenComments')} aria-label={t('piece.noOpenComments')}><Icon name="bubble" />0</span>
+          )}
+        </span>
       </span>
       <span className="pc-vrow-act">
         {latest ? (
@@ -459,11 +464,11 @@ export function PiecePage() {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(false);
   const [moving, setMoving] = useState(false);
-  const [discarding, setDiscarding] = useState(false);
   const [uploadFor, setUploadFor] = useState<string | null>(null);
   const [heroVariant, setHeroVariant] = useState<string | null>(null);
   const [heroVersion, setHeroVersion] = useState<string | null>(null);
   const { data: piece, error, isLoading } = useQuery({ queryKey: ['piece', pieceId], queryFn: () => api.get<FullPiece>(`/api/pieces/${pieceId}`) });
+  const discard = useDiscard(piece);
   const { data: settings } = useQuery({ queryKey: ['brand', brand.id], queryFn: () => api.get<BrandSettings>(`/api/brands/${brand.id}`) });
   const { data: campaigns } = useQuery({
     queryKey: ['campaigns', piece?.brand_id],
@@ -522,7 +527,7 @@ export function PiecePage() {
         { label: t('piece.menu.move'), icon: 'folder', hint: t('piece.menu.moveHint'), onSelect: () => setMoving(true) },
         ...(canUpload ? [{ label: t('piece.addVariant.button'), icon: 'plus' as const, hint: t('piece.addVariant.hint'), onSelect: () => setAdding(true) }] : []),
         { sep: true },
-        { label: t('piece.menu.discard'), icon: 'trash', danger: true, hint: t('piece.menu.discardHint'), onSelect: () => setDiscarding(true) },
+        { label: t('piece.menu.discard'), icon: 'trash', danger: true, hint: t('piece.menu.discardHint'), onSelect: () => void discard() },
       ]
     : [];
 
@@ -620,7 +625,7 @@ export function PiecePage() {
         </div>
         <div className="pc-col-side">
           {heroProps && <PieceFacts {...heroProps} />}
-          <PieceAgentCard pieceId={piece.id} zone={zone} className="pc-o-agent" />
+          <PieceAgentCard pieceId={piece.id} source={piece.source} zone={zone} className="pc-o-agent" />
           <PieceActivity piece={piece} zone={zone} className="pc-o-activity" />
         </div>
       </div>
@@ -628,7 +633,6 @@ export function PiecePage() {
       {adding && <AddVariant pieceId={piece.id} kind={piece.kind} onClose={() => setAdding(false)} />}
       {editing && <EditPiece piece={piece} campaigns={campaigns} onClose={() => setEditing(false)} />}
       {moving && <MoveToCampaign piece={piece} campaigns={campaigns} onClose={() => setMoving(false)} />}
-      {discarding && <DiscardPiece piece={piece} onClose={() => setDiscarding(false)} />}
       {uploading && <UploadDialog variant={uploading} variants={piece.variants} onClose={() => setUploadFor(null)} />}
     </>
   );

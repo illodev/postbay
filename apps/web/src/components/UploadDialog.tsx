@@ -413,7 +413,6 @@ export function UploadDialog({ variant, variants, latestVersionId, onClose }: {
           <span className="pc-step-n" aria-hidden="true">{nFiles + 1}</span>
           <div className="pc-step-body">
             <h3><label htmlFor="pc-up-notes">{t('piece.upload.step.notes')}</label></h3>
-            <p className="pc-step-hint">{t('piece.upload.notesHint')}</p>
             <textarea id="pc-up-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={busy} placeholder={t('piece.upload.notesPlaceholder')} />
             {open && open.length > 0 && (
               <fieldset className="pc-fixes">
@@ -436,7 +435,6 @@ export function UploadDialog({ variant, variants, latestVersionId, onClose }: {
                     );
                   })}
                 </ul>
-                <p className="pc-fixes-note">{t('piece.upload.fixesNote')}</p>
               </fieldset>
             )}
           </div>
