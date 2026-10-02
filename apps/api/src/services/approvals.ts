@@ -157,6 +157,8 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
       if (valid.length >= rules.required_approvals) {
         await setVersionState(db, versionId, 'in_review', 'approved');
         state = 'approved';
+        // That it was approved, and when, outlives its state: a newer version makes this one "superseded", approved or not.
+        await db.query('insert into version_approved (version_id, piece_id, approved_at) values ($1,$2,$3) on conflict do nothing', [versionId, version.piece_id, ctx.now()]);
       }
     }
     await refreshPieceState(db, version.piece_id);
