@@ -218,6 +218,7 @@ See [`.env.example`](.env.example). The ones that matter:
 | `TOKEN_KEY` | 32 bytes in base64 (`openssl rand -base64 32`). Seals network tokens and webhook secrets; required once Meta or Google is set, and for any webhook. **Keep a copy: losing it means connecting every account and replacing every webhook secret** |
 | `WEBHOOK_ALLOW_PRIVATE_NETWORKS` | Whether webhooks may point at loopback and private addresses. Default: yes in development, no in production |
 | `META_APP_ID`, `META_APP_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | The developer apps ([setup in docs/phase-2.md](docs/phase-2.md#setting-up-the-networks)). Without them accounts stay manual |
+| `META_LOGIN_CONFIG_ID` (and `META_LOGIN_CONFIG_ID_PRIZES`) | With Facebook Login for Business: the login configuration the sign-in dialog uses instead of a list of permissions (the second one for brands with prizes) ([docs/phase-2.md](docs/phase-2.md#meta-facebook-and-instagram)) |
 | `THREADS_*`, `TIKTOK_*`, `LINKEDIN_*` (and `LINKEDIN_VERSION`), `X_*`, `PINTEREST_*` | The other networks' apps ([setup in docs/phase-4.md](docs/phase-4.md#setting-up-the-networks)). Each switches on with its credentials; Bluesky needs only `TOKEN_KEY` |
 | `SECOND_FACTOR_REQUIRED`, `EMAIL_LINK_LOGIN` | Whether admins and approvers must give an authenticator code (default: yes in production), and whether the emailed link still signs people in ([docs/phase-5.md](docs/phase-5.md#signing-in)) |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_ALLOWED_DOMAINS` (and `OIDC_LABEL`, `OIDC_SECOND_FACTOR`, `OIDC_TRUST_EMAIL`) | Single sign-on. The allowed domains are required |
@@ -256,7 +257,8 @@ uploads and readiness checks. See [e2e/README.md](e2e/README.md).
 Caddy for automatic TLS on the app and the media domain. The web server runs with `RUN_WORKERS=false`; the worker is the
 same image running `worker-main`. It has not been run in the environment this was built in (no Docker daemon there); the
 Compose file validates, and the application it starts is the one the end-to-end tests exercise. The media domain has to
-be reachable from the internet, because Meta downloads the files it publishes from it.
+be reachable from the internet, because Meta downloads the files it publishes from it. With `STORAGE_DRIVER=s3` the addresses handed to
+the networks are the bucket's (`S3_PUBLIC_ENDPOINT`, or `S3_ENDPOINT`), so that is the domain to verify with TikTok for photo posts.
 
 ## Not yet
 
