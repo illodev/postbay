@@ -60,7 +60,7 @@ export function SubtitlePanel({ versionId, threads, canAnnotate, firstVideoPosit
     <section className="rv-subs" aria-label={t('review.subs.title')}>
       <header className="rv-subs-head">
         <h2>{t('review.subs.title')}</h2>
-        <span className="muted small mono">{t('review.subs.lines', { count: cues.length })}</span>
+        <span className="rv-meta-n">{t('review.subs.lines', { count: cues.length })}</span>
         <span className="grow" />
         {tracks.length > 1 && (
           <select

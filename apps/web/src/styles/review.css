@@ -8,8 +8,10 @@
 
 /* The review is the panels: no page padding or page panel, no sidebar, no phone bar (it has its own header). */
 .page:has(> .rv) { max-width: none; padding: 0; }
-.shell:has(.rv) { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
-.shell:has(.rv) > .sidebar { display: none; }
+@media (min-width: 860.02px) {
+  .shell:has(.rv) { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
+  .shell:has(.rv) > .sidebar { display: none; }
+}
 .content:has(.rv) { background: transparent; margin-left: 0; }
 
 .rv {
@@ -596,7 +598,8 @@ a.rv-vr:hover { background: var(--control); color: var(--text); text-decoration:
   .rv-ctl .rv-zone, .rv-ctl .rv-speed, .rv-ctl .rv-help, .rv-ctl .rv-ic-comment { display: none; }
   .rv-tools { left: 8px; }
   .rv-tile { width: 34px; height: 42px; }
-  .rv-side { border-radius: 0; background: var(--bg); }
+  .rv-side { border-radius: 0; background: var(--bg); overflow: visible; }
+  .rv-tools:not(.on) { display: none; }
   .rv-tabs { margin: 12px 12px 0; }
   .rv-scroll { overflow: visible; padding: 4px 12px 12px; }
   .rv .rv-thread { scroll-margin-top: calc(var(--rv-stick, 0px) + 12px); scroll-margin-bottom: 140px; }
@@ -616,3 +619,5 @@ a.rv-vr:hover { background: var(--control); color: var(--text); text-decoration:
   .rv-thread:hover .rv-th-act { opacity: 0; }
   .rv-thread.focus .rv-th-act, .rv-th-act.on { opacity: 1; }
 }
+/* the agent's mark in a stack of people: opaque, so the face behind it does not show through */
+.rv .rv-people .avatar-agent { background: color-mix(in srgb, var(--agent) 20%, var(--bg)); }

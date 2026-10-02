@@ -395,7 +395,8 @@ export function CommentsPanel({ versionId, threads, numbers, me, draft, onDraft,
   sketch: Shape[];
   tool: Tool | null;
   onTool?: (t: Tool | null) => void;
-  onPosted: () => void;
+  /** A comment was posted: it becomes the one in focus. */
+  onPosted: (id?: string) => void;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -418,12 +419,12 @@ export function CommentsPanel({ versionId, threads, numbers, me, draft, onDraft,
   const atMoment = !draft && video && anchorMode === 'moment';
 
   const post = useMutation({
-    mutationFn: (anchor: Anchor | null) => api.post(`/api/versions/${versionId}/comments`, { body, anchor, peopleOnly }),
-    onSuccess: () => {
+    mutationFn: (anchor: Anchor | null) => api.post<{ id: string }>(`/api/versions/${versionId}/comments`, { body, anchor, peopleOnly }),
+    onSuccess: (row) => {
       setBody('');
       setPeopleOnly(false);
       onClearDraft();
-      onPosted();
+      onPosted(row?.id);
       qc.invalidateQueries({ queryKey: ['comments', versionId] });
       qc.invalidateQueries({ queryKey: ['version', versionId] });
       qc.invalidateQueries({ queryKey: ['piece'] });

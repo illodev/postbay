@@ -560,8 +560,7 @@ function Details({ v }: { v: VersionDetail }) {
       </section>
       <section className="rv-block">
         <div className="row-between"><h3>{t('review.details.fingerprint')}</h3><CopyButton text={v.fingerprint} /></div>
-        <span className="mono rv-hash">{v.fingerprint}</span>
-        <p className="muted small">{t('review.details.fingerprintHint')}</p>
+        <span className="mono rv-hash" title={t('review.details.fingerprintHint')}>{v.fingerprint}</span>
       </section>
       <section className="rv-block">
         <h3>{t('review.details.files')}</h3>
@@ -834,7 +833,7 @@ function Review({ versionId }: { versionId: string }) {
               sketch={sketch}
               tool={tool}
               onTool={canAnnotate && !compareId ? setTool : undefined}
-              onPosted={() => { setSketch([]); setTool(null); sketchOwnsDraft.current = false; }}
+              onPosted={(id) => { setSketch([]); setTool(null); sketchOwnsDraft.current = false; setFocus(id ?? null); }}
             />
           ) : shownTab === 'subtitles' ? (
             <div className="rv-scroll rv-subs-tab">
