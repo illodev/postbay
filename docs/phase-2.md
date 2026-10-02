@@ -45,13 +45,16 @@ Facebook Pages and YouTube.
    that would stop it. An error blocks the button; a warning does not. The person can always choose "I will publish this
    one by hand".
 4. **Prepare** (the brand's lead time before the hour, 30 minutes by default). The worker converts the file if the
-   network would not take it as it is (a cached ffmpeg copy; a file that already fits goes out untouched), hands it to the
+   network would not take it as it is (a cached ffmpeg copy; a file that already fits goes out untouched; see
+   [Files](#files-what-fits-and-what-is-converted)), hands it to the
    network and gets back what the network needs to publish: an Instagram container, a Facebook post held by the Page, a
    YouTube video already uploaded. Facebook and YouTube hold the post themselves until the hour (native scheduling), so
    those go out even if this app is down at that moment.
 5. **Publish** at the hour. Instagram has no native scheduling, which is why its container is made shortly before.
 6. **Verify.** The worker asks the network whether the post is really there and public, and records the link.
-   Verification repeats for a while when the answer is "processing" or "private".
+   Verification repeats for a while when the answer is "processing" or "private". A scheduled YouTube video is made public
+   by YouTube a little after its time, not at that second: an audited channel's video still private just after its hour is
+   looked at every minute for 45 minutes before it is called private.
 
 Every step is a row in `publication_attempt` with what the network answered. The piece page has a *History* button.
 
@@ -101,6 +104,20 @@ tolerance, because that is the end of a send that began on time. If nothing was 
 team is told the send was interrupted and to check the network. Trying a failed post again keeps that record, so a post the
 network already has is not made twice.
 
+### Files: what fits and what is converted
+
+Every file is read by its own first bytes, not by its name or the type it was declared with, and ffprobe and ffmpeg are told
+which reader to use and that they may only read that file (`-f`, `-format_whitelist`, `-protocol_whitelist`): a playlist
+uploaded as "video/mp4" is not opened as a playlist, and nothing inside a file can make them fetch an address. Only MP4/MOV,
+Matroska/WebM, JPEG, PNG, WebP and GIF are read.
+
+A video fits a network's profile when it is really an MP4 (an H.264 MOV is not, though ffprobe names both the same family),
+its index (the moov atom) comes before the media (Instagram and Threads read the file as it downloads and refuse one with the
+index at the end), it is H.264/AAC in yuv420p, within the size, bitrate and frame-rate range (Instagram, Threads and TikTok
+23–60 fps; Facebook Reels 24–60). When only the container, the index or the sound is wrong, the picture is copied and the file
+rewritten as an MP4 with its index at the front, which is quick and loses nothing; otherwise it is encoded again. A picture
+fits when it is a plain JPEG: a PNG named .jpg, and an MPO (two pictures in one file, as some phones save), are converted.
+
 ### YouTube until Google audits the project
 
 Videos uploaded through the API by a project that has not passed Google's audit are forced to **private**, whatever is
@@ -129,10 +146,16 @@ use their current documentation for anything that disagrees. Register the redire
 ### Meta (Facebook and Instagram)
 
 1. Create an app of type *Business* at developers.facebook.com and add *Facebook Login for Business* (or Facebook Login)
-   and the *Instagram* publishing product.
+   and the *Instagram* publishing product. **With Facebook Login for Business**, create a *configuration* (user access token,
+   with the permissions below and the Pages and Instagram accounts as assets) and set its id as `META_LOGIN_CONFIG_ID`: the
+   sign-in dialog is then given `config_id` instead of a list of permissions, which Login for Business ignores (and without
+   which it may share no Pages at all). A brand with prizes needs the messaging permissions too: a second configuration that
+   has them goes in `META_LOGIN_CONFIG_ID_PRIZES` (without it the first one is used for every brand). With plain Facebook
+   Login, leave both unset and the permissions are asked for by name.
 2. The Instagram account must be a *professional* account (Business or Creator) **linked to a Facebook Page**. The person
    who connects must have a role on that Page.
-3. Permissions the app asks for: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`,
+3. Permissions the app asks for: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `pages_manage_engagement` (to post
+   the first comment as the Page; a refusal is said in the post's history), `instagram_basic`,
    `instagram_content_publish`, `instagram_manage_comments`, `business_management`.
 4. While the app is in *development mode*, only people with a role on the app can connect, which is enough to publish to
    your own accounts and to test everything below. Going live for other people's accounts requires Meta's app review and
@@ -180,7 +203,7 @@ use their current documentation for anything that disagrees. Register the redire
   sent with it are the ones the version was approved with (the label is also sent if it was added later), not whatever the
   piece says at the time. A post a network is already holding is covered by the hold
   that a new version triggers, which takes it down.
-- **A file that fits the network's profile goes out untouched.** Only files that do not fit are converted, and the
+- **A file that fits the network's profile goes out untouched** (what "fits" means is in [Files](#files-what-fits-and-what-is-converted)). Only files that do not fit are converted, and the
   copy is cached per file and profile, and the files themselves cannot change after a version exists (database trigger).
 - **Scheduling asks the same question the worker will ask later.** The schedule dialog and the scheduling endpoint run
   the connector's validator, and the worker runs it again before preparing, so a rule changing in between is caught
@@ -214,11 +237,35 @@ use their current documentation for anything that disagrees. Register the redire
   change: when an account was reconnected, a post waiting on it still sat out its 10-minute timer (reconnecting now wakes
   it at once); and the worker did not re-check the approval before sending (it now does, below).
 
+## Corrections after the connector review (October 2026)
+
+A review of the connectors against the networks' current reference pages (read on 2026-10-01 and 02, **still not against the live
+services**) found these, now fixed, each with a test and the stand-ins changed to answer as the reference says:
+
+- **Instagram.** `is_ai_generated` *is* in the IG User Media reference ("a self-disclosure of AI usage in the post. Not available for
+  carousel children"): it is sent on a Reel, a feed photo and a carousel, never on a carousel's items. A container is asked about at
+  most once a minute, as Meta recommends, for five looks, then every five minutes. A Story video runs 3 to 60 seconds (the minimum was
+  1). A video in a carousel is held to a Reel's 3 s to 15 min, with a warning past 60 seconds, because the reference gives no length.
+- **Files.** Containers, the index at the front, frame-rate minimums, MPO pictures and a restricted ffmpeg: see
+  [Files](#files-what-fits-and-what-is-converted).
+- **Facebook.** The first comment needs `pages_manage_engagement`, which was not asked for (it is now, and a refusal is in the
+  post's history). Photos of a scheduled album are uploaded with `temporary=true`, as Meta requires for photos used in a scheduled post.
+  A video's numbers come from its own insights (`total_video_views`, `total_video_impressions_unique`, `total_video_avg_time_watched`)
+  and a Reel's from a Reel's (`fb_reels_total_plays`, `post_impressions_unique`, `post_video_avg_time_watched`,
+  `post_video_social_actions`); the Video node has no `shares` field, which made every reading of a video fail. Facebook Login for
+  Business signs in with `config_id` (`META_LOGIN_CONFIG_ID`, above). The webhooks need the app subscribed to each Page: see
+  [phase 4](phase-4.md#prizes-for-commenting).
+- **YouTube.** The description may not contain `<` or `>` (each is sent as ‹ or ›) and is limited to 5,000 **bytes**: scheduling refuses
+  more, counted the way YouTube counts. "Made for kids" was always declared as *no* without asking anyone: the schedule dialog now asks
+  (nothing chosen), starting from the channel's default when one is set (`PATCH /api/brands/:brandId/accounts/:accountId` with
+  `{ "madeForKids": true | false | null }`; there is no screen for it yet), and a video nobody declared is sent without a declaration so
+  YouTube applies the channel's own setting. A scheduled video still private just after its hour is given 45 minutes to go public.
+
 ## Known limits
 
 - **No real network was contacted.** Endpoint paths, parameter names, response shapes, error codes, limits and the way
   the networks classify errors come from the documentation as I know it, and from the specification. The riskiest
-  parts, in my order of doubt: the Facebook Reels three-phase upload, Instagram's AI-label parameter, the exact error
+  parts, in my order of doubt: the Facebook Reels three-phase upload, the exact error
   codes mapped to each failure class, the Graph API version (`META_GRAPH_VERSION`, v23.0 by default), and the numeric
   limits in `connectors/profiles.ts` and each connector's capabilities (marked for re-verification in the code).
 - **A lost answer is only found again as well as each connector can.** Finishing an interrupted send relies on what the

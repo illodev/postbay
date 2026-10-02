@@ -164,7 +164,18 @@ describe('LinkedIn: publishing', () => {
     const prep = await prepareUntilDone(li(), inp, acc, e);
     const pub = await li().publish(inp, acc, prep.handle, e);
     expect(fake.comments).toEqual([{ post: pub.externalId, text: 'More on our site' }]);
-    expect(fake.callsTo(/\/rest\/socialActions\//)[0]!.body.actor).toBe('urn:li:organization:5001');
+    const sent = fake.callsTo(/\/rest\/socialActions\//)[0]!.body;
+    expect(sent).toMatchObject({ actor: 'urn:li:organization:5001', object: pub.externalId, message: { text: 'More on our site' } });
+    expect(e.saved.at(-1)!.firstCommentError).toBeUndefined();
+  });
+
+  it("tells a missing permission from a lost connection: only a token LinkedIn no longer takes asks for a reconnection", async () => {
+    fake.fail((c) => c.path === '/rest/posts', { status: 403, serviceErrorCode: 100, code: 'ACCESS_DENIED', message: 'Not enough permissions to access: partnerApiPostsExternal.CREATE.20260401' }, 403);
+    const e = env('tok', files);
+    const inp = input({ placement: 'image', media: [image()] });
+    const prep = await prepareUntilDone(li(), inp, acc, e);
+    const err = await expectError(li().publish(inp, acc, prep.handle, e), 'unsupported');
+    expect(err.message).toContain('still one of its admins');
   });
 
   it('never posts twice when a step is repeated after a crash', async () => {

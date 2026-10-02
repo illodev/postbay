@@ -7,7 +7,7 @@ import { sha256Hex } from '../crypto.js';
 import type { Row } from '../db.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { audit } from './audit.js';
-import { connectorEnv, loadConnectorAccount } from './connectors.js';
+import { connectorEnv, loadConnectorAccount, subscribeEvents } from './connectors.js';
 
 /**
  * Prizes for commenting. A post carries a rule: whoever comments the keyword gets the prize, as a private message with a link
@@ -205,6 +205,18 @@ const hasMessaging = (pub: Row) => ((pub.granted_permissions as string[] | null)
 
 export async function setRule(ctx: Ctx, p: Principal, publicationId: string, raw: unknown) {
   const input = ruleInput.parse(raw);
+  const view = await saveRule(ctx, p, publicationId, input);
+  // A running rule that answers by private message relies on Meta pushing the comments: make sure the app is subscribed to the
+  // account's events (the worker still reads them every few minutes, so this is best effort).
+  if (input.active && view.mode === 'private_reply') {
+    const acc = await ctx.db.one(
+      `select a.id, a.provider_data from publication p join social_account a on a.id = p.social_account_id where p.id = $1`, [publicationId]);
+    if (acc && acc.provider_data?.events?.subscribed !== true) await subscribeEvents(ctx, acc.id);
+  }
+  return view;
+}
+
+async function saveRule(ctx: Ctx, p: Principal, publicationId: string, input: z.infer<typeof ruleInput>) {
   return ctx.db.tx(async (db) => {
     await db.query('select 1 from publication where id = $1 for update', [publicationId]);
     const pub = await loadPublication(db, publicationId);

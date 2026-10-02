@@ -79,11 +79,24 @@ describe('Facebook numbers', () => {
     expect(m.common).toEqual({ views: 900, likes: 41, comments: 6, shares: 3 });
   });
 
-  it('asks about a video or a Reel as a video, and converts its average watch time', async () => {
+  it("asks a video for a video's figures, without the shares a Video node does not have", async () => {
     meta.posts.set('v-9', { page: '111', kind: 'video', params: { published: 'true' }, comments: [] });
-    const m = await set.connector('facebook')!.fetchMetrics!(fb, 'v-9', { objectType: 'video' }, env('page-token-111'), post('reel'));
-    expect(meta.callsTo(/v-9\/video_insights/)[0]!.query.metric).toBe('total_video_views,total_video_avg_time_watched');
-    expect(m.common).toEqual({ views: 700, likes: 41, comments: 6, shares: 3, avgWatchSeconds: 8.2 });
+    const m = await set.connector('facebook')!.fetchMetrics!(fb, 'v-9', { objectType: 'video' }, env('page-token-111'), post('video'));
+    expect(meta.callsTo(/v-9\/video_insights/)[0]!.query.metric).toBe('total_video_views,total_video_impressions_unique,total_video_avg_time_watched');
+    expect(meta.callsTo(/^v-9$/)[0]!.query.fields).not.toMatch(/shares|reactions/);
+    expect(m.common).toEqual({ views: 700, reach: 650, likes: 30, comments: 6, avgWatchSeconds: 8.2 });
+  });
+
+  it("asks a Reel for a Reel's own figures: plays, people reached, average watch, and shares from its social actions", async () => {
+    meta.posts.set('v-10', { page: '111', kind: 'video', params: { published: 'true' }, comments: [] });
+    meta.reels.set('v-10', { page: '111', processingPolls: 0 });
+    const m = await set.connector('facebook')!.fetchMetrics!(fb, 'v-10', { objectType: 'video' }, env('page-token-111'), post('reel'));
+    expect(meta.callsTo(/v-10\/video_insights/)[0]!.query.metric).toBe('fb_reels_total_plays,post_impressions_unique,post_video_avg_time_watched,post_video_social_actions');
+    expect(m.common).toEqual({ views: 1500, reach: 1100, likes: 30, comments: 6, shares: 9, avgWatchSeconds: 5.4 });
+    // The way it was asked before (a video's metrics of a Reel, and shares on the Video node) is what Meta refuses.
+    const asked = async (path: string) => (await fetch(`${meta.url}/v23.0/${path}&access_token=page-token-111`)).json() as Promise<{ error?: { message: string } }>;
+    expect((await asked('v-10/video_insights?metric=total_video_views')).error?.message).toContain('valid insights metric');
+    expect((await asked('v-10?fields=shares')).error?.message).toContain('nonexisting field (shares)');
   });
 });
 

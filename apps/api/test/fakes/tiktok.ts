@@ -19,6 +19,10 @@ export class FakeTikTok extends FakeServer {
   audited = false;
   privacyOptions = ['SELF_ONLY', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'PUBLIC_TO_EVERYONE'];
   maxDurationSec = 600;
+  /** What the creator has switched off in TikTok, as creator_info reports it. */
+  creator = { commentDisabled: false, duetDisabled: false, stitchDisabled: false };
+  /** What every token is granted: what the app asks for. */
+  grantedScopes = ['user.info.basic', 'video.publish', 'video.upload', 'video.list'];
   /** Photos are only downloaded from addresses that start with this. */
   verifiedDomain = 'https://media.test';
   posts = new Map<string, { id: string; kind: 'video' | 'photo'; info: any; source: any; received: { start: number; end: number }[]; size: number; polls: number; complete: boolean }>();
@@ -33,7 +37,7 @@ export class FakeTikTok extends FakeServer {
     const refresh = `trefresh-${this.tokenSeq}`;
     this.accessTokens.add(access);
     this.refreshTokens.add(refresh);
-    return { open_id: this.user.open_id, scope: 'user.info.basic,video.publish,video.upload,video.list', access_token: access, expires_in: 86400, refresh_token: refresh, refresh_expires_in: 31536000, token_type: 'Bearer', grant };
+    return { open_id: this.user.open_id, scope: this.grantedScopes.join(','), access_token: access, expires_in: 86400, refresh_token: refresh, refresh_expires_in: 31536000, token_type: 'Bearer', grant };
   }
 
   async handle(c: Call, req: FastifyRequest, reply: FastifyReply) {
@@ -80,9 +84,25 @@ export class FakeTikTok extends FakeServer {
       return bad(401, 'access_token_invalid', 'The access token is invalid or not found in the request.');
     }
 
-    if (c.path === '/v2/user/info/') return ok({ user: this.user });
+    if (c.path === '/v2/user/info/') {
+      // Each field belongs to a scope; asking for one the token was not granted refuses the whole call, as TikTok does.
+      const scopeOf: Record<string, string> = {
+        open_id: 'user.info.basic', union_id: 'user.info.basic', avatar_url: 'user.info.basic', avatar_url_100: 'user.info.basic', avatar_large_url: 'user.info.basic', display_name: 'user.info.basic',
+        bio_description: 'user.info.profile', profile_deep_link: 'user.info.profile', is_verified: 'user.info.profile', username: 'user.info.profile',
+        follower_count: 'user.info.stats', following_count: 'user.info.stats', likes_count: 'user.info.stats', video_count: 'user.info.stats',
+      };
+      const fields = String(c.query.fields ?? '').split(',').filter(Boolean);
+      const missing = fields.find((f) => !this.grantedScopes.includes(scopeOf[f] ?? '\0'));
+      if (missing) return bad(401, 'scope_not_authorized', 'The user did not authorize the scope required for completing this request.');
+      const all: Record<string, unknown> = { ...this.user, union_id: `union-${this.user.open_id}`, avatar_url: 'https://p16.tiktokcdn.test/a.jpeg' };
+      return ok({ user: Object.fromEntries(fields.map((f) => [f, all[f]])) });
+    }
     if (c.path === '/v2/post/publish/creator_info/query/') {
-      return ok({ creator_username: this.user.username, creator_nickname: this.user.display_name, privacy_level_options: this.privacyOptions, comment_disabled: false, duet_disabled: false, stitch_disabled: false, max_video_post_duration_sec: this.maxDurationSec });
+      if (!this.grantedScopes.includes('video.publish')) return bad(401, 'scope_not_authorized', 'The user did not authorize the scope required for completing this request.');
+      return ok({
+        creator_avatar_url: 'https://p16.tiktokcdn.test/a.jpeg', creator_username: this.user.username, creator_nickname: this.user.display_name, privacy_level_options: this.privacyOptions,
+        comment_disabled: this.creator.commentDisabled, duet_disabled: this.creator.duetDisabled, stitch_disabled: this.creator.stitchDisabled, max_video_post_duration_sec: this.maxDurationSec,
+      });
     }
 
     const checkInfo = (info: any) => {

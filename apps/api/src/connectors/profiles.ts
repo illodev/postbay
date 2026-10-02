@@ -16,8 +16,15 @@ export interface VideoProfile {
   maxWidth: number;
   maxHeight: number;
   maxFps: number;
+  /** Below this frame rate the network refuses the video (Instagram and Threads: 23, Facebook Reels: 24); 0 when it says nothing. */
+  minFps: number;
   maxVideoKbps: number;
   maxBytes: number;
+  /**
+   * The index (moov) has to come before the media. Networks that download the file from an address and read it as it arrives
+   * (Instagram and Threads say so outright) refuse one whose index is at the end. A copy only rewrites the container for this.
+   */
+  faststart: boolean;
 }
 
 export interface ImageProfile {
@@ -32,23 +39,24 @@ export type FileProfile = VideoProfile | ImageProfile;
 
 const MB = 1024 * 1024;
 
-const video = (id: string, maxWidth: number, maxHeight: number, maxFps: number, maxVideoKbps: number, maxBytes: number): VideoProfile => ({
-  kind: 'video', id, container: 'mp4', videoCodec: 'h264', audioCodec: 'aac', pixFmt: 'yuv420p', maxWidth, maxHeight, maxFps, maxVideoKbps, maxBytes,
+const video = (id: string, maxWidth: number, maxHeight: number, maxFps: number, maxVideoKbps: number, maxBytes: number, minFps = 0): VideoProfile => ({
+  kind: 'video', id, container: 'mp4', videoCodec: 'h264', audioCodec: 'aac', pixFmt: 'yuv420p', maxWidth, maxHeight, maxFps, minFps, maxVideoKbps, maxBytes, faststart: true,
 });
 
 export const PROFILES: Record<string, FileProfile> = {
-  'ig-reel': video('ig-reel', 1080, 1920, 60, 25_000, 300 * MB),
-  'ig-story-video': video('ig-story-video', 1080, 1920, 60, 25_000, 100 * MB),
+  // Instagram (Reels, Stories, carousel videos): 23 to 60 fps, the index at the front, Reels up to 300 MB and Stories up to 100 MB.
+  'ig-reel': video('ig-reel', 1080, 1920, 60, 25_000, 300 * MB, 23),
+  'ig-story-video': video('ig-story-video', 1080, 1920, 60, 25_000, 100 * MB, 23),
   'ig-feed-image': { kind: 'image', id: 'ig-feed-image', format: 'jpeg', maxWidth: 1440, maxBytes: 8 * MB },
   'ig-story-image': { kind: 'image', id: 'ig-story-image', format: 'jpeg', maxWidth: 1080, maxBytes: 8 * MB },
   'fb-video': video('fb-video', 1920, 1920, 60, 25_000, 1024 * MB),
-  'fb-reel': video('fb-reel', 1080, 1920, 60, 25_000, 1024 * MB),
+  'fb-reel': video('fb-reel', 1080, 1920, 60, 25_000, 1024 * MB, 24),
   'fb-photo': { kind: 'image', id: 'fb-photo', format: 'jpeg', maxWidth: 2048, maxBytes: 10 * MB },
   'yt-video': video('yt-video', 3840, 2160, 60, 50_000, 8 * 1024 * MB),
   // Phase 4. As above, every figure is the networks' public guidance as the specification recorded it: check before relying on it.
-  'th-video': video('th-video', 1080, 1920, 60, 25_000, 1024 * MB),
+  'th-video': video('th-video', 1080, 1920, 60, 25_000, 1024 * MB, 23),
   'th-image': { kind: 'image', id: 'th-image', format: 'jpeg', maxWidth: 1440, maxBytes: 8 * MB },
-  'tt-video': video('tt-video', 1080, 1920, 60, 25_000, 4 * 1024 * MB),
+  'tt-video': video('tt-video', 1080, 1920, 60, 25_000, 4 * 1024 * MB, 23),
   'tt-photo': { kind: 'image', id: 'tt-photo', format: 'jpeg', maxWidth: 1080, maxBytes: 20 * MB },
   'li-video': video('li-video', 1920, 1920, 60, 30_000, 5 * 1024 * MB),
   'li-image': { kind: 'image', id: 'li-image', format: 'jpeg', maxWidth: 4096, maxBytes: 8 * MB },

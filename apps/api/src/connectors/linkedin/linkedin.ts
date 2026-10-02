@@ -209,8 +209,9 @@ export function createLinkedIn(client: LinkedInClient): Connector {
 
       if (input.firstComment && !h.commentId && !h.firstCommentError) {
         try {
+          // The Comments API wants the post it is on as `object`, as well as who writes it and what.
           const r = await client.request(`/rest/socialActions/${urn(h.postUrn as string)}/comments`, token, {
-            method: 'POST', json: { actor: owner, message: { text: input.firstComment } },
+            method: 'POST', json: { actor: owner, object: h.postUrn, message: { text: input.firstComment } },
           });
           h = { ...h, commentId: r.body?.['$URN'] ?? r.body?.id ?? true };
         } catch (err) {

@@ -6,7 +6,10 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PROFILES, profileOf, type ImageProfile, type VideoProfile } from '../src/connectors/profiles.js';
 import { ConnectorError } from '../src/connectors/types.js';
-import { videoArgs } from '../src/media/ffmpeg.js';
+import { createServer } from 'node:http';
+import { writeFileSync } from 'node:fs';
+import { createMedia, videoArgs } from '../src/media/ffmpeg.js';
+import { sniff } from '../src/media/sniff.js';
 import { fileFor, imageMismatches, videoMismatches } from '../src/services/renditions.js';
 import { LocalStorage } from '../src/storage/index.js';
 import { createEnv, type Env } from './helpers.js';
@@ -64,6 +67,33 @@ describe('deciding whether a file fits', () => {
   });
   it('every profile named by a connector exists', () => {
     for (const id of ['ig-reel', 'ig-story-video', 'ig-feed-image', 'ig-story-image', 'fb-video', 'fb-reel', 'fb-photo', 'yt-video']) expect(PROFILES[id]).toBeDefined();
+  });
+  it('tells a MOV from an MP4, and wants the index at the front and a frame rate inside the range', () => {
+    expect(videoMismatches({ ...fits, container: 'mov', mp4: false }, 1000, ig).join(' ')).toMatch(/QuickTime \(MOV\), not MP4/);
+    expect(videoMismatches({ ...fits, container: 'mp4', faststart: false }, 1000, ig).join(' ')).toMatch(/index .* at the end/);
+    expect(videoMismatches({ ...fits, container: 'mp4', faststart: true, fps: 15 }, 1000, ig).join(' ')).toMatch(/below 23 fps/);
+    expect(videoMismatches({ ...fits, container: 'mp4', faststart: true, fps: 23.976 }, 1000, ig)).toEqual([]);
+    // A network that says nothing about a minimum takes a slow video as it is.
+    expect(videoMismatches({ ...fits, container: 'mp4', faststart: true, fps: 15 }, 1000, profileOf('yt-video') as VideoProfile)).toEqual([]);
+  });
+  it('holds images to what the file is, not what it was declared as', () => {
+    const p = profileOf('ig-feed-image') as ImageProfile;
+    const jpeg = { width: 1080, height: 1350, durationMs: null, fps: null, container: 'jpeg' as const };
+    expect(imageMismatches(jpeg, 'image/png', 100_000, p)).toEqual([]);
+    expect(imageMismatches({ ...jpeg, container: 'png' }, 'image/jpeg', 100_000, p)).toEqual(['it is not a JPEG']);
+    expect(imageMismatches({ ...jpeg, mpo: true }, 'image/jpeg', 100_000, p).join(' ')).toMatch(/Multi-Picture Object/);
+  });
+  it('copies the picture when only the container or the index is wrong, and encodes it when the picture itself does not fit', () => {
+    const fitting = { ...fits, container: 'mov' as const, mp4: false };
+    const copy = videoArgs('in.mov', 'out.mp4', ig, fitting, ['-f', 'mov']).join(' ');
+    expect(copy).toContain('-c:v copy');
+    expect(copy).toContain('-c:a copy');
+    expect(copy).toContain('-movflags +faststart -f mp4 out.mp4');
+    expect(copy.indexOf('-f mov')).toBeLessThan(copy.indexOf('-i in.mov'));
+    expect(videoArgs('in.mov', 'out.mp4', ig, { ...fitting, audioCodec: 'pcm_s16le' }).join(' ')).toMatch(/-c:v copy .*-c:a aac/);
+    const slow = videoArgs('in.mp4', 'out.mp4', ig, { ...fits, fps: 15 }).join(' ');
+    expect(slow).toContain('-c:v libx264');
+    expect(slow).toContain('-r 23');
   });
   it('asks ffmpeg to shrink, never enlarge, keep the shape and cap the frame rate', () => {
     const args = videoArgs('in.webm', 'out.mp4', ig, { width: 2160, height: 3840, durationMs: 1, fps: 100 }).join(' ');
@@ -132,6 +162,101 @@ describe('making a copy that fits, with the real ffmpeg', () => {
     const jpg = ffmpeg([...lavfi('testsrc2=size=1080x1350'), '-frames:v', '1', '-q:v', '3'], 'ok.jpg');
     const a2 = await assetOf('ok.jpg', 'image/jpeg', 'image', jpg, 'post', '4:5');
     expect(await fileFor(env.ctx, brand(), a2, profileOf('ig-feed-image'))).toMatchObject({ transcoded: false, key: a2.storage_key });
+  });
+
+  it('rewrites an H.264 MOV as an MP4 with its index at the front, copying the picture instead of encoding it again', async () => {
+    const data = ffmpeg([...lavfi('testsrc2=size=540x960:rate=30'), ...sine, '-t', '1', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', '-f', 'mov'], 'phone.mov');
+    // Declared as an MP4, which is what a browser may well say: the bytes decide.
+    const asset = await assetOf('phone.mov', 'video/mp4', 'video', data);
+    expect(asset.meta).toMatchObject({ container: 'mov', mp4: false });
+    const f = await fileFor(env.ctx, brand(), asset, profileOf('li-video'));
+    expect(f).toMatchObject({ transcoded: true, mime: 'video/mp4' });
+    expect(f.reasons).toEqual(['the container is QuickTime (MOV), not MP4', 'its index (the moov atom) is at the end of the file, not at the front']);
+    const out = await probe(f.key);
+    expect(out).toMatchObject({ container: 'mp4', faststart: true, videoCodec: 'h264', audioCodec: 'aac', width: 540, height: 960 });
+    // Copied, not encoded: the same number of bytes of picture, give or take the container.
+    expect(Math.abs(f.bytes - data.length)).toBeLessThan(data.length * 0.1);
+  });
+
+  it('moves the index of an MP4 to the front for the networks that download it, and speeds up a slow video for Instagram', async () => {
+    const late = ffmpeg([...lavfi('testsrc2=size=540x960:rate=30'), '-t', '1', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p'], 'late.mp4');
+    const a1 = await assetOf('late.mp4', 'video/mp4', 'video', late);
+    expect(a1.meta).toMatchObject({ container: 'mp4', faststart: false });
+    const f1 = await fileFor(env.ctx, brand(), a1, profileOf('ig-reel'));
+    expect(f1.reasons.join(' ')).toMatch(/index .* at the end/);
+    expect(await probe(f1.key)).toMatchObject({ faststart: true, container: 'mp4' });
+
+    const slow = ffmpeg([...lavfi('testsrc2=size=540x960:rate=15'), '-t', '1', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'], 'slow.mp4');
+    const a2 = await assetOf('slow.mp4', 'video/mp4', 'video', slow);
+    const f2 = await fileFor(env.ctx, brand(), a2, profileOf('ig-reel'));
+    expect(f2.reasons).toEqual(['it runs below 23 fps']);
+    expect((await probe(f2.key)).fps).toBeGreaterThanOrEqual(23);
+  });
+
+  it('turns an MPO that says it is a JPEG into a plain JPEG for Instagram', async () => {
+    const jpg = ffmpeg([...lavfi('testsrc2=size=1080x1350'), '-frames:v', '1', '-q:v', '3'], 'plain.jpg');
+    // A Multi-Picture Object: an APP2 "MPF" segment at the front, and a second picture after the first.
+    const app2 = Buffer.concat([Buffer.from([0xff, 0xe2, 0x00, 0x0a]), Buffer.from('MPF\0', 'latin1'), Buffer.from([0x4d, 0x4d, 0x00, 0x2a])]);
+    const mpo = Buffer.concat([jpg.subarray(0, 2), app2, jpg.subarray(2), jpg]);
+    const asset = await assetOf('camera.jpg', 'image/jpeg', 'image', mpo, 'post', '4:5');
+    expect(asset.meta).toMatchObject({ container: 'jpeg', mpo: true });
+    const f = await fileFor(env.ctx, brand(), asset, profileOf('ig-feed-image'));
+    expect(f).toMatchObject({ transcoded: true, mime: 'image/jpeg' });
+    expect(f.reasons.join(' ')).toMatch(/Multi-Picture Object/);
+    expect((await sniff((env.ctx.storage as LocalStorage).localPath(f.key)))).toEqual({ container: 'jpeg', mpo: false });
+  });
+
+  it('measures a file in S3 by its signed address: reads only the first bytes to tell what it is, then lets ffprobe read it over http', async () => {
+    const data = ffmpeg([...lavfi('testsrc2=size=360x640:rate=30'), '-t', '1', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p'], 'remote.mp4');
+    const ranges: string[] = [];
+    const server = createServer((req, res) => {
+      const m = /^bytes=(\d+)-(\d+)$/.exec(String(req.headers.range ?? ''));
+      ranges.push(String(req.headers.range ?? 'none'));
+      if (m && req.url?.includes('honour')) {
+        const [a, b] = [Number(m[1]), Math.min(Number(m[2]), data.length - 1)];
+        res.writeHead(206, { 'content-range': `bytes ${a}-${b}/${data.length}`, 'content-length': String(b - a + 1) });
+        res.end(data.subarray(a, b + 1));
+        return;
+      }
+      res.writeHead(200, { 'content-length': String(data.length) });
+      res.end(data);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as { port: number }).port;
+    try {
+      for (const variant of ['honour', 'ignore']) {
+        const url = `http://127.0.0.1:${port}/${variant}/remote.mp4?X-Amz-Signature=abc`;
+        expect(await sniff(url)).toEqual({ container: 'mp4', faststart: false });
+        expect(await createMedia().probe(url)).toMatchObject({ container: 'mp4', faststart: false, videoCodec: 'h264', width: 360, height: 640 });
+      }
+      expect(ranges.some((r) => r.startsWith('bytes=0-'))).toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('never lets a playlist pretend to be a video make ffprobe or ffmpeg fetch anything', async () => {
+    let fetched = 0;
+    const server = createServer((_req, res) => { fetched++; res.end('x'); });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const playlist = Buffer.from(`#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nhttp://127.0.0.1:${port}/seg.ts\n#EXT-X-ENDLIST\n`);
+      for (const name of ['clip.m3u8', 'clip.mp4']) {
+        const file = path.join(dir, name);
+        writeFileSync(file, playlist);
+        const media = createMedia();
+        expect(await media.probe(file)).toMatchObject({ width: null, height: null, durationMs: null });
+        expect(await media.frame(file, 0)).toBeNull();
+        await expect(media.transcode(file, path.join(dir, `${name}.out.mp4`), profileOf('ig-reel'), { width: null, height: null, durationMs: null, fps: null })).rejects.toThrow(/not converted/);
+      }
+      // Uploaded as a video: the version closes with nothing measured, and no copy can be made of it.
+      const asset = await assetOf('clip.m3u8', 'video/mp4', 'video', playlist);
+      await expect(fileFor(env.ctx, brand(), asset, profileOf('ig-reel'))).rejects.toMatchObject({ errorClass: 'file_rejected' });
+      expect(fetched).toBe(0);
+    } finally {
+      server.close();
+    }
   });
 
   it('says a file is unusable when ffmpeg cannot read it, as a rejection that will not be retried', async () => {

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
+import { createMetaOAuth } from '../src/connectors/meta/oauth.js';
 import { createConnectorSet } from '../src/connectors/registry.js';
 import { ConnectorError, type Account, type Connector, type ConnectorEnv, type Handle, type MediaItem, type PublishInput } from '../src/connectors/types.js';
 import { FakeGoogle } from './fakes/google.js';
@@ -37,6 +38,7 @@ beforeEach(() => {
   google.audited = false;
   google.videos.clear();
   google.rejection = null;
+  google.publishDelayMs = 0;
 });
 
 // ───────────────────────────── helpers ─────────────────────────────
@@ -97,6 +99,19 @@ describe('Meta sign-in', () => {
     expect(withPrizes.searchParams.get('scope')).toContain('pages_messaging');
   });
 
+  it('signs in with a Facebook Login for Business configuration when one is set, instead of a list of permissions', () => {
+    const oauth = createMetaOAuth({ graphUrl: meta.url, oauthUrl: meta.url, version: 'v23.0', appId: 'app', appSecret: 'secret', loginConfigId: 'cfg-1', loginConfigIdPrizes: 'cfg-2' });
+    const u = new URL(oauth.authorizeUrl!('st', redirect));
+    expect(u.searchParams.get('config_id')).toBe('cfg-1');
+    expect(u.searchParams.get('scope')).toBeNull();
+    expect(u.searchParams.get('response_type')).toBe('code');
+    expect(new URL(oauth.authorizeUrl!('st', redirect, { prizes: true })).searchParams.get('config_id')).toBe('cfg-2');
+    const one = createMetaOAuth({ graphUrl: meta.url, oauthUrl: meta.url, version: 'v23.0', appId: 'app', appSecret: 'secret', loginConfigId: 'cfg-1' });
+    expect(new URL(one.authorizeUrl!('st', redirect, { prizes: true })).searchParams.get('config_id')).toBe('cfg-1');
+    // Without one, the permissions are listed, the Page's comment permission among them.
+    expect(new URL(set.provider('meta')!.authorizeUrl!('st', redirect)).searchParams.get('scope')).toContain('pages_manage_engagement');
+  });
+
   it('turns one sign-in into a Facebook Page and its Instagram account, with a token that does not expire', async () => {
     const found = await set.provider('meta')!.exchange!('code-1', redirect);
     expect(found.map((c) => [c.network, c.externalId, c.displayName])).toEqual([
@@ -115,10 +130,11 @@ describe('Meta sign-in', () => {
     meta.grantedScopes = ['pages_show_list', 'pages_read_engagement', 'instagram_basic'];
     try {
       const found = await set.provider('meta')!.exchange!('code-2', redirect);
-      expect(found[0]!.providerData.missingScopes).toEqual(['pages_manage_posts']);
+      // pages_manage_engagement is what the Page's first comment needs.
+      expect(found[0]!.providerData.missingScopes).toEqual(['pages_manage_posts', 'pages_manage_engagement']);
       expect(found[1]!.providerData.missingScopes).toEqual(['instagram_content_publish']);
     } finally {
-      meta.grantedScopes = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'instagram_basic', 'instagram_content_publish'];
+      meta.grantedScopes = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'pages_manage_engagement', 'instagram_basic', 'instagram_content_publish'];
     }
   });
 
@@ -146,7 +162,7 @@ describe('Instagram', () => {
     const inp = input({ firstComment: 'Link in bio', aiGenerated: true, media: [media(), media({ kind: 'cover', name: 'c.jpg', mime: 'image/jpeg', url: 'https://media.test/cover.jpg' })] });
     let r = await ig().prepare(inp, igAccount, {}, en);
     expect(r.done).toBe(false); // the container is still processing
-    expect(r.retryAfterSec).toBeGreaterThan(0);
+    expect(r.retryAfterSec).toBe(60); // Meta: ask about a container no more than once a minute
     r = await ig().prepare(inp, igAccount, r.handle, en);
     expect(r.done).toBe(true);
 
@@ -203,6 +219,31 @@ describe('Instagram', () => {
     expect(creates[1]!.body.media_type).toBe('VIDEO');
     expect(creates[3]!.body).toMatchObject({ media_type: 'CAROUSEL' });
     expect(creates[3]!.body.children!.split(',')).toHaveLength(3);
+  });
+
+  it('asks about a container once a minute for five looks, then every five minutes', async () => {
+    const en = e();
+    meta.processingPolls = 8;
+    let h: Handle = {};
+    const waits: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const r = await ig().prepare(input(), igAccount, h, en);
+      h = r.handle;
+      if (r.done) break;
+      waits.push(r.retryAfterSec!);
+    }
+    expect(waits).toEqual([60, 60, 60, 60, 60, 300, 300, 300]);
+    expect(meta.callsTo(/^c-\d+$/)).toHaveLength(9); // one look per call, never a burst
+  });
+
+  it('discloses AI use on the carousel itself, never on its items', async () => {
+    const en = e();
+    const inp = input({ placement: 'carousel', aiGenerated: true, media: [media({ kind: 'image', position: 0, mime: 'image/jpeg' }), media({ kind: 'image', position: 1, mime: 'image/jpeg' })] });
+    let h: Handle = {};
+    for (let i = 0; i < 6; i++) { const r = await ig().prepare(inp, igAccount, h, en); h = r.handle; if (r.done) break; }
+    const creates = meta.callsTo(/^222\/media$/, 'POST');
+    expect(creates.slice(0, 2).every((c) => c.body.is_ai_generated === undefined)).toBe(true);
+    expect(creates[2]!.body).toMatchObject({ media_type: 'CAROUSEL', is_ai_generated: 'true' });
   });
 
   it('refuses before sending anything when the account has used its publishing cap', async () => {
@@ -262,6 +303,14 @@ describe('Instagram', () => {
     expect(codes(input({ media: [media({ width: 1920, height: 1080 })] }))).toContain('warning:media.aspect.recommended');
     expect(codes(input({ media: [media({ durationMs: 1000 })] }))).toContain('error:media.duration');
     expect(codes(input({ placement: 'story', text: 'caption' }))).toContain('warning:story.text');
+    // A story video runs 3 to 60 seconds; a video in a carousel is held to a Reel's length, with a warning past a minute.
+    expect(codes(input({ placement: 'story', text: '', media: [media({ durationMs: 2000 })] }))).toContain('error:media.duration');
+    expect(codes(input({ placement: 'story', text: '', media: [media({ durationMs: 3000 })] }))).toEqual([]);
+    const carousel = (ms: number) => input({ placement: 'carousel', media: [media({ kind: 'image', width: 1080, height: 1080 }), media({ position: 1, width: 1080, height: 1080, durationMs: ms })] });
+    expect(codes(carousel(2000))).toContain('error:media.duration');
+    expect(codes(carousel(30_000))).toEqual([]);
+    expect(codes(carousel(90_000))).toEqual(['warning:carousel.video.length']);
+    expect(codes(carousel(16 * 60_000))).toContain('error:media.duration');
     expect(codes(input({ placement: 'feed_image', media: [media({ kind: 'image', width: 1080, height: 1920 })] }))).toContain('error:media.aspect');
     expect(codes(input({ placement: 'carousel', media: [media({ kind: 'image', width: 1000, height: 1000 })] }))).toContain('error:media.count');
     expect(codes(input({ placement: 'nope' }))).toContain('error:placement.unknown');
@@ -332,6 +381,36 @@ describe('Facebook Page', () => {
     expect(feed.body['attached_media[0]']).toContain('media_fbid');
     expect(feed.body['attached_media[2]']).toContain('media_fbid');
     expect(feed.body.published).toBe('false');
+    // Photos used in a scheduled post have to be temporary (Meta's Page Photos reference), and the post says it is scheduled.
+    expect(photos.every((c) => c.body.temporary === 'true')).toBe(true);
+    expect(feed.body.unpublished_content_type).toBe('SCHEDULED');
+  });
+
+  it('uploads the photos of an album that goes out at once as plain unpublished photos', async () => {
+    const en = e();
+    const inp = input({ placement: 'photos', scheduledAt: new Date(Date.now() + 3 * 60_000), media: [0, 1].map((i) => media({ kind: 'image', position: i, mime: 'image/jpeg', url: `https://media.test/${i}.jpg` })) });
+    const r = await fb().prepare(inp, fbAccount, {}, en);
+    await fb().publish(inp, fbAccount, r.handle, en);
+    const photos = meta.callsTo(/\/photos$/, 'POST');
+    expect(photos.every((c) => c.body.published === 'false' && c.body.temporary === undefined)).toBe(true);
+    expect(meta.callsTo(/^111\/feed$/, 'POST')[0]!.body.published).toBe('true');
+  });
+
+  it('says in the history why the first comment was not posted when the Page may not comment', async () => {
+    const en = e();
+    const inp = input({ placement: 'photo', scheduledAt: new Date(Date.now() + 3 * 60_000), firstComment: 'Hello', media: [media({ kind: 'image', mime: 'image/jpeg', url: 'https://media.test/p.jpg' })] });
+    const r = await fb().prepare(inp, fbAccount, {}, en);
+    const pub = await fb().publish(inp, fbAccount, r.handle, en);
+    const scopes = meta.grantedScopes;
+    meta.grantedScopes = scopes.filter((x) => x !== 'pages_manage_engagement');
+    try {
+      const v = await fb().verify(fbAccount, pub.externalId, en.saved.at(-1)!, en);
+      expect(v.visibility).toBe('public'); // the post is live all the same
+      expect(v.note).toContain('pages_manage_engagement');
+      expect(v.handle!.firstCommentError).toContain('Connect the Page again');
+    } finally {
+      meta.grantedScopes = scopes;
+    }
   });
 
   it('uploads a Reel in three phases and waits for processing', async () => {
@@ -439,11 +518,46 @@ describe('YouTube', () => {
     const rec = google.videos.get(r.handle.videoId as string)!;
     expect(rec.bytes).toBe(bytes.length);
     expect(rec.snippet).toMatchObject({ title: 'Spring menu', description: 'Spring menu #coffee', categoryId: '22' });
-    expect(rec.status).toMatchObject({ privacyStatus: 'private', publishAt: when.toISOString(), selfDeclaredMadeForKids: false, containsSyntheticMedia: true });
+    expect(rec.status).toMatchObject({ privacyStatus: 'private', publishAt: when.toISOString(), containsSyntheticMedia: true });
+    // Nobody declared whether it is made for kids, so nothing is declared for them: YouTube applies the channel's own setting.
+    expect(rec.status).not.toHaveProperty('selfDeclaredMadeForKids');
     const init = google.calls.find((c) => c.path === '/upload/youtube/v3/videos')!;
     expect(init.headers['x-upload-content-length']).toBe(String(bytes.length));
     // The session address was saved the moment YouTube handed it out, before any bytes were sent.
     expect(en.saved[0]!.sessionUrl).toMatch(/\/upload\/session\//);
+  });
+
+  it("sends the made-for-kids declaration a person made, or the channel's default", async () => {
+    const en = env(token, files);
+    const r1 = await yt().prepare(vid({ options: { madeForKids: 'yes' } }), ytAccount(), {}, en);
+    expect(google.videos.get(r1.handle.videoId as string)!.status.selfDeclaredMadeForKids).toBe(true);
+    const channelSaysNo = { ...ytAccount(), providerData: { ...ytAccount().providerData, madeForKids: false } };
+    const r2 = await yt().prepare(vid(), channelSaysNo, {}, en);
+    expect(google.videos.get(r2.handle.videoId as string)!.status.selfDeclaredMadeForKids).toBe(false);
+    // The publication's own answer wins over the channel's.
+    const r3 = await yt().prepare(vid({ options: { madeForKids: 'yes' } }), channelSaysNo, {}, en);
+    expect(google.videos.get(r3.handle.videoId as string)!.status.selfDeclaredMadeForKids).toBe(true);
+    // The dialog asks, with nothing chosen, unless the channel has a default.
+    const field = (a: Account) => yt().capabilities(a).options!.find((o) => o.key === 'madeForKids')!;
+    expect(field(ytAccount())).toMatchObject({ type: 'select', required: true });
+    expect(field(ytAccount()).default).toBeUndefined();
+    expect(field(channelSaysNo).default).toBe('no');
+  });
+
+  it('sends a description YouTube accepts: no < or >, and no more than 5,000 bytes', async () => {
+    const en = env(token, files);
+    const r = await yt().prepare(vid({ text: 'Prices <today> only: 2 > 1' }), ytAccount(), {}, en);
+    expect(google.videos.get(r.handle.videoId as string)!.snippet.description).toBe('Prices ‹today› only: 2 › 1');
+    // 2,000 characters of "é" are 4,000 bytes; 2,600 are 5,200, which YouTube refuses even though it is under 5,000 characters.
+    const codes = (text: string) => yt().validate(vid({ text, options: { madeForKids: 'no' } }), ytAccount(true)).map((x) => `${x.severity}:${x.code}`);
+    expect(codes('é'.repeat(2000))).toEqual([]);
+    expect(codes('é'.repeat(2600))).toEqual(['error:text.bytes']);
+    expect(codes('a < b')).toEqual(['warning:text.angle']);
+    // Even if it got that far, what is sent is cut to whole characters under the limit, and the stand-in takes it.
+    const long = await yt().prepare(vid({ text: '😀'.repeat(1300) }), ytAccount(), {}, en);
+    const sent = google.videos.get(long.handle.videoId as string)!.snippet.description as string;
+    expect(Buffer.byteLength(sent)).toBeLessThanOrEqual(5000);
+    expect(sent).toBe('😀'.repeat(1250));
   });
 
   it('carries on from where it stopped when the connection drops mid-upload', async () => {
@@ -488,6 +602,27 @@ describe('YouTube', () => {
     expect((await yt().verify(ytAccount(true), id, r.handle, en)).visibility).toBe('public');
   });
 
+  it('keeps looking for a while when YouTube has not yet made a scheduled video public, instead of calling it private', async () => {
+    const en = env(token, files, () => new Date(google.now()));
+    const when = new Date(Date.now() + 3600_000);
+    const r = await yt().prepare(vid({ scheduledAt: when }), ytAccount(true), {}, en);
+    const id = r.handle.videoId as string;
+    google.audited = true;
+    google.publishDelayMs = 4 * 60_000; // YouTube takes a few minutes past the time
+    google.now = () => when.getTime() + 20_000; // the publisher's first look, 20 seconds after the hour
+    const early = await yt().verify(ytAccount(true), id, r.handle, en);
+    expect(early.visibility).toBe('processing');
+    expect(early.note).toMatch(/not made it public yet/);
+    google.now = () => when.getTime() + 5 * 60_000;
+    expect((await yt().verify(ytAccount(true), id, r.handle, en)).visibility).toBe('public');
+    // Held back for good: after 45 minutes it is called private, with words a person can act on.
+    google.publishDelayMs = 10 * 3600_000;
+    google.now = () => when.getTime() + 46 * 60_000;
+    const late = await yt().verify(ytAccount(true), id, r.handle, en);
+    expect(late.visibility).toBe('private');
+    expect(late.note).toMatch(/45 minutes after its time/);
+  });
+
   it('classifies failures: quota waits for the reset, a revoked grant needs a reconnection', async () => {
     const en = env(token, files);
     google.fail((p) => p === '/upload/youtube/v3/videos', google.quotaError(), 403);
@@ -514,9 +649,10 @@ describe('YouTube', () => {
   });
 
   it('checks a publication, warning about the unaudited project and refusing a long title', () => {
-    const codes = (i: PublishInput, a = ytAccount()) => yt().validate(i, a).map((x) => `${x.severity}:${x.code}`);
+    const codes = (i: PublishInput, a = ytAccount()) => yt().validate({ ...i, options: { madeForKids: 'no', ...i.options } }, a).map((x) => `${x.severity}:${x.code}`);
     expect(codes(vid())).toEqual(['warning:youtube.unaudited']);
     expect(codes(vid(), ytAccount(true))).toEqual([]);
+    expect(yt().validate(vid(), ytAccount(true)).map((x) => x.code)).toEqual(['youtube.made_for_kids']);
     expect(codes(vid({ title: 'x'.repeat(101) }), ytAccount(true))).toEqual(['error:title.length']);
     expect(codes(vid({ options: { title: 'A fine short title' }, title: 'x'.repeat(300) }), ytAccount(true))).toEqual([]);
     expect(codes(vid({ placement: 'short', media: [media({ width: 1920, height: 1080 })] }), ytAccount(true))).toContain('error:media.aspect');

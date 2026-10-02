@@ -5,7 +5,11 @@ import { FakeServer, readAll, type Call } from './base.js';
 /**
  * A stand-in for a Bluesky server (sessions, blobs, records, posts) and its video service (served under /video). Written from
  * the AT Protocol documentation, not from the real service: it holds the rules our connector has to respect (300 graphemes,
- * blobs under about 1 MB, a service token for video, one record per key).
+ * blobs under about 1 MB, a service token for video, one record per key, post keys that are TIDs).
+ *
+ * The server signed in to is only the entrance (as bsky.social is): the account's repository lives on another server, named in the
+ * DID document the session carries. The video service checks the audience of each service token the way the real one does: asking
+ * about the allowance needs a token for the video service itself, sending a video needs one for the account's repository server.
  */
 const jwt = (payload: Record<string, unknown>) => {
   const b = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -35,7 +39,28 @@ export class FakeBluesky extends FakeServer {
   known: Record<string, string> = { 'bob.bsky.social': 'did:plc:bob' };
   counts: Record<string, number> = { likeCount: 7, replyCount: 2, repostCount: 1, quoteCount: 1 };
   serviceTokens: { token: string; aud: string; lxm: string }[] = [];
+  /** The account's own repository server, as its DID document names it. */
+  pdsEndpoint = 'https://morel.us-east.host.bsky.network';
   private n = 0;
+
+  /** A key the server makes up when it is not given one: a TID from the clock. */
+  private tid() {
+    let v = (BigInt(this.now()) * 1000n + BigInt(++this.n)) << 10n;
+    let out = '';
+    for (let i = 0; i < 13; i++) { out = '234567abcdefghijklmnopqrstuvwxyz'[Number(v & 31n)]! + out; v >>= 5n; }
+    return out;
+  }
+
+  private didWeb(url: string) {
+    return `did:web:${new URL(url).host.replace(':', '%3A')}`;
+  }
+
+  private didDoc() {
+    return {
+      '@context': ['https://www.w3.org/ns/did/v1'], id: this.did, alsoKnownAs: [`at://${this.handle_}`],
+      service: [{ id: '#atproto_pds', type: 'AtprotoPersonalDataServer', serviceEndpoint: this.pdsEndpoint }],
+    };
+  }
 
   private session() {
     const exp = Math.floor(this.now() / 1000) + this.accessLifetimeSec;
@@ -43,7 +68,7 @@ export class FakeBluesky extends FakeServer {
     const refreshJwt = `refresh-${++this.n}`;
     this.accessTokens.add(accessJwt);
     this.refreshTokens.add(refreshJwt);
-    return { accessJwt, refreshJwt, did: this.did, handle: this.handle_, emailConfirmed: this.emailConfirmed };
+    return { accessJwt, refreshJwt, did: this.did, didDoc: this.didDoc(), handle: this.handle_, emailConfirmed: this.emailConfirmed };
   }
 
   async handle(c: Call, req: FastifyRequest, reply: FastifyReply) {
@@ -70,10 +95,13 @@ export class FakeBluesky extends FakeServer {
       const svc = this.serviceTokens.find((t) => t.token === bearer);
       if (!svc && nsid !== 'app.bsky.video.getJobStatus') { await readAll(req); return err(401, 'AuthenticationRequired', 'Invalid service token'); }
       if (nsid === 'app.bsky.video.getUploadLimits') {
+        if (svc!.aud !== this.didWeb(this.url) || svc!.lxm !== 'app.bsky.video.getUploadLimits') return err(401, 'BadJwtAudience', 'jwt audience does not match service did');
         return reply.send({ canUpload: this.canUploadVideo, remainingDailyVideos: this.canUploadVideo ? 5 : 0, remainingDailyBytes: 1e9, message: this.canUploadVideo ? undefined : 'You have uploaded the most videos allowed today' });
       }
       if (nsid === 'app.bsky.video.uploadVideo') {
-        if (svc?.lxm !== 'com.atproto.repo.uploadBlob') return err(400, 'InvalidRequest', 'Wrong lxm');
+        if (svc?.lxm !== 'com.atproto.repo.uploadBlob') { await readAll(req); return err(400, 'InvalidRequest', 'Wrong lxm'); }
+        // The video is written to the account's repository, so the token must be made out to that server, not to the entrance.
+        if (svc.aud !== this.didWeb(this.pdsEndpoint)) { await readAll(req); return err(401, 'BadJwtAudience', 'jwt audience does not match service did'); }
         const bytes = (await readAll(req)).length;
         const jobId = this.id('job');
         this.jobs.set(jobId, { polls: 0, name: c.query.name ?? '', bytes });
@@ -100,7 +128,7 @@ export class FakeBluesky extends FakeServer {
       if (req.body && typeof (req.body as any).resume === 'function') (req.body as any).resume();
       return err(401, 'InvalidToken', 'Invalid token');
     }
-    if (nsid === 'com.atproto.server.getSession') return reply.send({ did: this.did, handle: this.handle_, emailConfirmed: this.emailConfirmed });
+    if (nsid === 'com.atproto.server.getSession') return reply.send({ did: this.did, didDoc: this.didDoc(), handle: this.handle_, emailConfirmed: this.emailConfirmed });
     if (nsid === 'com.atproto.server.getServiceAuth') {
       const token = `svc-${++this.n}`;
       this.serviceTokens.push({ token, aud: c.query.aud ?? '', lxm: c.query.lxm ?? '' });
@@ -113,9 +141,11 @@ export class FakeBluesky extends FakeServer {
       return reply.send({ blob: { $type: 'blob', ref: { $link: `bafyblob${this.blobs.length}` }, mimeType: c.headers['content-type'], size: bytes.length } });
     }
     if (nsid === 'com.atproto.repo.putRecord' || nsid === 'com.atproto.repo.createRecord') {
-      const rkey = body.rkey ?? `tid${++this.n}`;
+      const rkey = body.rkey ?? this.tid();
       const value = body.record ?? {};
       if (body.collection === 'app.bsky.feed.post') {
+        // A post's key is a TID (the lexicon's "key": "tid"): 13 characters of the sortable base32.
+        if (!/^[234567abcdefghij][234567abcdefghijklmnopqrstuvwxyz]{12}$/.test(rkey)) return err(400, 'InvalidRequest', `Invalid record key: ${rkey} is not a TID`);
         const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
         if ([...seg.segment(String(value.text ?? ''))].length > 300) return err(400, 'InvalidRequest', 'Record/text must not be longer than 300 graphemes');
         for (const fct of value.facets ?? []) {

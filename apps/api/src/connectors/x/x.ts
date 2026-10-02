@@ -5,18 +5,20 @@ import {
   type MediaItem, type MetricsResult, type PrepareResult, type Published, type PublishInput, type VerifyResult,
 } from '../types.js';
 import { isDuplicate, type XClient } from './client.js';
-import { hasLink, weightedLength } from './text.js';
+import { hasLink, linksIn, weightedLength } from './text.js';
 
 /**
  * X publishing through the v2 API. Pictures are uploaded in one call, a video in pieces (start, append, finish, then wait
  * for X to process it); the post is then one call with the ids of what was uploaded.
  *
- * X is pay-per-use: a post costs 0.015 USD, and 0.20 USD if it carries a link (13 times more), so a link in the text is a
- * warning that points at the first comment (a reply of the account's own) or the bio. Every read of one's own data costs
- * 0.001 USD too, which is why metrics are only read at the four fixed ages.
+ * X is pay-per-use: a post costs 0.015 USD, and 0.20 USD if it carries a link (13 times more). That is any post, replies
+ * included, so moving the link to the first comment (a reply of the account's own) costs the same 0.20; and X makes a link of a
+ * bare domain too ("lumen.example.com"). A link in the text or in the first comment is a warning that says so. Every read of
+ * one's own data costs 0.001 USD too, which is why metrics are only read at the four fixed ages.
  *
- * X has no idempotency key. A repeated post of the same text is refused as a duplicate, which is how a lost answer is
- * told apart from a new post: see publish().
+ * X has no idempotency key. When an answer is lost, the post may exist: before posting again (and when X refuses the text as a
+ * duplicate) the account's own posts since the first try are looked through for one carrying the same uploaded media. The text
+ * cannot be compared as it was sent: X returns it with every link rewritten to t.co and a link to the media added at the end.
  */
 const CAPS: Capabilities = {
   network: 'x',
@@ -82,12 +84,28 @@ export function createX(client: XClient, opts: XOptions = {}): Connector {
     return r.data.id;
   }
 
-  async function userPostsContaining(token: string, userId: string, text: string, since: Date): Promise<string | null> {
-    const r = await client.request<{ data?: { id: string; text: string; created_at?: string }[] }>(`/2/users/${userId}/tweets`, token, {
-      query: { max_results: 10, 'tweet.fields': 'created_at' },
+  /**
+   * The account's own post made by an earlier try whose answer was lost, if there is one. It is recognised by the media it carries
+   * (each upload's id appears in the post's media keys as "<type>_<id>"), and, failing that, by its text with the links taken out
+   * (X rewrites links to t.co, adds one for the media, and escapes &, < and >). Only posts made since a minute before the first try.
+   */
+  async function findOwnPost(token: string, userId: string, text: string, mediaIds: string[], since: Date): Promise<string | null> {
+    const start = new Date(since.getTime() - 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const r = await client.request<{ data?: { id: string; text: string; created_at?: string; attachments?: { media_keys?: string[] } }[] }>(`/2/users/${userId}/tweets`, token, {
+      query: { max_results: 20, start_time: start, exclude: 'replies,retweets', 'tweet.fields': 'created_at,attachments' },
     });
-    const found = (r.data ?? []).find((t) => t.text.trim() === text.trim() && (!t.created_at || new Date(t.created_at).getTime() >= since.getTime() - 60_000));
-    return found?.id ?? null;
+    const posts = (r.data ?? []).filter((t) => !t.created_at || new Date(t.created_at).getTime() >= since.getTime() - 60_000);
+    if (mediaIds.length) {
+      const byMedia = posts.find((t) => (t.attachments?.media_keys ?? []).some((k) => mediaIds.some((id) => k === id || k.endsWith(`_${id}`))));
+      if (byMedia) return byMedia.id;
+    }
+    const plain = (s: string) => {
+      let out = s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+      for (const l of linksIn(out)) out = out.replace(l, ' ');
+      return out.replace(/\s+/g, ' ').trim();
+    };
+    const wanted = plain(text);
+    return posts.find((t) => wanted !== '' && plain(t.text) === wanted)?.id ?? null;
   }
 
   const connector: Connector = {
@@ -111,7 +129,13 @@ export function createX(client: XClient, opts: XOptions = {}): Connector {
       if (hasLink(input.text)) {
         issues.push({
           severity: 'warning', code: 'x.link.cost', field: 'text',
-          message: `A post with a link costs ${COST_LINK.toFixed(2)} USD on X instead of ${COST_POST.toFixed(3)} USD, 13 times more. Put the link in the first comment, or leave it for the bio.`,
+          message: `A post with a link costs ${COST_LINK.toFixed(2)} USD on X instead of ${COST_POST.toFixed(3)} USD, 13 times more (X also makes a link of a bare domain such as ${linksIn(input.text)[0]}). A reply with the link costs the same, so moving it to the first comment saves nothing: leave it out, or put it in the profile.`,
+        });
+      }
+      if (input.firstComment && hasLink(input.firstComment)) {
+        issues.push({
+          severity: 'warning', code: 'x.link.cost.comment', field: 'firstComment',
+          message: `The first comment has a link (${linksIn(input.firstComment)[0]}): X charges a reply with a link ${COST_LINK.toFixed(2)} USD, as it does a post.`,
         });
       }
       return issues;
@@ -189,21 +213,27 @@ export function createX(client: XClient, opts: XOptions = {}): Connector {
       const username = String(account.providerData.username ?? account.externalId);
 
       if (!h.postId) {
-        // Written down BEFORE the call: if the answer is lost, the next try knows a post may already exist.
-        if (!h.attemptedAt) {
+        const mediaIds = input.placement === 'video' ? [h.mediaId as string] : (h.mediaIds as string[]);
+        // A try was made before and its answer never came: the post may exist. It is looked for before another is made.
+        if (h.attemptedAt) {
+          const found = await findOwnPost(token, account.externalId, input.text, mediaIds, new Date(h.attemptedAt as string));
+          if (found) h = { ...h, postId: found, recovered: true };
+        } else {
+          // Written down BEFORE the call: if the answer is lost, the next try knows a post may already exist.
           h = { ...h, attemptedAt: env.now().toISOString() };
           await env.persist(h);
         }
-        const mediaIds = input.placement === 'video' ? [h.mediaId as string] : (h.mediaIds as string[]);
-        try {
-          const r = await client.request<{ data: { id: string } }>('/2/tweets', token, { method: 'POST', json: { text: input.text, media: { media_ids: mediaIds } } });
-          h = { ...h, postId: r.data.id };
-        } catch (err) {
-          if (!isDuplicate(err)) throw err;
-          // "Duplicate content" right after our own attempt can only mean that the first try went through.
-          const found = await userPostsContaining(token, account.externalId, input.text, new Date(h.attemptedAt as string));
-          if (!found) throw err;
-          h = { ...h, postId: found, recovered: true };
+        if (!h.postId) {
+          try {
+            const r = await client.request<{ data: { id: string } }>('/2/tweets', token, { method: 'POST', json: { text: input.text, media: { media_ids: mediaIds } } });
+            h = { ...h, postId: r.data.id };
+          } catch (err) {
+            if (!isDuplicate(err)) throw err;
+            // "Duplicate content" right after our own attempt can only mean that the first try went through.
+            const found = await findOwnPost(token, account.externalId, input.text, mediaIds, new Date(h.attemptedAt as string));
+            if (!found) throw err;
+            h = { ...h, postId: found, recovered: true };
+          }
         }
         await env.persist(h); // from here on a retry must not post a second time
       }

@@ -4,8 +4,13 @@ import type { TikTokClient } from './client.js';
 /**
  * Reading the account, posting directly, and reading how posts did. "video.upload" is asked for with "video.publish" because
  * a person who is sent to TikTok to sign in is shown both.
+ *
+ * user.info.basic gives open_id, union_id, avatar_url and display_name, and nothing else: a field outside it (username needs
+ * user.info.profile) makes TikTok refuse the whole call with scope_not_authorized. The @username comes from creator_info, which
+ * video.publish allows, and only to make links.
  */
 export const TIKTOK_SCOPES = ['user.info.basic', 'video.publish', 'video.upload', 'video.list'];
+export const TIKTOK_USER_FIELDS = 'open_id,union_id,avatar_url,display_name';
 
 export function createTikTokOAuth(client: TikTokClient, now: () => Date = () => new Date()): OAuthProvider {
   const cfg = client.cfg;
@@ -37,18 +42,26 @@ export function createTikTokOAuth(client: TikTokClient, now: () => Date = () => 
     async exchange(code, redirectUri) {
       const b = await client.token({ grant_type: 'authorization_code', code, redirect_uri: redirectUri });
       const t = toToken(b);
-      const me = await client.request<{ data?: { user?: { open_id?: string; display_name?: string; username?: string } } }>('/v2/user/info/', t.accessToken, { query: { fields: 'open_id,display_name,username' } });
+      const me = await client.request<{ data?: { user?: { open_id?: string; union_id?: string; display_name?: string } } }>('/v2/user/info/', t.accessToken, { query: { fields: TIKTOK_USER_FIELDS } });
       const user = me.data?.user;
       const id = user?.open_id ?? b.open_id;
       if (!id) throw new ConnectorError('auth', 'TikTok did not say which account signed in');
+      // The @username, for links to the profile and its posts. Best effort: an account is usable without it.
+      let username: string | undefined;
+      try {
+        const info = await client.request<{ data?: { creator_username?: string } }>('/v2/post/publish/creator_info/query/', t.accessToken, { method: 'POST', json: {} });
+        username = info.data?.creator_username || undefined;
+      } catch {
+        username = undefined;
+      }
       return [{
         key: `tiktok:${id}`,
         network: 'tiktok',
         externalId: id,
-        displayName: user?.username ? `@${user.username}` : (user?.display_name ?? id),
+        displayName: username ? `@${username}` : (user?.display_name ?? id),
         token: t,
         // Until TikTok audits the app every post is forced to private (see the TikTok connector).
-        providerData: { username: user?.username, displayName: user?.display_name, audited: false },
+        providerData: { username, displayName: user?.display_name, audited: false },
       }];
     },
 

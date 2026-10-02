@@ -26,6 +26,13 @@ export class FakeX extends FakeServer {
   altTexts: Record<string, string> = {};
   private n = 0;
 
+  /** A post's text as X gives it back: not as it was sent. */
+  asShown(p: { id: string; text: string; media: string[] }) {
+    let k = 0;
+    const text = p.text.replace(/https?:\/\/\S+/g, () => `https://t.co/l${p.id}x${++k}`).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return p.media.length ? `${text} https://t.co/m${p.id}` : text;
+  }
+
   private issue() {
     const access = `acc-${++this.n}`;
     const refresh = `ref-${++this.n}`;
@@ -64,7 +71,24 @@ export class FakeX extends FakeServer {
     if (c.path === '/2/users/me') return reply.send({ data: this.user });
 
     let m = /^\/2\/users\/([^/]+)\/tweets$/.exec(c.path);
-    if (m) return reply.send({ data: [...this.posts.values()].reverse().slice(0, Number(c.query.max_results ?? 10)).map((p) => ({ id: p.id, text: p.text, created_at: p.created_at })) });
+    if (m) {
+      // The timeline as X returns it: links rewritten to t.co, a link to the media added at the end, &, < and > escaped; media keys
+      // ("3_<id>" for a picture, "7_<id>" for a video) only when tweet.fields asks for attachments.
+      const max = Number(c.query.max_results ?? 10);
+      if (!(max >= 5 && max <= 100)) return err(400, 'Invalid Request', 'The `max_results` query parameter value is not between 5 and 100');
+      const from = c.query.start_time ? Date.parse(c.query.start_time) : 0;
+      const fields = String(c.query['tweet.fields'] ?? '');
+      const excluded = String(c.query.exclude ?? '').split(',');
+      const shown = [...this.posts.values()].reverse()
+        .filter((p) => Date.parse(p.created_at) >= from && !(excluded.includes('replies') && p.reply_to))
+        .slice(0, max)
+        .map((p) => ({
+          id: p.id, text: this.asShown(p),
+          ...(fields.includes('created_at') ? { created_at: p.created_at } : {}),
+          ...(fields.includes('attachments') && p.media.length ? { attachments: { media_keys: p.media.map((id) => `${this.media.get(id)?.category === 'tweet_video' ? 7 : 3}_${id}`) } } : {}),
+        }));
+      return reply.send(shown.length ? { data: shown, meta: { result_count: shown.length } } : { meta: { result_count: 0 } });
+    }
 
     if (c.path === '/2/media/upload' && c.method === 'POST') {
       const raw = (await readAll(req)).toString('latin1');
@@ -131,7 +155,7 @@ export class FakeX extends FakeServer {
       const p = this.posts.get(m[1]!);
       if (!p) return err(404, 'Not Found Error', `Could not find tweet with id: [${m[1]}].`);
       const wants = String(c.query['tweet.fields'] ?? '');
-      return reply.send({ data: { id: p.id, text: p.text, ...(wants.includes('public_metrics') ? { public_metrics: this.metrics } : {}), ...(wants.includes('organic_metrics') && this.organic ? { organic_metrics: this.organic } : {}) } });
+      return reply.send({ data: { id: p.id, text: this.asShown(p), ...(wants.includes('public_metrics') ? { public_metrics: this.metrics } : {}), ...(wants.includes('organic_metrics') && this.organic ? { organic_metrics: this.organic } : {}) } });
     }
     return err(404, 'Not Found', `no route ${c.method} ${c.path}`);
   }

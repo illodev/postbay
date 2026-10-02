@@ -74,7 +74,7 @@ describe('Instagram, from scheduling to a verified post', () => {
     expect((await row(pub.id)).status).toBe('preparing');
     expect(await env.settle()).toEqual([]); // and nothing happens until it is time to ask again
 
-    env.clock.advance(11_000);
+    env.clock.advance(61_000); // Instagram's container is asked about once a minute, as Meta advises
     expect((await env.settle()).map((x) => x.split(':')[1])).toEqual(['ready']);
     expect(await env.settle()).toEqual([]); // ready, waiting for the hour: not published early
     expect(env.meta.callsTo(/media_publish/)).toHaveLength(0);

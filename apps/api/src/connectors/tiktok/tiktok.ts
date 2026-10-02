@@ -2,8 +2,8 @@ import { call } from '../http.js';
 import { validateAgainst } from '../validate.js';
 import {
   ConnectorError,
-  type Account, type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
-  type MediaItem, type MetricsResult, type PrepareResult, type Published, type PublishInput, type VerifyResult,
+  type Account, type AccountOptions, type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
+  type MediaItem, type MetricsResult, type OptionField, type PrepareResult, type Published, type PublishInput, type VerifyResult,
 } from '../types.js';
 import { classifyTikTok, type TikTokClient } from './client.js';
 
@@ -18,7 +18,11 @@ import { classifyTikTok, type TikTokClient } from './client.js';
  * "not acceptable", so the audit may be refused: the account then stays on hand-over.
  *
  * TikTok obliges an app that posts for people to show certain controls, with no defaults chosen for them: who can see the
- * post, what is allowed on it (all unticked), whether it promotes a brand, and TikTok's own consent text, word for word.
+ * post, what is allowed on it (all unticked), whether it promotes a brand, and TikTok's own consent text, word for word. And it
+ * obliges the app to ask TikTok, while the post is being written, what this creator may do (creator_info): only the privacy
+ * choices it returns may be offered, comments, duets and stitches it has switched off must be shown switched off, and the
+ * creator's nickname must be shown. That is accountOptions(); what it says is kept on the account so scheduling is checked against
+ * it, and publishing asks again before anything is sent.
  */
 const PRIVACY = [
   { value: 'SELF_ONLY', label: 'Only me' },
@@ -28,6 +32,20 @@ const PRIVACY = [
 ];
 const CONSENT = "By posting, you agree to TikTok's Music Usage Confirmation.";
 const CONSENT_BRANDED = "By posting, you agree to TikTok's Branded Content Policy and Music Usage Confirmation.";
+const PROCESSING_NOTE = 'After it is sent, TikTok can take a few minutes to process the post before it shows on the profile.';
+const UNAUDITED_HELP = "Until TikTok audits this app, it only takes posts that only the account can see (\"Only me\"), and only from a TikTok account that is itself set to private in TikTok's settings.";
+
+/** What creator_info said about this creator, kept on the account (providerData.creatorInfo). */
+interface CreatorInfo {
+  privacyLevelOptions?: string[];
+  commentDisabled?: boolean;
+  duetDisabled?: boolean;
+  stitchDisabled?: boolean;
+  maxVideoPostDurationSec?: number;
+  nickname?: string;
+  username?: string;
+  fetchedAt?: string;
+}
 
 const CAPS: Capabilities = {
   network: 'tiktok',
@@ -45,19 +63,45 @@ const CAPS: Capabilities = {
   text: { maxChars: 2200, maxHashtags: 100, previewCutoff: 80, firstComment: false },
   aiLabel: true,
   nativeScheduling: null,
-  options: [
-    { key: 'privacy', label: 'Who can see this post', type: 'select', required: true, choices: PRIVACY, help: 'TikTok asks that nobody is chosen for you.' },
-    { key: 'allowComment', label: 'Allow comments', type: 'checkbox', default: false },
-    { key: 'allowDuet', label: 'Allow duets', type: 'checkbox', default: false, placements: ['video'] },
-    { key: 'allowStitch', label: 'Allow stitches', type: 'checkbox', default: false, placements: ['video'] },
-    { key: 'commercial', label: 'This post promotes a brand, product or service', type: 'checkbox', default: false },
-    { key: 'yourBrand', label: 'Your own brand', type: 'checkbox', default: false, showWhen: 'commercial', help: 'You are promoting yourself or your own business.' },
-    { key: 'brandedContent', label: 'Branded content', type: 'checkbox', default: false, showWhen: 'commercial', help: 'You are promoting another brand or a third party. It cannot be private.' },
-    { key: 'consent', label: 'I agree', type: 'checkbox', required: true, notice: CONSENT },
+  options: optionFields(PRIVACY.map((p) => p.value), {}),
+};
+
+/**
+ * The settings TikTok obliges the app to show, built from what creator_info says about this creator (or, without it, every choice
+ * TikTok has). Nothing is chosen for the person: no privacy, everything unticked.
+ */
+function optionFields(privacyOptions: string[], info: CreatorInfo, audited = true): OptionField[] {
+  const known = PRIVACY.filter((p) => privacyOptions.includes(p.value));
+  const unknown = privacyOptions.filter((v) => !PRIVACY.some((p) => p.value === v)).map((v) => ({ value: v, label: v }));
+  // Branded content cannot be private, so "Only me" cannot be picked while it is ticked.
+  const choices = [...known, ...unknown]
+    .filter((c) => audited || c.value === 'SELF_ONLY')
+    .map((c) => (c.value === 'SELF_ONLY' ? { ...c, disabledWhen: 'brandedContent' } : c));
+  const off = (flag: boolean | undefined, what: string) => (flag ? { disabled: true, help: `${what} are turned off for this account in TikTok's own settings.` } : {});
+  return [
+    ...(info.nickname || info.username
+      ? [{ key: 'creator', label: `Posting to TikTok as ${info.nickname ?? info.username}${info.username && info.nickname ? ` (@${info.username})` : ''}`, type: 'info' as const }]
+      : []),
+    {
+      key: 'privacy', label: 'Who can see this post', type: 'select', required: true, choices,
+      help: audited ? 'TikTok asks that nobody is chosen for you.' : `TikTok asks that nobody is chosen for you. ${UNAUDITED_HELP}`,
+    },
+    { key: 'allowComment', label: 'Allow comments', type: 'checkbox', default: false, ...off(info.commentDisabled, 'Comments') },
+    { key: 'allowDuet', label: 'Allow duets', type: 'checkbox', default: false, placements: ['video'], ...off(info.duetDisabled, 'Duets') },
+    { key: 'allowStitch', label: 'Allow stitches', type: 'checkbox', default: false, placements: ['video'], ...off(info.stitchDisabled, 'Stitches') },
+    { key: 'commercial', label: 'This post promotes a brand, product or service', type: 'checkbox', default: false, help: 'Say whether it is your own brand, branded content, or both.' },
+    { key: 'yourBrand', label: 'Your brand', type: 'checkbox', default: false, showWhen: 'commercial', help: "You are promoting yourself or your own business. The post will be labelled 'Promotional content'." },
+    { key: 'brandedContent', label: 'Branded content', type: 'checkbox', default: false, showWhen: 'commercial', help: "You are promoting another brand or a third party. The post will be labelled 'Paid partnership', and it cannot be private." },
+    { key: 'consent', label: 'I agree', type: 'checkbox', required: true, hideWhen: 'brandedContent', notice: CONSENT },
     { key: 'consentBranded', label: 'I agree', type: 'checkbox', required: true, showWhen: 'brandedContent', notice: CONSENT_BRANDED },
     { key: 'title', label: 'Title of the photos', type: 'text', maxLength: 90, placements: ['photo'], help: 'The title of the piece is used if this is empty.' },
-  ],
-};
+    ...(info.maxVideoPostDurationSec ? [{ key: 'maxDuration', label: `This account can post videos of up to ${info.maxVideoPostDurationSec} seconds.`, type: 'info' as const, placements: ['video'] }] : []),
+    { key: 'processing', label: PROCESSING_NOTE, type: 'info' },
+  ];
+}
+
+const creatorInfoOf = (a: Account): CreatorInfo => (a.providerData.creatorInfo ?? {}) as CreatorInfo;
+const PRIVACY_LABEL = (v: string) => PRIVACY.find((p) => p.value === v)?.label ?? v;
 
 const mainOf = (input: PublishInput): MediaItem[] =>
   input.media.filter((m) => m.kind === 'video' || m.kind === 'image').sort((a, b) => a.position - b.position);
@@ -89,12 +133,19 @@ export function createTikTok(client: TikTokClient, opts: TikTokOptions = {}): Co
   const CHUNK = opts.chunkBytes ?? 10 * 1024 * 1024;
   const SINGLE_MAX = opts.chunkBytes ?? 64 * 1024 * 1024;
 
-  const postInfo = (input: PublishInput, account: Account) => ({
+  const basePostInfo = (input: PublishInput, account: Account) => ({
     privacy_level: effectivePrivacy(input, account),
     disable_comment: !flag(input, 'allowComment'),
     brand_content_toggle: flag(input, 'commercial') && flag(input, 'brandedContent'),
     brand_organic_toggle: flag(input, 'commercial') && flag(input, 'yourBrand'),
   });
+
+  async function creatorInfo(token: string) {
+    return (await client.request<{ data?: {
+      creator_username?: string; creator_nickname?: string; creator_avatar_url?: string; privacy_level_options?: string[];
+      comment_disabled?: boolean; duet_disabled?: boolean; stitch_disabled?: boolean; max_video_post_duration_sec?: number;
+    } }>('/v2/post/publish/creator_info/query/', token, { method: 'POST', json: {} })).data ?? {};
+  }
 
   const connector: Connector = {
     network: 'tiktok',
@@ -112,17 +163,36 @@ export function createTikTok(client: TikTokClient, opts: TikTokOptions = {}): Co
       const issues = validateAgainst(CAPS, input);
       const err = (code: string, message: string, field: Issue['field'] = 'placement'): Issue => ({ severity: 'error', code, message, field });
       const privacy = String(input.options.privacy ?? '');
-      if (!PRIVACY.some((p) => p.value === privacy)) issues.push(err('tiktok.privacy', 'Choose who can see this post. TikTok asks that nobody is chosen for you.'));
+      // What TikTok said this creator may choose, when the post was being written; every choice TikTok has, if it was never asked.
+      const info = creatorInfoOf(account);
+      const offered = info.privacyLevelOptions ?? PRIVACY.map((p) => p.value);
+      if (!privacy) {
+        issues.push(err('tiktok.privacy', 'Choose who can see this post. TikTok asks that nobody is chosen for you.'));
+      } else if (!offered.includes(privacy)) {
+        issues.push(err('tiktok.privacy.unavailable', `TikTok does not offer "${PRIVACY_LABEL(privacy)}" for this account. Choose one of: ${offered.map(PRIVACY_LABEL).join(', ')}.`));
+      }
       if (flag(input, 'commercial') && !flag(input, 'yourBrand') && !flag(input, 'brandedContent')) {
         issues.push(err('tiktok.commercial', 'You said the post promotes something: say whether it is your own brand, branded content, or both.'));
       }
       if (flag(input, 'brandedContent') && privacy === 'SELF_ONLY') issues.push(err('tiktok.branded.private', 'Branded content cannot be private on TikTok.'));
-      if (!flag(input, 'consent')) issues.push(err('tiktok.consent', `TikTok needs this agreement before posting: "${CONSENT}"`));
-      if (flag(input, 'brandedContent') && !flag(input, 'consentBranded')) issues.push(err('tiktok.consent.branded', `TikTok needs this agreement for branded content: "${CONSENT_BRANDED}"`));
+      // One agreement is shown at a time: the branded-content one replaces the plain one.
+      if (flag(input, 'brandedContent')) {
+        if (!flag(input, 'consentBranded')) issues.push(err('tiktok.consent.branded', `TikTok needs this agreement for branded content: "${CONSENT_BRANDED}"`));
+      } else if (!flag(input, 'consent')) {
+        issues.push(err('tiktok.consent', `TikTok needs this agreement before posting: "${CONSENT}"`));
+      }
+      const switchedOff: [string, boolean | undefined, string][] = [['allowComment', info.commentDisabled, 'Comments'], ['allowDuet', info.duetDisabled, 'Duets'], ['allowStitch', info.stitchDisabled, 'Stitches']];
+      for (const [key, disabled, what] of switchedOff) {
+        if (disabled && flag(input, key)) issues.push(err(`tiktok.${key}.disabled`, `${what} are turned off for this account in TikTok, so they cannot be allowed on this post.`));
+      }
+      const video = mainOf(input).find((m) => m.kind === 'video');
+      if (input.placement === 'video' && video?.durationMs && info.maxVideoPostDurationSec && video.durationMs / 1000 > info.maxVideoPostDurationSec) {
+        issues.push(err('tiktok.duration', `This account can post videos of up to ${info.maxVideoPostDurationSec} seconds on TikTok; this one is ${Math.round(video.durationMs / 1000)}.`, 'media'));
+      }
       if (!audited(account)) {
         issues.push({
           severity: 'warning', code: 'tiktok.unaudited', field: 'schedule',
-          message: "This TikTok app has not passed TikTok's audit yet: the post will be made private (visible only to you) whatever is chosen above, and a person has to make it public in TikTok.",
+          message: "This TikTok app has not passed TikTok's audit yet: the post will be made private (visible only to the account) whatever is chosen above, TikTok only takes it if the TikTok account itself is set to private in its settings, and a person has to make the post public in TikTok.",
         });
       }
       if (input.placement === 'photo') {
@@ -134,29 +204,49 @@ export function createTikTok(client: TikTokClient, opts: TikTokOptions = {}): Co
       return issues;
     },
 
-    async prepare(input, account, handle: Handle, env: ConnectorEnv): Promise<PrepareResult> {
-      if (handle.creatorChecked) return { done: true, handle };
+    /** What TikTok says this creator may do, asked while the post is being written (TikTok's rule), as the settings to show. */
+    async accountOptions(account, env): Promise<AccountOptions> {
       const token = (await env.token()).accessToken;
-      // What this creator may do right now, asked before any upload so a refusal is a wait or a clear message, not a failed upload.
-      const info = (await client.request<{ data?: { privacy_level_options?: string[]; max_video_post_duration_sec?: number } }>('/v2/post/publish/creator_info/query/', token, { method: 'POST', json: {} })).data ?? {};
-      const privacy = effectivePrivacy(input, account);
-      if (info.privacy_level_options && !info.privacy_level_options.includes(privacy)) {
-        throw new ConnectorError('file_rejected', `TikTok does not offer "${PRIVACY.find((p) => p.value === privacy)?.label ?? privacy}" for this account right now. Choose another setting for who can see the post.`, { detail: info });
-      }
-      const video = mainOf(input)[0];
-      if (input.placement === 'video' && video?.durationMs && info.max_video_post_duration_sec && video.durationMs / 1000 > info.max_video_post_duration_sec) {
-        throw new ConnectorError('file_rejected', `This account can post videos of up to ${info.max_video_post_duration_sec} seconds on TikTok; this one is ${Math.round(video.durationMs / 1000)}`);
-      }
-      const h = { ...handle, creatorChecked: true };
-      await env.persist(h);
-      return { done: true, handle: h };
+      const raw = await creatorInfo(token);
+      const info: CreatorInfo = {
+        privacyLevelOptions: raw.privacy_level_options, commentDisabled: raw.comment_disabled, duetDisabled: raw.duet_disabled, stitchDisabled: raw.stitch_disabled,
+        maxVideoPostDurationSec: raw.max_video_post_duration_sec, nickname: raw.creator_nickname, username: raw.creator_username, fetchedAt: env.now().toISOString(),
+      };
+      return {
+        fields: optionFields(info.privacyLevelOptions ?? [], info, audited(account)),
+        remember: { creatorInfo: info, ...(info.username ? { username: info.username } : {}) },
+      };
+    },
+
+    // The upload is the publishing (see above), so there is nothing to make ahead of the hour.
+    async prepare(_input, _account, handle: Handle): Promise<PrepareResult> {
+      return { done: true, handle };
     },
 
     async publish(input, account, handle: Handle, env: ConnectorEnv): Promise<Published> {
       const token = (await env.token()).accessToken;
       let h: Handle = { ...handle };
-      const username = account.providerData.username ? String(account.providerData.username) : undefined;
-      const profile = username ? `https://www.tiktok.com/@${username}` : 'https://www.tiktok.com/';
+      let username = account.providerData.username ? String(account.providerData.username) : undefined;
+      const profile = () => (username ? `https://www.tiktok.com/@${username}` : 'https://www.tiktok.com/');
+      let switchedOff: { comment?: boolean; duet?: boolean; stitch?: boolean } = (h.switchedOff as typeof switchedOff | undefined) ?? {};
+
+      // Asked again right before anything is sent, as TikTok wants: what was chosen when the post was written must still be on offer.
+      if (!h.publishId) {
+        const info = await creatorInfo(token);
+        const privacy = effectivePrivacy(input, account);
+        if (info.privacy_level_options && !info.privacy_level_options.includes(privacy)) {
+          throw new ConnectorError('file_rejected', `TikTok no longer offers "${PRIVACY_LABEL(privacy)}" for this account (it offers ${info.privacy_level_options.map(PRIVACY_LABEL).join(', ')}). Schedule it again and choose who can see the post.`, { detail: info });
+        }
+        const video = mainOf(input)[0];
+        if (input.placement === 'video' && video?.durationMs && info.max_video_post_duration_sec && video.durationMs / 1000 > info.max_video_post_duration_sec) {
+          throw new ConnectorError('file_rejected', `This account can post videos of up to ${info.max_video_post_duration_sec} seconds on TikTok; this one is ${Math.round(video.durationMs / 1000)}`);
+        }
+        // What the creator has switched off stays off, whatever was ticked when the post was written.
+        switchedOff = { comment: info.comment_disabled === true, duet: info.duet_disabled === true, stitch: info.stitch_disabled === true };
+        username ??= info.creator_username;
+        h = { ...h, switchedOff };
+      }
+      const postInfo = { ...basePostInfo(input, account), ...(switchedOff.comment ? { disable_comment: true } : {}) };
 
       if (input.placement === 'photo') {
         if (!h.publishId) {
@@ -165,7 +255,7 @@ export function createTikTok(client: TikTokClient, opts: TikTokOptions = {}): Co
           const r = await client.request<{ data: { publish_id: string } }>('/v2/post/publish/content/init/', token, {
             method: 'POST',
             json: {
-              post_info: { title, description: input.text.slice(0, 4000), ...postInfo(input, account), auto_add_music: false },
+              post_info: { title, description: input.text.slice(0, 4000), ...postInfo, auto_add_music: false },
               source_info: { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: main.map((m) => m.url) },
               post_mode: 'DIRECT_POST', media_type: 'PHOTO',
             },
@@ -173,7 +263,7 @@ export function createTikTok(client: TikTokClient, opts: TikTokOptions = {}): Co
           h = { ...h, publishId: r.data.publish_id, privacy: effectivePrivacy(input, account) };
           await env.persist(h);
         }
-        return { externalId: h.publishId as string, url: profile };
+        return { externalId: h.publishId as string, url: profile() };
       }
 
       const m = mainOf(input)[0]!;
@@ -185,7 +275,8 @@ export function createTikTok(client: TikTokClient, opts: TikTokOptions = {}): Co
           method: 'POST',
           json: {
             post_info: {
-              title: input.text.slice(0, 2200), ...postInfo(input, account), disable_duet: !flag(input, 'allowDuet'), disable_stitch: !flag(input, 'allowStitch'), is_aigc: input.aiGenerated,
+              title: input.text.slice(0, 2200), ...postInfo,
+              disable_duet: switchedOff.duet || !flag(input, 'allowDuet'), disable_stitch: switchedOff.stitch || !flag(input, 'allowStitch'), is_aigc: input.aiGenerated,
             },
             source_info: { source: 'FILE_UPLOAD', video_size: m.bytes, chunk_size: chunk, total_chunk_count: total },
           },
@@ -213,7 +304,7 @@ export function createTikTok(client: TikTokClient, opts: TikTokOptions = {}): Co
         h = { ...h, chunksDone: i + 1 };
         await env.persist(h);
       }
-      return { externalId: h.publishId as string, url: profile };
+      return { externalId: h.publishId as string, url: profile() };
     },
 
     async verify(account, externalId, handle, env): Promise<VerifyResult> {

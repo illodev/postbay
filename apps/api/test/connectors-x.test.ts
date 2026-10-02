@@ -77,6 +77,10 @@ describe('X: what it accepts', () => {
     expect(weightedLength('😀')).toBe(2);
     expect(weightedLength('春のメニュー')).toBe(12);
     expect(weightedLength('café')).toBe(4);
+    // X links a bare domain too, and counts it as an address.
+    expect(weightedLength('Visit lumen.com')).toBe(6 + 23);
+    expect(weightedLength('Visit lumen.es/menu')).toBe(6 + 23);
+    expect(weightedLength('lumen.es')).toBe(8); // a country domain alone is not linked
   });
 
   it('refuses text over 280 by that weight, though it is shorter in characters', () => {
@@ -93,8 +97,13 @@ describe('X: what it accepts', () => {
     expect(w.severity).toBe('warning');
     expect(w.message).toContain('0.20 USD');
     expect(w.message).toContain('0.015 USD');
-    expect(w.message).toContain('first comment');
+    // A reply with a link is charged like a post with one: the first comment is not a way out, and the advice does not say it is.
+    expect(w.message).toContain('moving it to the first comment saves nothing');
     expect(x().validate(input({ placement: 'images', media: [image()], text: 'Menu in the bio' }), acc).some((i) => i.code === 'x.link.cost')).toBe(false);
+    // A bare domain is a link to X, and so is one in the first comment.
+    expect(x().validate(input({ placement: 'images', media: [image()], text: 'Menu at lumen.example.com' }), acc).some((i) => i.code === 'x.link.cost')).toBe(true);
+    const comment = x().validate(input({ placement: 'images', media: [image()], text: 'Menu in the bio', firstComment: 'Here: www.lumen.es/menu' }), acc);
+    expect(comment).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'x.link.cost.comment', field: 'firstComment' }));
   });
 
   it('takes up to four pictures, or one video of up to 140 seconds', () => {
@@ -193,6 +202,51 @@ describe('X: publishing', () => {
     expect(fake.posts.size).toBe(1);
     expect(retry.externalId).toBe([...fake.posts.keys()][0]);
     expect(e.saved.at(-1)!.recovered).toBe(true);
+  });
+
+  it('finds it by the media it carries, though X gives the text back with t.co links and a media link, and looks before posting again', async () => {
+    const e = env(token(), files);
+    const inp = input({ placement: 'images', media: [image()], text: 'Menu & prices at https://lumen.example/menu' });
+    const prep = await prepareUntilDone(x(), inp, acc, e);
+    fake.loseNextPostAnswer = true;
+    await expectError(x().publish(inp, acc, prep.handle, e), 'transient');
+    // What X returns is not what was sent: matching the text as sent would never find it.
+    expect(fake.asShown([...fake.posts.values()][0]!)).not.toBe(inp.text);
+    const retry = await x().publish(inp, acc, e.saved.at(-1)!, e);
+    expect(retry.externalId).toBe([...fake.posts.keys()][0]);
+    expect(fake.callsTo('/2/tweets', 'POST')).toHaveLength(1); // found before a second post was tried
+    const lookup = fake.callsTo(/^\/2\/users\/[^/]+\/tweets$/)[0]!;
+    expect(lookup.query['tweet.fields']).toContain('attachments');
+    expect(lookup.query.start_time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+
+  it('posts again when the earlier try never made a post', async () => {
+    const e = env(token(), files);
+    const inp = input({ placement: 'images', media: [image()], text: 'Fresh bread today' });
+    const prep = await prepareUntilDone(x(), inp, acc, e);
+    fake.fail((c) => c.path === '/2/tweets', { title: 'Service Unavailable', detail: 'Service Unavailable', status: 503 }, 503);
+    await expectError(x().publish(inp, acc, prep.handle, e), 'transient'); // refused before anything was made
+    const retry = await x().publish(inp, acc, e.saved.at(-1)!, e);
+    expect(fake.posts.size).toBe(1);
+    expect(retry.externalId).toBe([...fake.posts.keys()][0]);
+    expect(e.saved.at(-1)!.recovered).toBeUndefined();
+  });
+
+  it("tells a refusal of the app's set-up, of the content and of a permission apart: only the last asks for a reconnection", async () => {
+    const e = env(token(), files);
+    const inp = input({ placement: 'images', media: [image()] });
+    const prep = await prepareUntilDone(x(), inp, acc, e);
+    fake.fail((c) => c.path === '/2/tweets', {
+      client_id: 'xid', detail: 'When authenticating requests to the Twitter API v2 endpoints, you must use keys and tokens from a Twitter developer App that is attached to a Project.',
+      registration_url: 'https://developer.x.com/', title: 'Client Forbidden', required_enrollment: 'Appropriate Level of API Access', reason: 'client-not-enrolled',
+      type: 'https://api.twitter.com/2/problems/client-forbidden',
+    }, 403);
+    const setup = await expectError(x().publish(inp, acc, prep.handle, e), 'unsupported');
+    expect(setup.message).toContain('developer console');
+    fake.fail((c) => c.path === '/2/tweets', { title: 'Forbidden', detail: 'You are not permitted to perform this action.', type: 'about:blank', status: 403 }, 403);
+    await expectError(x().publish(inp, acc, e.saved.at(-1)!, e), 'file_rejected');
+    fake.fail((c) => c.path === '/2/tweets', { title: 'Forbidden', detail: 'Missing required OAuth 2.0 scope: tweet.write', type: 'https://api.twitter.com/2/problems/oauth2-insufficient-scope', status: 403 }, 403);
+    await expectError(x().publish(inp, acc, e.saved.at(-1)!, e), 'auth');
   });
 
   it('still fails, telling the person why, when the text duplicates an older post that is not ours from this attempt', async () => {
