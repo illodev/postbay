@@ -9,6 +9,7 @@ import { DateTime } from 'luxon';
 import { audit } from './audit.js';
 import { agentOf, agentSettings } from './agent.js';
 import { prizeSettings, prizesOf } from './prizes.js';
+import { subscribeEvents } from './connectors.js';
 import { loadBrand, rulesOf } from './loaders.js';
 
 export const NETWORKS = ['instagram', 'facebook', 'youtube', 'tiktok', 'linkedin', 'x', 'threads', 'pinterest', 'bluesky'] as const;
@@ -45,7 +46,7 @@ export async function getBrand(ctx: Ctx, p: Principal, brandId: string) {
 
 export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: unknown) {
   const input = brandPatch.parse(raw);
-  return ctx.db.tx(async (db) => {
+  const out = await ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.manage');
     const before = await loadBrand(db, brandId);
     const rules = { ...rulesOf(before), ...(input.rules ?? {}) };
@@ -60,8 +61,29 @@ export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: 
     await audit(db, p, brandId, 'brand.updated', 'brand', brandId,
       { name: before.name, timezone: before.timezone, rules: rulesOf(before), publishing: publishingOf(before as never), agent: agentOf(before), prizes: prizesOf(before) },
       { name: after.name, timezone: after.timezone, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after), prizes: prizesOf(after) });
-    return { id: after.id, name: after.name, timezone: after.timezone, locale: after.locale, paused: after.paused, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after), prizes: prizesOf(after) };
+    return {
+      prizesSwitchedOn: !prizesOf(before).enabled && prizesOf(after).enabled,
+      brand: { id: after.id, name: after.name, timezone: after.timezone, locale: after.locale, paused: after.paused, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after), prizes: prizesOf(after) },
+    };
   });
+  if (out.prizesSwitchedOn) await subscribeForPrizes(ctx, brandId);
+  return out.brand;
+}
+
+/**
+ * Prizes have just been switched on: the brand's Meta accounts are asked to push their comments to the app now, instead of only at
+ * the next reconnection or when a rule starts. Best effort, like every subscription: an account whose connection lacks the permission
+ * (it was connected with prizes off) has that written down on it, which the account list shows, and its comments are read every few
+ * minutes meanwhile.
+ */
+async function subscribeForPrizes(ctx: Ctx, brandId: string) {
+  const accounts = await ctx.db.query<{ id: string }>(
+    `select id from social_account
+     where brand_id = $1 and network in ('instagram','facebook') and status = 'active' and token_encrypted is not null
+       and coalesce((provider_data->'events'->>'subscribed')::boolean, false) = false`,
+    [brandId],
+  );
+  for (const a of accounts) await subscribeEvents(ctx, a.id);
 }
 
 /**
@@ -290,7 +312,12 @@ export const accountInput = z.object({
   displayName: z.string().trim().min(1).max(200),
 });
 
-const SHOWN_DATA = ['audited', 'username', 'pageId', 'channelId', 'missingScopes', 'dataAccessExpiresAt'];
+/**
+ * What of an account's provider data the list shows: besides who it is, whether the network approved the app (`audited`), Meta's
+ * webhook subscription (`events`: whether comments are pushed, the fields, and why not when they are not) and a YouTube channel's
+ * made-for-kids default (`madeForKids`, absent when each video is asked).
+ */
+const SHOWN_DATA = ['audited', 'username', 'pageId', 'channelId', 'missingScopes', 'dataAccessExpiresAt', 'events', 'madeForKids'];
 
 export async function listAccounts(ctx: Ctx, p: Principal, brandId: string) {
   await authorize(ctx.db, p, brandId, 'brand.view');
