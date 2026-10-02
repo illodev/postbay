@@ -28,8 +28,22 @@ export function classifyX(r: Reply): ConnectorError | null {
     return new ConnectorError('auth', `${message} (X no longer accepts this connection)`, opts);
   }
   if (r.status >= 500) return new ConnectorError('transient', message, opts);
-  if (r.status === 403 && /duplicate/i.test(message)) return new ConnectorError('file_rejected', message, { ...opts, detail: { ...(opts.detail as object), duplicate: true } });
-  if (r.status === 403) return new ConnectorError('auth', `${message} (X says this app is not allowed to do that)`, opts);
+  if (r.status === 403) {
+    // X answers 403 for three different things, and only one of them is about the connection.
+    if (/duplicate/i.test(message)) return new ConnectorError('file_rejected', message, { ...opts, detail: { ...(opts.detail as object), duplicate: true } });
+    const type = String(body.type ?? '');
+    const reason = String(body.reason ?? body.required_enrollment ?? '');
+    // The app's own set-up: not attached to a project, not enrolled for this endpoint, an authentication this endpoint does not take.
+    if (/client-forbidden|unsupported-authentication/.test(type) || /client-not-enrolled|enrollment|access/i.test(reason) || /attached to a Project|Unsupported Authentication/i.test(`${message} ${title}`)) {
+      return new ConnectorError('unsupported', `X refused the call because of how the app is set up in the X developer console (${message}). An administrator has to fix the app or its project; connecting the account again will not help.`, opts);
+    }
+    // A token without the permission this needs: connecting again (and accepting it) is the fix.
+    if (/scope|oauth2-user-context|insufficient/i.test(`${type} ${message}`)) {
+      return new ConnectorError('auth', `${message} (X says this connection was not given the permission for that)`, opts);
+    }
+    // Anything else is X refusing this content or this action (a post it will not take, an account it has restricted).
+    return new ConnectorError('file_rejected', `X refused it: ${message}`, opts);
+  }
   if (r.status === 400 || r.status === 404 || r.status === 413 || r.status === 422) return new ConnectorError('file_rejected', message, opts);
   return new ConnectorError('unknown', message, opts);
 }
