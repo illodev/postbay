@@ -16,6 +16,7 @@ import * as sso from '../services/sso.js';
 import * as approvals from '../services/approvals.js';
 import * as authSvc from '../services/auth.js';
 import * as brand from '../services/brand.js';
+import * as brands from '../services/brands.js';
 import * as comments from '../services/comments.js';
 import * as connections from '../services/connections.js';
 import * as pieces from '../services/pieces.js';
@@ -339,6 +340,9 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.get('/api/webhook-deliveries/:id', async (req) => webhooks.getDelivery(ctx, P(req), params(req, 'id').id));
   app.post('/api/webhook-deliveries/:id/redeliver', async (req) => webhooks.redeliver(ctx, P(req), params(req, 'id').id));
+
+  // A new brand in the same workspace as the one the admin is working in; they become its admin.
+  app.post('/api/brands', async (req, reply) => reply.code(201).send(await brands.createBrand(ctx, P(req), req.body)));
 
   app.get('/api/brands/:brandId/campaigns', async (req) => brand.listCampaigns(ctx, P(req), params(req, 'brandId').brandId));
   app.post('/api/brands/:brandId/campaigns', async (req, reply) =>
