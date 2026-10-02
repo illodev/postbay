@@ -210,6 +210,37 @@ describe('the rule on a post', () => {
     }
   });
 
+  it("subscribes the app to the account's events when a rule that answers by message starts, once", async () => {
+    const scopes = env.meta.grantedScopes;
+    env.meta.grantedScopes = [...scopes, 'pages_manage_metadata'];
+    env.meta.subscriptions.clear();
+    await env.db.query(`update social_account set provider_data = provider_data - 'events' where id = $1`, [ig]);
+    try {
+      const pub = await published(ig);
+      await ruleOn(pub.id);
+      expect(env.meta.subscriptions.get('111')).toEqual([{ id: 'app', name: 'Estudio', subscribed_fields: ['comments'] }]);
+      expect((await env.db.one('select provider_data from social_account where id = $1', [ig]))!.provider_data.events).toMatchObject({ subscribed: true });
+      // Already subscribed: the next rule does not ask again.
+      const asked = env.meta.callsTo(/subscribed_apps$/).length;
+      await ruleOn((await published(ig)).id);
+      expect(env.meta.callsTo(/subscribed_apps$/).length).toBe(asked);
+    } finally {
+      env.meta.grantedScopes = scopes;
+    }
+  });
+
+  it('starts the rule all the same when Meta refuses the subscription, and keeps why (comments are read instead)', async () => {
+    env.meta.subscriptions.clear();
+    await env.db.query(`update social_account set provider_data = provider_data - 'events' where id = $1`, [fb]);
+    const pub = await published(fb);
+    const view = await ruleOn(pub.id);
+    expect(view.active).toBe(true);
+    const events = (await env.db.one('select provider_data from social_account where id = $1', [fb]))!.provider_data.events;
+    expect(events).toMatchObject({ subscribed: false });
+    expect(events.note).toContain('pages_manage_metadata');
+    expect((await env.db.one('select status from social_account where id = $1', [fb]))!.status).toBe('active');
+  });
+
   it('stores the keyword as it is compared, keeps it editable, and records who changed what', async () => {
     const pub = await published(ig);
     const v1 = await ruleOn(pub.id, { keyword: 'RÉCIPE' });

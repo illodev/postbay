@@ -265,7 +265,7 @@ export async function checkAccount(ctx: Ctx, accountId: string): Promise<Account
     try {
       const h = await connector.health(account, connectorEnv(ctx, accountId));
       results.push(h.valid
-        ? result('health', 'pass', 'Network accepts the connection', `Answered in ${fmtMs(Date.now() - t0)}${h.expiresAt ? `; access ends ${h.expiresAt.slice(0, 10)}` : ''}.`)
+        ? result('health', 'pass', 'Network accepts the connection', `Answered in ${fmtMs(Date.now() - t0)}${h.expiresAt ? `; access ends ${h.expiresAt.slice(0, 10)}` : ''}.${h.note ? ` ${h.note}` : ''}`)
         : result('health', 'fail', 'Network accepts the connection', h.note ?? 'The network says this connection is no longer valid.', 'Connect the account again.'));
     } catch (err) {
       results.push({ id: 'health', title: 'Network accepts the connection', ...describe(err) });

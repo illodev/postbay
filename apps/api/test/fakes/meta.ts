@@ -33,7 +33,13 @@ export class FakeMeta {
   url = '';
   calls: Call[] = [];
   pages: FakePage[] = [{ id: '111', name: 'Lumen Coffee', token: 'page-token-111', ig: { id: '222', username: 'lumen.coffee' } }];
-  grantedScopes = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'instagram_basic', 'instagram_content_publish'];
+  grantedScopes = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'pages_manage_engagement', 'instagram_basic', 'instagram_content_publish'];
+  /** The app's id, as Meta lists it among a Page's subscribed apps. */
+  appId = 'app';
+  /** Apps subscribed to each Page's webhooks, with their fields. A POST sets the app's fields to what it sends (it does not add). */
+  subscriptions = new Map<string, { id: string; name: string; subscribed_fields: string[] }[]>();
+  /** Photos uploaded to a Page, by id, with what they were uploaded with. */
+  photos = new Map<string, Record<string, string>>();
   /** Milliseconds a call to a path matching this takes to be answered, for tests that need something to be in flight. */
   latency: { match: RegExp; ms: number } | null = null;
   /** Containers stay IN_PROGRESS for this many status reads before FINISHED. */
@@ -41,8 +47,10 @@ export class FakeMeta {
   igQuota = { usage: 0, total: 50 };
   /** Numbers Instagram gives back; a metric Instagram does not offer for that kind of post is refused, as it does. */
   igInsights: Record<string, number> = { views: 2000, reach: 1500, likes: 120, comments: 14, saved: 30, shares: 22, replies: 5, navigation: 40, ig_reels_avg_watch_time: 6500 };
-  fbInsights: Record<string, number> = { post_media_view: 900, total_video_views: 700, total_video_avg_time_watched: 8200 };
-  fbCounts = { reactions: 41, comments: 6, shares: 3 };
+  fbInsights: Record<string, number> = { post_media_view: 900, total_video_views: 700, total_video_impressions_unique: 650, total_video_avg_time_watched: 8200 };
+  /** A Reel's own insights (they are not a video's): plays, unique viewers, average watch in ms, and comments and shares by kind. */
+  reelInsights: Record<string, unknown> = { fb_reels_total_plays: 1500, blue_reels_play_count: 1200, post_impressions_unique: 1100, post_video_avg_time_watched: 5400, post_video_social_actions: { COMMENT: 4, SHARE: 9 } };
+  fbCounts = { reactions: 41, comments: 6, shares: 3, likes: 30 };
   /** False makes insights calls fail the way a connection made before they were asked for does. */
   insightsPermission = true;
   /** Comments on posts, by the id of the post (an Instagram media id or a Page post id). `at` is a time in ms. */
@@ -168,6 +176,20 @@ export class FakeMeta {
     }
 
     let m: RegExpExecArray | null;
+    // ── Webhook subscriptions of a Page (its token makes `me` the Page) ──
+    if ((m = /^(\d+|me)\/subscribed_apps$/.exec(c.path))) {
+      const page = m[1] === 'me' ? this.pages.find((p) => p.token === token)?.id : m[1];
+      if (!page || !this.pages.some((p) => p.id === page && p.token === token)) return this.err(190, 'Invalid OAuth access token for this Page');
+      if (!this.grantedScopes.includes('pages_manage_metadata')) return this.err(200, '(#200) Requires pages_manage_metadata permission to manage the object');
+      const list = this.subscriptions.get(page) ?? [];
+      if (c.method === 'GET') return { data: list };
+      if (c.method === 'DELETE') { this.subscriptions.set(page, list.filter((a) => a.id !== this.appId)); return { success: true }; }
+      const fields = String(c.body.subscribed_fields ?? c.query.subscribed_fields ?? '').split(',').filter(Boolean);
+      const known = ['feed', 'mention', 'messages', 'messaging_postbacks', 'comments', 'live_comments', 'mentions', 'story_insights'];
+      if (!fields.length || fields.some((f) => !known.includes(f))) return this.err(100, '(#100) Param subscribed_fields must be one of the known fields');
+      this.subscriptions.set(page, [...list.filter((a) => a.id !== this.appId), { id: this.appId, name: 'Estudio', subscribed_fields: fields }]);
+      return { success: true };
+    }
     // ── Instagram ──
     if ((m = /^(\d+)\/content_publishing_limit$/.exec(c.path))) {
       return { data: [{ quota_usage: this.igQuota.usage, config: { quota_total: this.igQuota.total, quota_duration: 86400 } }] };
@@ -207,7 +229,18 @@ export class FakeMeta {
       if (bad) return this.err(100, `(#100) The following metrics are not supported for this media type: ${bad}`);
       return { data: wanted.map((name) => ({ name, period: 'lifetime', values: [{ value: this.igInsights[name] ?? 0 }] })) };
     }
-    if ((m = /^(\d+_\d+)\/insights$/.exec(c.path)) || (m = /^(v-\d+)\/video_insights$/.exec(c.path))) {
+    if ((m = /^(v-\d+)\/video_insights$/.exec(c.path))) {
+      if (!this.posts.has(m[1]!)) return this.err(100, 'Object does not exist');
+      if (!this.insightsPermission) return this.err(10, '(#10) Application does not have permission for this action');
+      // A Reel has its own metrics, and a video its own: a metric of the other kind fails the whole call.
+      const isReel = this.reels.has(m[1]!);
+      const source: Record<string, unknown> = isReel ? this.reelInsights : this.fbInsights;
+      const wanted = String(c.query.metric ?? '').split(',');
+      const bad = wanted.find((n) => !(n in source) || n === 'post_media_view');
+      if (bad) return this.err(100, `(#100) The value must be a valid insights metric: ${bad} is not available for this ${isReel ? 'Reel' : 'video'}`);
+      return { data: wanted.map((name) => ({ name, period: 'lifetime', values: [{ value: source[name] }] })) };
+    }
+    if ((m = /^(\d+_\d+)\/insights$/.exec(c.path))) {
       if (!this.posts.has(m[1]!)) return this.err(100, 'Object does not exist');
       if (!this.insightsPermission) return this.err(10, '(#10) Application does not have permission for this action');
       const wanted = String(c.query.metric ?? '').split(',');
@@ -230,12 +263,21 @@ export class FakeMeta {
       return existed ? { success: true } : this.err(100, 'Object does not exist', { error_subcode: 33 });
     }
     if ((m = /^(\d+)\/photos$/.exec(c.path))) {
+      if (c.body.temporary === 'true' && (c.body.published !== 'false' || c.body.scheduled_publish_time)) return this.err(100, '(#100) A temporary photo must be unpublished and cannot have a scheduled_publish_time');
       const id = this.id('ph-');
+      this.photos.set(id, c.body);
+      // An unpublished photo to attach to a post is not a post of its own.
+      if (c.body.published === 'false' && !c.body.scheduled_publish_time) return { id };
       const postId = `${m[1]}_${this.seq}`;
       this.posts.set(postId, { page: m[1]!, kind: 'post', params: c.body, comments: [] });
       return { id, post_id: postId };
     }
     if ((m = /^(\d+)\/feed$/.exec(c.path))) {
+      // "If the photo is used in a scheduled post, temporary=true must be used."
+      const attached = Object.entries(c.body).filter(([k]) => /^attached_media\[\d+\]$/.test(k)).map(([, v]) => JSON.parse(v).media_fbid as string);
+      if (c.body.scheduled_publish_time && attached.some((id) => this.photos.get(id)?.temporary !== 'true')) {
+        return this.err(100, '(#100) Photos attached to a scheduled post must be uploaded with temporary=true');
+      }
       const id = `${m[1]}_${this.id('')}`;
       this.posts.set(id, { page: m[1]!, kind: 'post', params: c.body, comments: [] });
       return { id };
@@ -267,6 +309,8 @@ export class FakeMeta {
     }
     if ((m = /^([\d_]+|v-\d+|ph-\d+)\/comments$/.exec(c.path)) && c.method === 'GET') return this.listComments(m[1]!, c, 'fb');
     if ((m = /^([\d_]+|v-\d+|ph-\d+)\/comments$/.exec(c.path))) {
+      // Commenting as the Page needs pages_manage_engagement.
+      if (!this.grantedScopes.includes('pages_manage_engagement')) return this.err(200, '(#200) Permissions error: commenting as the Page requires pages_manage_engagement');
       this.posts.get(m[1]!)?.comments.push(c.body.message ?? '');
       return { id: this.id('cm-') };
     }
@@ -278,7 +322,15 @@ export class FakeMeta {
       const reel = this.reels.get(m[1]!);
       let videoStatus = 'ready';
       if (p.kind === 'video' && reel && reel.processingPolls > 0) { reel.processingPolls--; videoStatus = 'processing'; }
-      if (String(c.query.fields ?? '').includes('reactions')) {
+      const fields = String(c.query.fields ?? '');
+      // A Video node has likes and comments but no shares field and no reactions: asking for them fails the call.
+      if (p.kind === 'video' && /\b(shares|reactions)\b/.test(fields)) {
+        return this.err(100, `(#100) Tried accessing nonexisting field (${/\bshares\b/.test(fields) ? 'shares' : 'reactions'}) on node type (Video)`);
+      }
+      if (p.kind === 'video' && fields.includes('likes')) {
+        return { id: m[1], likes: { data: [], summary: { total_count: this.fbCounts.likes } }, comments: { data: [], summary: { total_count: this.fbCounts.comments } } };
+      }
+      if (fields.includes('reactions')) {
         return {
           id: m[1], reactions: { summary: { total_count: this.fbCounts.reactions } }, comments: { summary: { total_count: this.fbCounts.comments } }, shares: { count: this.fbCounts.shares },
         };

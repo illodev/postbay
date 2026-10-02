@@ -5,6 +5,7 @@ import {
   type MediaItem, type MetricsResult, type NetworkComment, type PrepareResult, type Published, type PublishInput, type VerifyResult,
 } from '../types.js';
 import type { MetaClient } from './client.js';
+import { describeSubscription, subscribe, unsubscribe } from './webhooks.js';
 
 /**
  * Instagram publishing through the Instagram Graph API (the Facebook Login flavour).
@@ -55,6 +56,8 @@ const CAPS: Capabilities = {
 };
 
 const igUserId = (a: Account): string => a.providerData.igUserId ?? a.externalId;
+/** The Page the account is linked to; its token is that Page's, so `me` is the Page when the id was not kept. */
+const pageOf = (a: Account): string => String(a.providerData.pageId ?? 'me');
 
 /** Waits between looks at a container: a minute for the first five (Meta's advice), then five minutes. */
 const POLL_EVERY_SEC = 60;
@@ -299,7 +302,18 @@ export function createInstagram(client: MetaClient): Connector {
       const token = (await env.token()).accessToken;
       await client.get(igUserId(account), token, { fields: 'id,username' });
       const exp = account.providerData.dataAccessExpiresAt as string | undefined;
-      return { valid: true, expiresAt: exp };
+      return { valid: true, expiresAt: exp, note: await describeSubscription(client, pageOf(account), token, 'comments') };
+    },
+
+    // An Instagram account's comments reach the webhook only once the app is subscribed, through the Page it is linked to (its
+    // token is the Page's), to the "comments" field.
+    eventFields: ['comments'],
+    async subscribeEvents(account, env) {
+      const t = await env.token();
+      return subscribe(client, pageOf(account), t.accessToken, ['comments'], t.scopes);
+    },
+    async unsubscribeEvents(account, env, keep) {
+      await unsubscribe(client, pageOf(account), (await env.token()).accessToken, keep);
     },
   };
   return connector;

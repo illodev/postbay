@@ -35,9 +35,13 @@ export function createConnectorSet(config: Config, now: () => Date = () => new D
   const providers = new Map<ProviderId, OAuthProvider>();
 
   if (config.metaEnabled) {
+    // META_LOGIN_CONFIG_ID(_PRIZES) are read from the environment until config.ts declares them (they are optional there).
+    const extra = config as Config & { META_LOGIN_CONFIG_ID?: string; META_LOGIN_CONFIG_ID_PRIZES?: string };
     const cfg: MetaConfig = {
       graphUrl: config.META_GRAPH_URL, oauthUrl: config.META_OAUTH_URL, version: config.META_GRAPH_VERSION,
       appId: config.META_APP_ID!, appSecret: config.META_APP_SECRET!,
+      loginConfigId: extra.META_LOGIN_CONFIG_ID ?? process.env.META_LOGIN_CONFIG_ID ?? undefined,
+      loginConfigIdPrizes: extra.META_LOGIN_CONFIG_ID_PRIZES ?? process.env.META_LOGIN_CONFIG_ID_PRIZES ?? undefined,
     };
     const client = new MetaClient(cfg);
     providers.set('meta', createMetaOAuth(cfg));

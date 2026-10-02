@@ -7,6 +7,13 @@ export interface MetaConfig {
   version: string;
   appId: string;
   appSecret: string;
+  /**
+   * Facebook Login for Business: the id of a login configuration made in the app (META_LOGIN_CONFIG_ID). With one, the sign-in
+   * dialog is given `config_id` and the permissions are the configuration's, not `scope`. The second one, if set, is used for a
+   * brand with prizes on (its configuration adds the messaging permissions); without it the first one is used for both.
+   */
+  loginConfigId?: string;
+  loginConfigIdPrizes?: string;
 }
 
 /** Meta words its failures as { error: { code, error_subcode, message, is_transient } }. */

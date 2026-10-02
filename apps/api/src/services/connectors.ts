@@ -1,5 +1,5 @@
 import type { Ctx } from '../context.js';
-import { ConnectorError, type Account, type ConnectorEnv, type Handle, type Network, type TokenSet } from '../connectors/types.js';
+import { ConnectorError, type Account, type ConnectorEnv, type EventSubscription, type Handle, type Network, type TokenSet } from '../connectors/types.js';
 import { audit } from './audit.js';
 import { notifyRoles } from './notify.js';
 
@@ -119,4 +119,50 @@ export async function accountsDueForHealth(ctx: Ctx, limit = 20): Promise<string
     [new Date(ctx.now().getTime() - 86_400_000), limit],
   );
   return rows.map((r) => r.id);
+}
+
+/**
+ * Asks the network to push this account's events (comments) to the app's webhook, where it has to be asked (Meta), and keeps what
+ * came of it on the account (provider_data.events) for the account check. Best effort: it never fails what called it, because
+ * reading the comments every few minutes still works without it.
+ */
+export async function subscribeEvents(ctx: Ctx, accountId: string): Promise<EventSubscription | null> {
+  const account = await loadConnectorAccount(ctx, accountId);
+  const connector = account ? ctx.connectors.connector(account.network) : null;
+  if (!account || !connector?.subscribeEvents) return null;
+  let state: EventSubscription;
+  try {
+    state = await connector.subscribeEvents(account, connectorEnv(ctx, accountId));
+  } catch (err) {
+    ctx.log.warn({ err: String(err), accountId }, 'could not subscribe to the account\'s events');
+    state = { subscribed: false, fields: [], note: `The network refused the subscription: ${(err as Error).message}` };
+  }
+  await ctx.db.query(`update social_account set provider_data = provider_data || jsonb_build_object('events', $2::jsonb) where id = $1`, [
+    accountId, JSON.stringify({ ...state, at: ctx.now().toISOString() }),
+  ]);
+  return state;
+}
+
+/**
+ * When an account is disconnected, takes away the subscription to its events, keeping what another connected account on the same
+ * Page still needs. `token` is the account's last token, read before it was forgotten. Best effort, like subscribing.
+ */
+export async function unsubscribeEvents(ctx: Ctx, account: Account, token: TokenSet): Promise<void> {
+  const connector = ctx.connectors.connector(account.network);
+  if (!connector?.unsubscribeEvents || account.providerData.events?.subscribed !== true) return;
+  const page = String(account.network === 'facebook' ? account.externalId : (account.providerData.pageId ?? ''));
+  try {
+    const others = page
+      ? await ctx.db.query(
+        `select network from social_account where id <> $1 and status = 'active' and token_encrypted is not null
+           and coalesce((provider_data->'events'->>'subscribed')::boolean, false) and (provider_data->>'pageId' = $2 or (network = 'facebook' and external_id = $2))`,
+        [account.id, page],
+      )
+      : [];
+    const keep = others.flatMap((o) => ctx.connectors.connector(o.network as Network)?.eventFields ?? []);
+    const env: ConnectorEnv = { token: async () => token, now: ctx.now, log: ctx.log, open: (key, start) => ctx.storage.open(key, start), persist: async () => {} };
+    await connector.unsubscribeEvents(account, env, keep);
+  } catch (err) {
+    ctx.log.warn({ err: String(err), accountId: account.id }, 'could not unsubscribe from the account\'s events');
+  }
 }

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
+import { createMetaOAuth } from '../src/connectors/meta/oauth.js';
 import { createConnectorSet } from '../src/connectors/registry.js';
 import { ConnectorError, type Account, type Connector, type ConnectorEnv, type Handle, type MediaItem, type PublishInput } from '../src/connectors/types.js';
 import { FakeGoogle } from './fakes/google.js';
@@ -98,6 +99,19 @@ describe('Meta sign-in', () => {
     expect(withPrizes.searchParams.get('scope')).toContain('pages_messaging');
   });
 
+  it('signs in with a Facebook Login for Business configuration when one is set, instead of a list of permissions', () => {
+    const oauth = createMetaOAuth({ graphUrl: meta.url, oauthUrl: meta.url, version: 'v23.0', appId: 'app', appSecret: 'secret', loginConfigId: 'cfg-1', loginConfigIdPrizes: 'cfg-2' });
+    const u = new URL(oauth.authorizeUrl!('st', redirect));
+    expect(u.searchParams.get('config_id')).toBe('cfg-1');
+    expect(u.searchParams.get('scope')).toBeNull();
+    expect(u.searchParams.get('response_type')).toBe('code');
+    expect(new URL(oauth.authorizeUrl!('st', redirect, { prizes: true })).searchParams.get('config_id')).toBe('cfg-2');
+    const one = createMetaOAuth({ graphUrl: meta.url, oauthUrl: meta.url, version: 'v23.0', appId: 'app', appSecret: 'secret', loginConfigId: 'cfg-1' });
+    expect(new URL(one.authorizeUrl!('st', redirect, { prizes: true })).searchParams.get('config_id')).toBe('cfg-1');
+    // Without one, the permissions are listed, the Page's comment permission among them.
+    expect(new URL(set.provider('meta')!.authorizeUrl!('st', redirect)).searchParams.get('scope')).toContain('pages_manage_engagement');
+  });
+
   it('turns one sign-in into a Facebook Page and its Instagram account, with a token that does not expire', async () => {
     const found = await set.provider('meta')!.exchange!('code-1', redirect);
     expect(found.map((c) => [c.network, c.externalId, c.displayName])).toEqual([
@@ -116,10 +130,11 @@ describe('Meta sign-in', () => {
     meta.grantedScopes = ['pages_show_list', 'pages_read_engagement', 'instagram_basic'];
     try {
       const found = await set.provider('meta')!.exchange!('code-2', redirect);
-      expect(found[0]!.providerData.missingScopes).toEqual(['pages_manage_posts']);
+      // pages_manage_engagement is what the Page's first comment needs.
+      expect(found[0]!.providerData.missingScopes).toEqual(['pages_manage_posts', 'pages_manage_engagement']);
       expect(found[1]!.providerData.missingScopes).toEqual(['instagram_content_publish']);
     } finally {
-      meta.grantedScopes = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'instagram_basic', 'instagram_content_publish'];
+      meta.grantedScopes = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'pages_manage_engagement', 'instagram_basic', 'instagram_content_publish'];
     }
   });
 
@@ -366,6 +381,36 @@ describe('Facebook Page', () => {
     expect(feed.body['attached_media[0]']).toContain('media_fbid');
     expect(feed.body['attached_media[2]']).toContain('media_fbid');
     expect(feed.body.published).toBe('false');
+    // Photos used in a scheduled post have to be temporary (Meta's Page Photos reference), and the post says it is scheduled.
+    expect(photos.every((c) => c.body.temporary === 'true')).toBe(true);
+    expect(feed.body.unpublished_content_type).toBe('SCHEDULED');
+  });
+
+  it('uploads the photos of an album that goes out at once as plain unpublished photos', async () => {
+    const en = e();
+    const inp = input({ placement: 'photos', scheduledAt: new Date(Date.now() + 3 * 60_000), media: [0, 1].map((i) => media({ kind: 'image', position: i, mime: 'image/jpeg', url: `https://media.test/${i}.jpg` })) });
+    const r = await fb().prepare(inp, fbAccount, {}, en);
+    await fb().publish(inp, fbAccount, r.handle, en);
+    const photos = meta.callsTo(/\/photos$/, 'POST');
+    expect(photos.every((c) => c.body.published === 'false' && c.body.temporary === undefined)).toBe(true);
+    expect(meta.callsTo(/^111\/feed$/, 'POST')[0]!.body.published).toBe('true');
+  });
+
+  it('says in the history why the first comment was not posted when the Page may not comment', async () => {
+    const en = e();
+    const inp = input({ placement: 'photo', scheduledAt: new Date(Date.now() + 3 * 60_000), firstComment: 'Hello', media: [media({ kind: 'image', mime: 'image/jpeg', url: 'https://media.test/p.jpg' })] });
+    const r = await fb().prepare(inp, fbAccount, {}, en);
+    const pub = await fb().publish(inp, fbAccount, r.handle, en);
+    const scopes = meta.grantedScopes;
+    meta.grantedScopes = scopes.filter((x) => x !== 'pages_manage_engagement');
+    try {
+      const v = await fb().verify(fbAccount, pub.externalId, en.saved.at(-1)!, en);
+      expect(v.visibility).toBe('public'); // the post is live all the same
+      expect(v.note).toContain('pages_manage_engagement');
+      expect(v.handle!.firstCommentError).toContain('Connect the Page again');
+    } finally {
+      meta.grantedScopes = scopes;
+    }
   });
 
   it('uploads a Reel in three phases and waits for processing', async () => {

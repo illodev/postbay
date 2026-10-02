@@ -2,12 +2,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { authorize, type Principal } from '../auth/principal.js';
 import { allCapabilities } from '../connectors/registry.js';
-import { ConnectorError, type Candidate, type ProviderId } from '../connectors/types.js';
+import { ConnectorError, type Candidate, type ProviderId, type TokenSet } from '../connectors/types.js';
 import type { Ctx } from '../context.js';
 import { sha256Hex } from '../crypto.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { audit } from './audit.js';
-import { connectorEnv, loadConnectorAccount } from './connectors.js';
+import { connectorEnv, loadConnectorAccount, subscribeEvents, unsubscribeEvents } from './connectors.js';
 
 const STATE_TTL_MINUTES = 15;
 export const PROVIDER_INFO: Record<ProviderId, { label: string; networks: string[] }> = {
@@ -179,6 +179,13 @@ export const selectInput = z.object({ keys: z.array(z.string()).min(1).max(50) }
 export async function selectCandidates(ctx: Ctx, p: Principal, brandId: string, pendingId: string, raw: unknown) {
   const input = selectInput.parse(raw);
   if (p.kind !== 'user') throw forbidden();
+  const connected = await connectChosen(ctx, p, brandId, pendingId, input);
+  // The networks that push events only once asked (Meta) are asked now, so comments arrive by webhook. Best effort.
+  for (const a of connected) await subscribeEvents(ctx, a.id);
+  return connected;
+}
+
+async function connectChosen(ctx: Ctx, p: Principal & { kind: 'user' }, brandId: string, pendingId: string, input: z.infer<typeof selectInput>) {
   return ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.manage');
     const row = await db.one('select * from oauth_pending where id = $1 and brand_id = $2 for update', [pendingId, brandId]);
@@ -236,7 +243,7 @@ export async function selectCandidates(ctx: Ctx, p: Principal, brandId: string, 
 
 /** Disconnecting would strand anything still waiting to go out through it, so that has to be dealt with first. */
 export async function disconnectAccount(ctx: Ctx, p: Principal, brandId: string, accountId: string) {
-  return ctx.db.tx(async (db) => {
+  const out = await ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.manage');
     const acc = await db.one('select * from social_account where id = $1 and brand_id = $2 for update', [accountId, brandId]);
     if (!acc) throw notFound('Account');
@@ -248,10 +255,21 @@ export async function disconnectAccount(ctx: Ctx, p: Principal, brandId: string,
     if ((pending?.n ?? 0) > 0) {
       throw conflict('account_in_use', `${pending!.n} publication(s) are still waiting to go out through this account: cancel them first`, { count: pending!.n });
     }
+    // The last token, read before it is forgotten: taking the account's event subscription away needs it.
+    let token: TokenSet | null = null;
+    try {
+      token = acc.token_encrypted && ctx.vault ? ctx.vault.open<TokenSet>(acc.token_encrypted, `account:${accountId}`) : null;
+    } catch {
+      token = null;
+    }
     await db.query(`update social_account set token_encrypted = null, token_expires_at = null, status = 'manual', last_error = null where id = $1`, [accountId]);
     await audit(db, p, brandId, 'account.disconnected', 'social_account', accountId, { status: acc.status }, { status: 'manual' });
-    return { id: accountId };
+    return { id: accountId, token, acc };
   });
+  if (out.token) {
+    await unsubscribeEvents(ctx, { id: accountId, network: out.acc.network, externalId: out.acc.external_id, displayName: out.acc.display_name, providerData: out.acc.provider_data ?? {} }, out.token);
+  }
+  return { id: out.id };
 }
 
 export const accountSettings = z.object({

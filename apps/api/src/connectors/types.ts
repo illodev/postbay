@@ -196,6 +196,15 @@ export interface HealthResult {
   valid: boolean;
   /** When the credentials stop working, if known. */
   expiresAt?: string;
+  /** Why it is not valid; or, when it is, something worth knowing about the account (whether the network pushes its comments). */
+  note?: string;
+}
+
+/** Whether the network pushes this account's events (comments) to the app: Meta only does once the app is subscribed to the Page. */
+export interface EventSubscription {
+  subscribed: boolean;
+  /** The fields the app is subscribed to on the Page now. */
+  fields: string[];
   note?: string;
 }
 
@@ -269,6 +278,15 @@ export interface Connector {
    * replaced or failed. Only needed where the network itself would otherwise still publish it at the scheduled time.
    */
   discard?(account: Account, handle: Handle, env: ConnectorEnv): Promise<void>;
+  /**
+   * Asks the network to push this account's events to the app's webhook, where it has to be asked (Meta: POST
+   * /{page-id}/subscribed_apps). Done on connecting and when a prize starts relying on it.
+   */
+  subscribeEvents?(account: Account, env: ConnectorEnv): Promise<EventSubscription>;
+  /** The opposite, when the account is disconnected. `keep`: fields that another connected account on the same Page still needs. */
+  unsubscribeEvents?(account: Account, env: ConnectorEnv, keep: string[]): Promise<void>;
+  /** The webhook fields this account's events need (Meta: a Page's `feed`, an Instagram account's `comments`). */
+  eventFields?: string[];
   /** The numbers for a published post. Not every network gives every number (see CommonMetrics). */
   fetchMetrics?(account: Account, externalId: string, handle: Handle, env: ConnectorEnv, post: { publishedAt: Date; placement: string }): Promise<MetricsResult>;
   /** The comments on a post since a moment, oldest first. Only where the network lets the app read them. */
