@@ -7,7 +7,7 @@ import { playhead } from '../lib/playhead';
 import { Avatar } from './Avatar';
 import type { Tool } from './Drawing';
 import { Icon } from './icons';
-import { Dialog, ErrorBox, errorMessage, useToast } from './ui';
+import { Dialog, ErrorBox, errorMessage, Popover, Select, Tip, useToast } from './ui';
 import { agentInThread, liveVideo, round2, shortName, shortTimecode, threadAt, timecode } from './viewer';
 
 export function anchorLabel(a: Anchor | null, drawn = false): string {
@@ -140,28 +140,30 @@ function Thread({ c, n, focus, playing, canReply, canResolve, canReopen, onJump,
         <time className="rv-th-when" dateTime={c.created_at} title={fullDate(c.created_at)}>{ago(c.created_at)}</time>
         <span className="grow" />
         {canMark && (
+          <Tip label={`${peopleLabel}. ${t('review.thread.peopleOnlyHint')}`}>
+            <button
+              type="button"
+              className={`rv-th-act ${c.people_only ? 'on' : ''}`}
+              onClick={(e) => { e.stopPropagation(); mark.mutate(); }}
+              disabled={mark.isPending}
+              aria-label={peopleLabel}
+            >
+              <Icon name="users" size={15} />
+            </button>
+          </Tip>
+        )}
+        <Tip label={canToggle ? resolveLabel : open ? t('review.thread.openState') : t('review.thread.resolved')}>
           <button
             type="button"
-            className={`rv-th-act ${c.people_only ? 'on' : ''}`}
-            onClick={(e) => { e.stopPropagation(); mark.mutate(); }}
-            disabled={mark.isPending}
-            aria-label={peopleLabel}
-            title={`${peopleLabel}. ${t('review.thread.peopleOnlyHint')}`}
+            className={`rv-resolve ${open ? '' : 'done'} ${canToggle ? '' : 'locked'}`}
+            onClick={(e) => { e.stopPropagation(); if (canToggle && !toggle.isPending) toggle.mutate(); }}
+            aria-disabled={!canToggle}
+            aria-label={resolveLabel}
+            aria-pressed={!open}
           >
-            <Icon name="users" size={15} />
+            <ResolveMark />
           </button>
-        )}
-        <button
-          type="button"
-          className={`rv-resolve ${open ? '' : 'done'}`}
-          onClick={(e) => { e.stopPropagation(); if (canToggle) toggle.mutate(); }}
-          disabled={!canToggle || toggle.isPending}
-          aria-label={resolveLabel}
-          aria-pressed={!open}
-          title={canToggle ? resolveLabel : open ? t('review.thread.openState') : t('review.thread.resolved')}
-        >
-          <ResolveMark />
-        </button>
+        </Tip>
       </header>
       <p className="rv-th-body">
         {c.anchor ? (
@@ -218,10 +220,13 @@ function Thread({ c, n, focus, playing, canReply, canResolve, canReopen, onJump,
             onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setReplying(false); } }}
           />
           <div className="rv-reply-row">
-            <select className="rv-select" aria-label={t('review.reply.typeLabel')} value={kind} onChange={(e) => setKind(e.target.value)}>
-              <option value="">{t('review.reply.kind.plain')}</option>
-              {REPLY_KINDS.map((k) => <option key={k} value={k}>{replyKindLabel(k)}</option>)}
-            </select>
+            <Select
+              className="rv-kind"
+              label={t('review.reply.typeLabel')}
+              value={kind || 'plain'}
+              onChange={(k) => setKind(k === 'plain' ? '' : k)}
+              options={[{ value: 'plain', label: t('review.reply.kind.plain') }, ...REPLY_KINDS.map((k) => ({ value: k, label: replyKindLabel(k) }))]}
+            />
             <span className="grow" />
             <button type="button" className="btn btn-ghost btn-small" onClick={() => setReplying(false)}>{t('common.cancel')}</button>
             <button className="btn btn-primary btn-small" disabled={!reply.trim() || send.isPending}>{t('review.reply.send')}</button>
@@ -257,20 +262,6 @@ export interface CommentFilter {
 }
 export const NO_FILTER: CommentFilter = { status: 'all', mine: false, drawn: false, agent: false, people: [], q: '' };
 
-/** Closes a popover when the pointer goes down outside it, or on Escape. */
-function useDismiss(open: boolean, close: () => void) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && close();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey, true);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
-  }, [open, close]);
-  return ref;
-}
-
 /** The filter menu, Frame.io style: the state as a choice, then what to narrow by, then people. */
 function FilterMenu({ filter, onFilter, threads, isMine, count }: {
   filter: CommentFilter;
@@ -280,7 +271,6 @@ function FilterMenu({ filter, onFilter, threads, isMine, count }: {
   count: number;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useDismiss(open, () => setOpen(false));
   const people = useMemo(() => {
     const m = new Map<string, number>();
     for (const c of threads) m.set(c.author, (m.get(c.author) ?? 0) + 1);
@@ -299,68 +289,78 @@ function FilterMenu({ filter, onFilter, threads, isMine, count }: {
   const extra = (filter.mine ? 1 : 0) + (filter.drawn ? 1 : 0) + (filter.agent ? 1 : 0) + filter.people.length;
   const label = filter.status === 'open' ? t('review.filter.open') : filter.status === 'resolved' ? t('review.filter.resolved') : t('review.filter.allComments');
   return (
-    <div ref={ref} className="rv-fmenu">
-      <button type="button" className="rv-fmenu-btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} aria-label={t('review.filter.label')}>
-        <span className="rv-fmenu-l">{label}</span>
-        <span className="rv-fmenu-n">({count})</span>
-        {extra > 0 && <span className="rv-fmenu-x">+{extra}</span>}
-        <Icon name="chevronDown" size={14} />
-      </button>
-      {open && (
-        <div className="rv-pop rv-fmenu-pop" role="menu" aria-label={t('review.filter.label')}>
-          <div className="rv-pop-h">{t('review.filter.show')}</div>
-          {statuses.map(([s, l, n]) => (
-            <button key={s} type="button" role="menuitemradio" aria-checked={filter.status === s} className="rv-pop-item" onClick={() => onFilter({ ...filter, status: s })}>
-              <span className={`rv-radio ${filter.status === s ? 'on' : ''}`} aria-hidden="true" />
-              <span className="grow">{l}</span>
-              <span className="rv-pop-n">{n}</span>
-            </button>
-          ))}
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      width={270}
+      label={t('review.filter.label')}
+      className="rv-fmenu-pop"
+      trigger={
+        <button type="button" className="rv-fmenu-btn" aria-haspopup="dialog" aria-label={t('review.filter.label')}>
+          <span className="rv-fmenu-l">{label}</span>
+          <span className="rv-fmenu-n">({count})</span>
+          {extra > 0 && <span className="rv-fmenu-x">+{extra}</span>}
+          <Icon name="chevronDown" size={14} />
+        </button>
+      }
+    >
+      <div role="radiogroup" aria-label={t('review.filter.show')}>
+        <div className="rv-pop-h">{t('review.filter.show')}</div>
+        {statuses.map(([st, l, n]) => (
+          <button key={st} type="button" role="radio" aria-checked={filter.status === st} className="rv-pop-item" onClick={() => onFilter({ ...filter, status: st })}>
+            <span className={`rv-radio ${filter.status === st ? 'on' : ''}`} aria-hidden="true" />
+            <span className="grow">{l}</span>
+            <span className="rv-pop-n">{n}</span>
+          </button>
+        ))}
+      </div>
+      <div className="rv-pop-sep" />
+      <div role="group" aria-label={t('review.filter.narrow')}>
+        <div className="rv-pop-h">{t('review.filter.narrow')}</div>
+        {narrows.map(([k, l, n]) => (
+          <button key={k} type="button" role="checkbox" aria-checked={filter[k]} className="rv-pop-item" onClick={() => onFilter({ ...filter, [k]: !filter[k] })}>
+            <Icon name={k === 'mine' ? 'user' : k === 'drawn' ? 'pen' : 'bot'} size={15} />
+            <span className="grow">{l}</span>
+            <span className="rv-pop-n">{n}</span>
+            <span className={`rv-box ${filter[k] ? 'on' : ''}`} aria-hidden="true" />
+          </button>
+        ))}
+      </div>
+      {people.length > 1 && (
+        <>
           <div className="rv-pop-sep" />
-          <div className="rv-pop-h">{t('review.filter.narrow')}</div>
-          {narrows.map(([k, l, n]) => (
-            <button key={k} type="button" role="menuitemcheckbox" aria-checked={filter[k]} className="rv-pop-item" onClick={() => onFilter({ ...filter, [k]: !filter[k] })}>
-              <Icon name={k === 'mine' ? 'user' : k === 'drawn' ? 'pen' : 'bot'} size={15} />
-              <span className="grow">{l}</span>
-              <span className="rv-pop-n">{n}</span>
-              <span className={`rv-box ${filter[k] ? 'on' : ''}`} aria-hidden="true" />
-            </button>
-          ))}
-          {people.length > 1 && (
-            <>
-              <div className="rv-pop-sep" />
-              <div className="rv-pop-h">{t('review.filter.people')}</div>
-              {people.map(([name, n]) => {
-                const on = filter.people.includes(name);
-                return (
-                  <button
-                    key={name}
-                    type="button"
-                    role="menuitemcheckbox"
-                    aria-checked={on}
-                    className="rv-pop-item"
-                    onClick={() => onFilter({ ...filter, people: on ? filter.people.filter((p) => p !== name) : [...filter.people, name] })}
-                  >
-                    <Avatar name={shortName(name)} size={20} title="" />
-                    <span className="grow rv-pop-name">{shortName(name)}</span>
-                    <span className="rv-pop-n">{n}</span>
-                    <span className={`rv-box ${on ? 'on' : ''}`} aria-hidden="true" />
-                  </button>
-                );
-              })}
-            </>
-          )}
-          {(extra > 0 || filter.status !== 'all') && (
-            <>
-              <div className="rv-pop-sep" />
-              <button type="button" role="menuitem" className="rv-pop-item rv-pop-clear" onClick={() => { onFilter({ ...NO_FILTER, q: filter.q }); setOpen(false); }}>
-                {t('review.filter.clear')}
-              </button>
-            </>
-          )}
-        </div>
+          <div role="group" aria-label={t('review.filter.people')}>
+            <div className="rv-pop-h">{t('review.filter.people')}</div>
+            {people.map(([name, n]) => {
+              const on = filter.people.includes(name);
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  role="checkbox"
+                  aria-checked={on}
+                  className="rv-pop-item"
+                  onClick={() => onFilter({ ...filter, people: on ? filter.people.filter((x) => x !== name) : [...filter.people, name] })}
+                >
+                  <Avatar name={shortName(name)} size={20} title="" />
+                  <span className="grow rv-pop-name">{shortName(name)}</span>
+                  <span className="rv-pop-n">{n}</span>
+                  <span className={`rv-box ${on ? 'on' : ''}`} aria-hidden="true" />
+                </button>
+              );
+            })}
+          </div>
+        </>
       )}
-    </div>
+      {(extra > 0 || filter.status !== 'all') && (
+        <>
+          <div className="rv-pop-sep" />
+          <button type="button" className="rv-pop-item rv-pop-clear" onClick={() => { onFilter({ ...NO_FILTER, q: filter.q }); setOpen(false); }}>
+            {t('review.filter.clear')}
+          </button>
+        </>
+      )}
+    </Popover>
   );
 }
 
@@ -572,34 +572,41 @@ export function CommentsPanel({ versionId, threads, numbers, me, draft, onDraft,
           <CueQuote anchor={draft} />
           <div className="rv-compose-bar">
             {video && (
-              <button
-                type="button"
-                className={`rv-cb ${atMoment || draft?.type === 'time' ? 'on' : ''}`}
-                aria-pressed={atMoment || draft?.type === 'time'}
-                onClick={() => {
-                  if (draft) { onClearDraft(); setAnchorMode('general'); return; }
-                  setAnchorMode((m) => (m === 'moment' ? 'general' : 'moment'));
-                }}
-                aria-label={atMoment || draft ? t('review.compose.makeGeneral') : t('review.compose.toMoment')}
-                title={atMoment || draft ? t('review.compose.makeGeneral') : t('review.compose.toMoment')}
-              >
-                <Icon name="clock" size={16} />
-              </button>
+              <Tip label={atMoment || draft ? t('review.compose.makeGeneral') : t('review.compose.toMoment')}>
+                <button
+                  type="button"
+                  className={`rv-cb ${atMoment || draft?.type === 'time' ? 'on' : ''}`}
+                  aria-pressed={atMoment || draft?.type === 'time'}
+                  onClick={() => {
+                    if (draft) { onClearDraft(); setAnchorMode('general'); return; }
+                    setAnchorMode((m) => (m === 'moment' ? 'general' : 'moment'));
+                  }}
+                  aria-label={atMoment || draft ? t('review.compose.makeGeneral') : t('review.compose.toMoment')}
+                >
+                  <Icon name="clock" size={16} />
+                </button>
+              </Tip>
             )}
             {onTool && (
-              <button type="button" className="rv-cb rv-cb-pen" aria-pressed={!!tool} onClick={() => onTool(tool ? null : 'pen')} aria-label={t('review.draw.toggle')} title={`${t('review.draw.toggle')} (D)`}>
-                <Icon name="pen" size={16} />
-              </button>
+              <Tip label={t('review.draw.toggle')} shortcut="D">
+                <button type="button" className="rv-cb rv-cb-pen" aria-pressed={!!tool} onClick={() => onTool(tool ? null : 'pen')} aria-label={t('review.draw.toggle')}>
+                  <Icon name="pen" size={16} />
+                </button>
+              </Tip>
             )}
-            <label className={`rv-cb rv-cb-check ${peopleOnly ? 'on warn' : ''}`} title={`${t('review.compose.peopleOnly')} ${t('review.compose.peopleOnlyHint')}`}>
-              <input type="checkbox" className="sr-only" checked={peopleOnly} onChange={(e) => setPeopleOnly(e.target.checked)} aria-label={`${t('review.compose.peopleOnly')} ${t('review.compose.peopleOnlyHint')}`} />
-              <Icon name="users" size={16} />
-            </label>
+            <Tip label={`${t('review.compose.peopleOnly')} ${t('review.compose.peopleOnlyHint')}`}>
+              <label className={`rv-cb rv-cb-check ${peopleOnly ? 'on warn' : ''}`}>
+                <input type="checkbox" className="sr-only" checked={peopleOnly} onChange={(e) => setPeopleOnly(e.target.checked)} aria-label={`${t('review.compose.peopleOnly')} ${t('review.compose.peopleOnlyHint')}`} />
+                <Icon name="users" size={16} />
+              </label>
+            </Tip>
             {peopleOnly && <span className="rv-cb-say">{t('review.compose.peopleOnly')}</span>}
             <span className="grow" />
-            <button className="rv-send" disabled={!body.trim() || post.isPending} aria-label={t('review.compose.post')} title={t('review.compose.postHint')}>
-              <Icon name="send" size={15} />
-            </button>
+            <Tip label={t('review.compose.post')} shortcut={t('review.keys.enter')}>
+              <button className="rv-send" disabled={!body.trim() || post.isPending} aria-label={t('review.compose.post')}>
+                <Icon name="send" size={15} />
+              </button>
+            </Tip>
           </div>
           {post.error && <ErrorBox error={post.error} />}
         </form>

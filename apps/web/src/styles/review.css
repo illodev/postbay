@@ -32,7 +32,7 @@
   background: transparent; color: var(--muted); cursor: pointer; text-decoration: none; transition: background-color .12s, color .12s;
 }
 .rv-ic:hover:not(:disabled) { background: var(--control-hover); color: var(--text); text-decoration: none; }
-.rv-ic:disabled { opacity: .35; cursor: not-allowed; }
+.rv-ic:disabled, .rv-ic[aria-disabled='true'] { opacity: .35; cursor: not-allowed; }
 .rv-ic.on, .rv-ic[aria-pressed='true'] { color: var(--text); background: var(--control); }
 .rv-ic svg { display: block; }
 .rv-ic-sm { width: 28px; height: 28px; border-radius: 7px; }
@@ -238,10 +238,8 @@ a.rv-vr:hover { background: var(--control); color: var(--text); text-decoration:
 .rv-tool[aria-pressed='true'] { background: var(--accent); color: #fff; }
 .rv-swatch { display: block; width: 16px; height: 16px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 25%); }
 .rv-tools-sep { height: 1px; margin: 3px 6px; background: var(--line); }
-.rv-swatches {
-  position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%); display: flex; gap: 2px; padding: 4px;
-  border-radius: 10px; background: var(--surface-2); box-shadow: 0 10px 30px rgb(0 0 0 / 50%);
-}
+.float.rv-swatches { min-width: 0; padding: 4px; }
+.rv-swatch-row { display: flex; gap: 2px; }
 .rv-swatch-btn { appearance: none; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 7px; background: none; cursor: pointer; padding: 0; }
 .rv-swatch-btn:hover { background: var(--control-hover); }
 .rv-swatch-btn[aria-checked='true'] .rv-swatch { box-shadow: 0 0 0 2px var(--surface-2), 0 0 0 3.5px #fff; }
@@ -258,33 +256,25 @@ a.rv-vr:hover { background: var(--control); color: var(--text); text-decoration:
   background: var(--control); color: #c3c6d2; font: 500 .75rem/1 var(--font); white-space: nowrap; cursor: pointer;
 }
 .rv-chipbtn:hover:not(:disabled) { background: var(--control-hover); color: var(--text); }
-.rv-chipbtn:disabled { opacity: .4; cursor: not-allowed; }
+.rv-chipbtn[aria-disabled='true'] { opacity: .4; cursor: not-allowed; }
 .rv-speed { min-width: 38px; justify-content: center; font-variant-numeric: tabular-nums; }
 .rv-pages { display: inline-flex; align-items: center; gap: 2px; }
-.rv-zone { display: inline-flex; align-items: center; color: var(--faint); min-width: 0; margin: 0 2px; height: 28px; padding-left: 9px; border-radius: 7px; background: var(--control); }
-.rv-zone:hover { color: var(--muted); background: var(--control-hover); }
-.rv-zone.on { color: #fff; background: var(--accent); }
-.rv .rv-zone .rv-select {
-  border: 0; background-color: transparent; min-height: 28px; height: 28px; max-width: 180px; color: #c3c6d2; font: 500 .75rem var(--font);
-  padding: 0 1.6rem 0 .4rem; background-position: right .5rem center; box-shadow: none;
-}
-.rv .rv-zone.on .rv-select { color: #fff; }
-.rv .rv-select { width: auto; max-width: 210px; min-height: 28px; padding: 0 1.7rem 0 .6rem; font-size: .8125rem; text-overflow: ellipsis; }
+.rv .select-trigger.rv-zone { width: auto; max-width: 220px; min-height: 28px; height: 28px; margin: 0 2px; padding: 0 7px 0 9px; font-size: .75rem; font-weight: 500; color: #c3c6d2; }
+.rv .select-trigger.rv-zone[data-placeholder] { color: #c3c6d2; }
+.rv .select-trigger.rv-zone.on { background: var(--accent-soft); color: #fff; }
+.rv .select-trigger.rv-kind { width: auto; min-height: 30px; font-size: .8125rem; }
 
 /* keyboard shortcuts */
 .rv-help { position: relative; }
 .rv-help-btn { font: 600 .8125rem var(--font); }
 .rv-help-btn[aria-expanded='true'] { background: var(--control); color: var(--text); }
-.rv-help-pop {
-  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 30; width: 320px; padding: 12px 14px; border-radius: 10px;
-  background: var(--surface-2); box-shadow: 0 16px 44px rgb(0 0 0 / 60%);
-}
+.rv-help-pop { padding: 12px 14px; }
 .rv-help-pop strong { font-size: .8125rem; font-weight: 600; }
 .rv-help-pop dl { margin: 10px 0 0; display: flex; flex-direction: column; gap: 7px; }
 .rv-help-pop dl div { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: .8125rem; }
 .rv-help-pop dt { white-space: nowrap; color: var(--faint); }
 .rv-help-pop dd { margin: 0; color: var(--muted); text-align: right; }
-.rv kbd { display: inline-block; font: 500 .71875rem/1.6 var(--mono); color: var(--text); background: var(--control-hover); border-radius: 4px; padding: 0 5px; }
+.rv kbd, .rv-help-pop kbd { display: inline-block; font: 500 .71875rem/1.6 var(--mono); color: var(--text); background: var(--control-hover); border-radius: 4px; padding: 0 5px; }
 
 /* the timeline: authors' marks above a thin line, the playhead as a knob */
 .rv-tl { position: relative; height: 40px; cursor: pointer; touch-action: none; outline: none; user-select: none; }
@@ -440,15 +430,15 @@ a.rv-vr:hover { background: var(--control); color: var(--text); text-decoration:
 .rv-th-act:hover { background: var(--control-hover); color: var(--text); }
 .rv-th-act.on { color: var(--warn); }
 .rv-resolve { appearance: none; flex: none; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; }
-.rv-resolve:disabled { cursor: default; }
+.rv-resolve.locked { cursor: default; }
 .rv-resolve svg { display: block; }
 .rv-res-ring { fill: none; stroke: #4a4d63; stroke-width: 1.5; transition: stroke .12s, fill .12s; }
 .rv-res-check { fill: none; stroke: transparent; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: stroke .12s; }
-.rv-resolve:hover:not(:disabled) .rv-res-ring { stroke: var(--good); }
-.rv-resolve:hover:not(:disabled) .rv-res-check { stroke: rgb(62 207 142 / 60%); }
+.rv-resolve:not(.locked):hover .rv-res-ring { stroke: var(--good); }
+.rv-resolve:not(.locked):hover .rv-res-check { stroke: rgb(62 207 142 / 60%); }
 .rv-resolve.done .rv-res-ring { stroke: var(--good); fill: rgb(62 207 142 / 16%); }
 .rv-resolve.done .rv-res-check { stroke: var(--good); }
-.rv-resolve.done:hover:not(:disabled) .rv-res-check { stroke: var(--good); }
+.rv-resolve.done:hover .rv-res-check { stroke: var(--good); }
 .rv-th-body { margin: 6px 0 0; font-size: .8125rem; line-height: 1.5; color: #e1e3ea; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rv .tc { display: inline-block; vertical-align: 1px; font: 500 .71875rem/1.45 var(--mono); padding: 0 5px; border-radius: 4px; }
 .rv-th-tc { appearance: none; border: 0; cursor: pointer; margin-right: 6px; }
@@ -595,7 +585,7 @@ a.rv-vr:hover { background: var(--control); color: var(--text); text-decoration:
   .rv-tl-lane { height: 24px; }
   .rv-tl-line, .rv-tl:hover .rv-tl-line { top: 26px; height: 4px; }
   .rv-tl-hover { display: none; }
-  .rv-ctl .rv-zone, .rv-ctl .rv-speed, .rv-ctl .rv-help, .rv-ctl .rv-ic-comment { display: none; }
+  .rv-ctl .rv-zone, .rv-ctl .rv-speed, .rv-ctl .rv-help-btn, .rv-ctl .rv-ic-comment { display: none; }
   .rv-tools { left: 8px; }
   .rv-tile { width: 34px; height: 42px; }
   .rv-side { border-radius: 0; background: var(--bg); overflow: visible; }
@@ -621,3 +611,11 @@ a.rv-vr:hover { background: var(--control); color: var(--text); text-decoration:
 }
 /* the agent's mark in a stack of people: opaque, so the face behind it does not show through */
 .rv .rv-people .avatar-agent { background: color-mix(in srgb, var(--agent) 20%, var(--bg)); }
+
+/* menus from the shared primitives: the version list and the comparison */
+.rv-vrow-n { font: 600 .75rem/1 var(--mono); width: 24px; flex: none; color: var(--text); }
+.rv-vrow-meta { display: inline-flex; align-items: center; gap: 10px; }
+.rv-vrow-meta .chip { font-size: .75rem; }
+.rv-agent-name { color: var(--agent); }
+.rv-btn-wrap { display: inline-flex; border-radius: 7px; }
+.rv-btn-wrap .btn:disabled { pointer-events: none; }

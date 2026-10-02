@@ -8,7 +8,7 @@ import { playhead } from '../lib/playhead';
 import { Avatar } from './Avatar';
 import { bboxOf, DrawLayer, DrawTools, type Tool } from './Drawing';
 import { Icon } from './icons';
-import { Segmented } from './ui';
+import { Popover, Segmented, Tip } from './ui';
 import '../styles/review.css';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -128,32 +128,33 @@ function useFullscreen(target: RefObject<HTMLElement | null>) {
 function FullscreenButton({ fs }: { fs: ReturnType<typeof useFullscreen> }) {
   if (!fs.supported) return null;
   const label = fs.on ? t('review.media.exitFullscreen') : t('review.media.fullscreen');
-  return <button type="button" className="rv-ic rv-ic-full" onClick={fs.toggle} aria-label={label} title={`${label} (F)`}><Icon name="expand" size={17} /></button>;
+  return (
+    <Tip label={label} shortcut="F">
+      <button type="button" className="rv-ic rv-ic-full" onClick={fs.toggle} aria-label={label}><Icon name="expand" size={17} /></button>
+    </Tip>
+  );
 }
 
 /** The "?" in the control bar: the keyboard shortcuts of what is on the stage. The same key opens it. */
 function ShortcutHelp({ open, onToggle, rows }: { open: boolean; onToggle: () => void; rows: [string, string][] }) {
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) onToggle(); };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [open, onToggle]);
   return (
-    <div ref={box} className="rv-help">
-      <button type="button" className="rv-ic rv-help-btn" aria-expanded={open} onClick={onToggle} aria-label={t('review.keys.title')} title={`${t('review.keys.title')} (?)`}>?</button>
-      {open && (
-        <div className="rv-help-pop" role="dialog" aria-label={t('review.keys.title')}>
-          <strong>{t('review.keys.title')}</strong>
-          <dl>
-            {rows.map(([k, v]) => (
-              <div key={k}><dt>{k.split(' ').map((p, i) => (p === '/' || p === '+' ? <span key={i}> {p} </span> : <kbd key={i}>{p}</kbd>))}</dt><dd>{v}</dd></div>
-            ))}
-          </dl>
-        </div>
-      )}
-    </div>
+    <Popover
+      open={open}
+      onOpenChange={(o) => { if (o !== open) onToggle(); }}
+      side="top"
+      align="end"
+      width={320}
+      label={t('review.keys.title')}
+      className="rv-help-pop"
+      trigger={<button type="button" className="rv-ic rv-help-btn" aria-label={t('review.keys.title')}>?</button>}
+    >
+      <strong>{t('review.keys.title')}</strong>
+      <dl>
+        {rows.map(([k, v]) => (
+          <div key={k}><dt>{k.split(' ').map((p, i) => (p === '/' || p === '+' ? <span key={i}> {p} </span> : <kbd key={i}>{p}</kbd>))}</dt><dd>{v}</dd></div>
+        ))}
+      </dl>
+    </Popover>
   );
 }
 
@@ -163,6 +164,7 @@ const videoKeys = (draw: boolean): [string, string][] => [
   [`${t('review.keys.shift')} + ← / →`, t('review.keys.second')],
   ['C', t('review.keys.comment')],
   ...(draw ? [['D', t('review.keys.draw')] as [string, string]] : []),
+  ['M', t('review.keys.mute')],
   ['F', t('review.keys.fullscreen')],
   ['Esc', t('review.keys.cancel')],
   [t('review.keys.enter'), t('review.keys.send')],
@@ -692,6 +694,10 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
       case 'F':
         fs.toggle();
         return true;
+      case 'm':
+      case 'M':
+        if (ref.current) ref.current.muted = !ref.current.muted;
+        return true;
       case 'Escape':
         if (help) { setHelp(false); return true; }
         if (tool) return false;
@@ -758,35 +764,49 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
           }}
         />
         <div className="rv-ctl">
-          <button type="button" className="rv-ic rv-play" onClick={toggle} aria-label={playing ? t('review.video.pause') : t('review.video.play')} title={`${playing ? t('review.video.pause') : t('review.video.play')} (${t('review.keys.space')})`}>
-            {playing ? <IconPause /> : <IconPlay />}
-          </button>
-          <button type="button" className="rv-ic" onClick={() => { const v = ref.current; if (v) v.muted = !v.muted; }} aria-label={muted ? t('review.video.unmute') : t('review.video.mute')} title={muted ? t('review.video.unmute') : t('review.video.mute')}>
-            <Icon name={muted ? 'volumeOff' : 'volume'} size={17} />
-          </button>
-          <span className="rv-tc" aria-live="off" title={t('review.video.frameHint', { fps, n: Math.floor(now * fps + 1e-3) })}>
-            <b>{timecode(now)}</b><span className="rv-tc-of"> / {timecode(dur)}</span>
-          </span>
+          <Tip label={playing ? t('review.video.pause') : t('review.video.play')} shortcut={t('review.keys.space')}>
+            <button type="button" className="rv-ic rv-play" onClick={toggle} aria-label={playing ? t('review.video.pause') : t('review.video.play')}>
+              {playing ? <IconPause /> : <IconPlay />}
+            </button>
+          </Tip>
+          <Tip label={muted ? t('review.video.unmute') : t('review.video.mute')} shortcut="M">
+            <button type="button" className="rv-ic" onClick={() => { const v = ref.current; if (v) v.muted = !v.muted; }} aria-label={muted ? t('review.video.unmute') : t('review.video.mute')}>
+              <Icon name={muted ? 'volumeOff' : 'volume'} size={17} />
+            </button>
+          </Tip>
+          <Tip label={t('review.video.frameHint', { fps, n: Math.floor(now * fps + 1e-3) })}>
+            <span className="rv-tc" aria-live="off" tabIndex={-1}>
+              <b>{timecode(now)}</b><span className="rv-tc-of"> / {timecode(dur)}</span>
+            </span>
+          </Tip>
           <span className="grow" />
           {canAnnotate && draftHere && (
-            <button type="button" className="rv-chipbtn" disabled={now <= draftHere.t} onClick={() => onDraft({ ...draftHere, t_end: round2(now) })} title={t('review.video.setEndHint')}>
-              {t('review.video.setEnd')}
-            </button>
+            <Tip label={t('review.video.setEndHint')}>
+              <button type="button" className="rv-chipbtn" aria-disabled={now <= draftHere.t} onClick={() => { if (now > draftHere.t) onDraft({ ...draftHere, t_end: round2(now) }); }}>
+                {t('review.video.setEnd')}
+              </button>
+            </Tip>
           )}
           {canAnnotate && (
-            <button type="button" className="rv-ic rv-ic-comment" onClick={commentNow} aria-label={t('review.video.commentHere')} title={t('review.video.commentHereHint')}>
-              <Icon name="commentAdd" size={17} />
-            </button>
+            <Tip label={t('review.video.commentHereHint')} shortcut="C">
+              <button type="button" className="rv-ic rv-ic-comment" onClick={commentNow} aria-label={t('review.video.commentHere')}>
+                <Icon name="commentAdd" size={17} />
+              </button>
+            </Tip>
           )}
           {draw && canAnnotate && (
-            <button type="button" className={`rv-ic rv-ic-draw ${tool ? 'on' : ''}`} aria-pressed={!!tool} onClick={() => draw.onTool(tool ? null : 'pen')} aria-label={t('review.draw.toggle')} title={`${t('review.draw.toggle')} (D)`}>
-              <Icon name="pen" size={16} />
-            </button>
+            <Tip label={t('review.draw.toggle')} shortcut="D">
+              <button type="button" className={`rv-ic rv-ic-draw ${tool ? 'on' : ''}`} aria-pressed={!!tool} onClick={() => draw.onTool(tool ? null : 'pen')} aria-label={t('review.draw.toggle')}>
+                <Icon name="pen" size={16} />
+              </button>
+            </Tip>
           )}
           {tools}
-          <button type="button" className="rv-chipbtn rv-speed" onClick={() => setSpeed((s) => SPEEDS[(SPEEDS.indexOf(s) + 1) % SPEEDS.length]!)} aria-label={t('review.video.speed', { speed: speedLabel })} title={t('review.video.speedHint')}>
-            {speedLabel}
-          </button>
+          <Tip label={t('review.video.speedHint')}>
+            <button type="button" className="rv-chipbtn rv-speed" onClick={() => setSpeed((s) => SPEEDS[(SPEEDS.indexOf(s) + 1) % SPEEDS.length]!)} aria-label={t('review.video.speed', { speed: speedLabel })}>
+              {speedLabel}
+            </button>
+          </Tip>
           <FullscreenButton fs={fs} />
           <ShortcutHelp open={help} onToggle={() => setHelp((h) => !h)} rows={videoKeys(!!draw && canAnnotate)} />
         </div>
@@ -832,16 +852,22 @@ function Pager({ unit, page, count, onPage, thumbs, counts, tools, fs, help, dra
       <div className="rv-ctl">
         {count > 1 && (
           <div className="rv-pages" role="group" aria-label={unit === 'page' ? t('review.pager.pdfGroup') : t('review.pager.itemGroup')}>
-            <button type="button" className="rv-ic" disabled={page <= 1} onClick={() => onPage(page - 1)} aria-label={t('review.pager.prev')} title={`${t('review.pager.prev')} (←)`}><Icon name="chevronLeft" size={17} /></button>
+            <Tip label={t('review.pager.prev')} shortcut="←">
+              <button type="button" className="rv-ic" aria-disabled={page <= 1} onClick={() => { if (page > 1) onPage(page - 1); }} aria-label={t('review.pager.prev')}><Icon name="chevronLeft" size={17} /></button>
+            </Tip>
             <span className="rv-tc" aria-live="polite">{unit === 'page' ? t('review.pager.page', { n: page, count }) : t('review.pager.item', { n: page, count })}</span>
-            <button type="button" className="rv-ic" disabled={page >= count} onClick={() => onPage(page + 1)} aria-label={t('review.pager.next')} title={`${t('review.pager.next')} (→)`}><Icon name="chevronRight" size={17} /></button>
+            <Tip label={t('review.pager.next')} shortcut="→">
+              <button type="button" className="rv-ic" aria-disabled={page >= count} onClick={() => { if (page < count) onPage(page + 1); }} aria-label={t('review.pager.next')}><Icon name="chevronRight" size={17} /></button>
+            </Tip>
           </div>
         )}
         <span className="grow" />
         {draw && (
-          <button type="button" className={`rv-ic rv-ic-draw ${draw.tool ? 'on' : ''}`} aria-pressed={!!draw.tool} onClick={() => draw.onTool(draw.tool ? null : 'pen')} aria-label={t('review.draw.toggle')} title={`${t('review.draw.toggle')} (D)`}>
-            <Icon name="pen" size={16} />
-          </button>
+          <Tip label={t('review.draw.toggle')} shortcut="D">
+            <button type="button" className={`rv-ic rv-ic-draw ${draw.tool ? 'on' : ''}`} aria-pressed={!!draw.tool} onClick={() => draw.onTool(draw.tool ? null : 'pen')} aria-label={t('review.draw.toggle')}>
+              <Icon name="pen" size={16} />
+            </button>
+          </Tip>
         )}
         {tools}
         {fs && <FullscreenButton fs={fs} />}
@@ -1235,11 +1261,17 @@ export function CompareStage({ left, right, leftLabel, rightLabel }: { left: Ass
           )}
           {bothVideo && (
             <>
-              <button type="button" className="rv-ic rv-play" onClick={toggle} aria-label={playing ? t('review.compare.pauseBoth') : t('review.compare.playBoth')} title={playing ? t('review.compare.pauseBoth') : t('review.compare.playBoth')}>
-                {playing ? <IconPause /> : <IconPlay />}
-              </button>
-              <button type="button" className="rv-ic" onClick={() => stepFrame(-1)} aria-label={t('review.video.prevFrame')} title={t('review.video.prevFrameHint')}><Icon name="chevronLeft" size={17} /></button>
-              <button type="button" className="rv-ic" onClick={() => stepFrame(1)} aria-label={t('review.video.nextFrame')} title={t('review.video.nextFrameHint')}><Icon name="chevronRight" size={17} /></button>
+              <Tip label={playing ? t('review.compare.pauseBoth') : t('review.compare.playBoth')} shortcut={t('review.keys.space')}>
+                <button type="button" className="rv-ic rv-play" onClick={toggle} aria-label={playing ? t('review.compare.pauseBoth') : t('review.compare.playBoth')}>
+                  {playing ? <IconPause /> : <IconPlay />}
+                </button>
+              </Tip>
+              <Tip label={t('review.video.prevFrame')} shortcut="←">
+                <button type="button" className="rv-ic" onClick={() => stepFrame(-1)} aria-label={t('review.video.prevFrame')}><Icon name="chevronLeft" size={17} /></button>
+              </Tip>
+              <Tip label={t('review.video.nextFrame')} shortcut="→">
+                <button type="button" className="rv-ic" onClick={() => stepFrame(1)} aria-label={t('review.video.nextFrame')}><Icon name="chevronRight" size={17} /></button>
+              </Tip>
               <span className="rv-tc"><b>{timecode(now)}</b><span className="rv-tc-of"> / {timecode(dur)}</span></span>
             </>
           )}

@@ -8,7 +8,7 @@ import type { Tool } from '../components/Drawing';
 import { Icon } from '../components/icons';
 import { approvedAccountIds, ScheduleDialog } from '../components/publications';
 import { SubtitlePanel } from '../components/Subtitles';
-import { Chip, ConfirmDialog, CopyButton, Dialog, ErrorBox, Field, NetMark, Skeleton, useToast } from '../components/ui';
+import { Chip, ConfirmDialog, CopyButton, Dialog, ErrorBox, Field, Menu, MenuItem, MenuLabel, MenuSeparator, NetMark, Select, Skeleton, Tip, useToast } from '../components/ui';
 import { CompareStage, liveVideo, shortName, Stage, timecode, type DrawProps, type Jump, type SafeZone } from '../components/viewer';
 import { t, tMaybe } from '../i18n';
 import { fmtBytes, fmtDateTime, NETWORK_LABEL, STATE_LABEL } from '../lib/format';
@@ -26,20 +26,6 @@ function useKept<T extends string>(key: string, initial: T): [T, (v: T) => void]
   });
   const set = useCallback((x: T) => { setV(x); try { localStorage.setItem(key, x); } catch { /* not kept */ } }, [key]);
   return [v, set];
-}
-
-/** Closes a popover when the pointer goes down outside it, or on Escape. */
-function useDismiss(open: boolean, close: () => void) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && close();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey, true);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
-  }, [open, close]);
-  return ref;
 }
 
 /** "3 min ago", or "just now". */
@@ -235,11 +221,17 @@ function DecisionButtons({ v, openCount, onDialog, compact }: { v: VersionDetail
     return (
       <>
         {d.can('requestChanges') && <button type="button" className="btn rv-btn" onClick={() => onDialog('changes')}>{t('review.decision.requestChanges')}</button>}
-        {d.can('approve') && (
-          <button type="button" className="btn btn-primary rv-btn" onClick={() => onDialog('approve')} disabled={!!d.approveBlocked} title={d.approveBlocked ?? undefined}>
+        {d.can('approve') && (d.approveBlocked ? (
+          <Tip label={d.approveBlocked}>
+            <span className="rv-btn-wrap" tabIndex={0}>
+              <button type="button" className="btn btn-primary rv-btn" disabled>{!compact && <Icon name="check" size={15} />}{t('review.decision.approve')}</button>
+            </span>
+          </Tip>
+        ) : (
+          <button type="button" className="btn btn-primary rv-btn" onClick={() => onDialog('approve')}>
             {!compact && <Icon name="check" size={15} />}{t('review.decision.approve')}
           </button>
-        )}
+        ))}
       </>
     );
   }
@@ -257,37 +249,22 @@ function DecisionButtons({ v, openCount, onDialog, compact }: { v: VersionDetail
 
 /** The "⋯" menu: rejecting (the decision nobody should press by mistake), the piece, and the link to this review. */
 function MoreMenu({ v, openCount, onDialog }: { v: VersionDetail; openCount: number; onDialog: (d: DialogKind) => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useDismiss(open, () => setOpen(false));
   const toast = useToast();
+  const navigate = useNavigate();
   const d = useDecision(v, openCount);
   return (
-    <div ref={ref} className="rv-menu-wrap">
-      <button type="button" className="rv-ic" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} aria-label={t('review.decision.menu')} title={t('review.decision.menu')}>
-        <Icon name="more" size={18} />
-      </button>
-      {open && (
-        <div className="rv-pop rv-pop-right" role="menu">
-          {d.canDecide && (
-            <button type="button" role="menuitem" className="rv-pop-item danger" onClick={() => { setOpen(false); onDialog('reject'); }}>
-              <Icon name="ban" size={15} />{t('review.decision.reject')}
-            </button>
-          )}
-          <Link role="menuitem" className="rv-pop-item" to={`/pieces/${v.piece.id}`} onClick={() => setOpen(false)}><Icon name="external" size={15} />{t('review.decision.toPiece')}</Link>
-          <button
-            type="button"
-            role="menuitem"
-            className="rv-pop-item"
-            onClick={async () => {
-              setOpen(false);
-              try { await navigator.clipboard.writeText(window.location.href); toast(t('common.copied')); } catch { toast(t('common.copyFailed'), 'error'); }
-            }}
-          >
-            <Icon name="link" size={15} />{t('review.decision.copyLink')}
-          </button>
-        </div>
-      )}
-    </div>
+    <Menu trigger={<button type="button" className="rv-ic" aria-label={t('review.decision.menu')}><Icon name="more" size={18} /></button>} width={220}>
+      {d.canDecide && <MenuItem icon="ban" danger onSelect={() => onDialog('reject')}>{t('review.decision.reject')}</MenuItem>}
+      <MenuItem icon="external" onSelect={() => navigate(`/pieces/${v.piece.id}`)}>{t('review.decision.toPiece')}</MenuItem>
+      <MenuItem
+        icon="link"
+        onSelect={async () => {
+          try { await navigator.clipboard.writeText(window.location.href); toast(t('common.copied')); } catch { toast(t('common.copyFailed'), 'error'); }
+        }}
+      >
+        {t('review.decision.copyLink')}
+      </MenuItem>
+    </Menu>
   );
 }
 
@@ -295,84 +272,86 @@ function MoreMenu({ v, openCount, onDialog }: { v: VersionDetail; openCount: num
 
 /** The version being looked at, as a button: its menu lists every version of the variant, who made it and when. */
 function VersionMenu({ v, versions }: { v: VersionDetail; versions: VersionSummary[] }) {
-  const [open, setOpen] = useState(false);
-  const ref = useDismiss(open, () => setOpen(false));
   const navigate = useNavigate();
   const list: (Partial<VersionSummary> & { id: string; number: number })[] = [...(versions.length ? versions : v.versions)].sort((a, b) => b.number - a.number);
   return (
-    <div ref={ref} className="rv-menu-wrap">
-      <button type="button" className="rv-vbtn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} title={t('review.versions.button', { n: v.number })}>
-        <span className="mono">V{v.number}</span><Icon name="chevronDown" size={14} />
-      </button>
-      {open && (
-        <div className="rv-pop rv-vmenu" role="menu" aria-label={t('review.versions.label')}>
-          <div className="rv-pop-h">{t('review.versions.label')}</div>
-          {list.map((x) => (
-            <button
-              key={x.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={x.id === v.id}
-              className="rv-pop-item rv-vrow"
-              onClick={() => { setOpen(false); if (x.id !== v.id) navigate(`/review/${x.id}`); }}
-            >
-              <span className="rv-vrow-n mono">V{x.number}</span>
-              <span className={`rv-vrow-who ${x.by_agent ? 'agent' : ''}`}>{x.by_agent ? t('review.left.agent') : x.author ? shortName(x.author) : ''}</span>
-              <span className="grow" />
-              {x.review_state && <Chip state={x.review_state} />}
-              {x.created_at && <span className="rv-vrow-when">{ago(x.created_at)}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <Menu
+      align="start"
+      width={290}
+      trigger={
+        <button type="button" className="rv-vbtn" aria-label={t('review.versions.button', { n: v.number })}>
+          <span className="mono">V{v.number}</span><Icon name="chevronDown" size={14} />
+        </button>
+      }
+    >
+      <MenuLabel>{t('review.versions.label')}</MenuLabel>
+      {list.map((x) => (
+        <MenuItem
+          key={x.id}
+          checked={x.id === v.id}
+          lead={<span className="rv-vrow-n mono">V{x.number}</span>}
+          hint={<span className="rv-vrow-meta">{x.review_state && <Chip state={x.review_state} />}{x.created_at && <span>{ago(x.created_at)}</span>}</span>}
+          onSelect={() => { if (x.id !== v.id) navigate(`/review/${x.id}`); }}
+        >
+          <span className={x.by_agent ? 'rv-agent-name' : ''}>{x.by_agent ? t('review.left.agent') : x.author ? shortName(x.author) : ''}</span>
+        </MenuItem>
+      ))}
+    </Menu>
   );
 }
 
 /** Comparing with another version: the previous one at a click, any other from the menu, and off again. */
 function CompareControl({ v, compareId, onCompare }: { v: VersionDetail; compareId: string; onCompare: (id: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useDismiss(open, () => setOpen(false));
   const others = [...v.versions].filter((x) => x.id !== v.id).sort((a, b) => b.number - a.number);
   if (!others.length) return null;
   const previous = others.find((x) => x.number < v.number) ?? others[0]!;
   const on = others.find((x) => x.id === compareId);
+  const pick = (
+    <>
+      <MenuLabel>{t('review.compare.with')}</MenuLabel>
+      {others.map((x) => (
+        <MenuItem key={x.id} checked={x.id === compareId} lead={<span className="rv-vrow-n mono">V{x.number}</span>} onSelect={() => onCompare(x.id)}>
+          {x.number < v.number ? t('review.compare.earlier') : t('review.compare.later')}
+        </MenuItem>
+      ))}
+      {on && (
+        <>
+          <MenuSeparator />
+          <MenuItem icon="x" onSelect={() => onCompare('')}>{t('review.compare.stop')}</MenuItem>
+        </>
+      )}
+    </>
+  );
   return (
-    <div ref={ref} className={`rv-menu-wrap rv-cmpctl ${on ? 'on' : ''}`}>
+    <div className={`rv-menu-wrap rv-cmpctl ${on ? 'on' : ''}`}>
       {on ? (
         <>
-          <button type="button" className="rv-cmp-on" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} title={t('review.compare.pick')}>
-            <Icon name="compare" size={15} /><span className="rv-cmp-label">{t('review.compare.comparing', { n: on.number })}</span><Icon name="chevronDown" size={13} />
-          </button>
-          <button type="button" className="rv-cmp-x" onClick={() => onCompare('')} aria-label={t('review.compare.stop')} title={t('review.compare.stop')}><Icon name="x" size={14} /></button>
+          <Menu align="start" width={220} trigger={
+            <button type="button" className="rv-cmp-on" aria-label={t('review.compare.pick')}>
+              <Icon name="compare" size={15} /><span className="rv-cmp-label">{t('review.compare.comparing', { n: on.number })}</span><Icon name="chevronDown" size={13} />
+            </button>
+          }>
+            {pick}
+          </Menu>
+          <Tip label={t('review.compare.stop')} shortcut="Esc">
+            <button type="button" className="rv-cmp-x" onClick={() => onCompare('')} aria-label={t('review.compare.stop')}><Icon name="x" size={14} /></button>
+          </Tip>
         </>
       ) : (
         <>
-          <button type="button" className="rv-ghost" onClick={() => onCompare(previous.id)} title={t('review.compare.withN', { n: previous.number })}>
-            <Icon name="compare" size={15} /><span className="rv-cmp-label">{t('review.compare.withN', { n: previous.number })}</span>
-          </button>
-          {others.length > 1 && (
-            <button type="button" className="rv-ghost rv-ghost-ic" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} aria-label={t('review.compare.pick')} title={t('review.compare.pick')}>
-              <Icon name="chevronDown" size={13} />
+          <Tip label={t('review.compare.withN', { n: previous.number })}>
+            <button type="button" className="rv-ghost" onClick={() => onCompare(previous.id)}>
+              <Icon name="compare" size={15} /><span className="rv-cmp-label">{t('review.compare.withN', { n: previous.number })}</span>
             </button>
+          </Tip>
+          {others.length > 1 && (
+            <Menu align="start" width={220} trigger={
+              <button type="button" className="rv-ghost rv-ghost-ic" aria-label={t('review.compare.pick')}><Icon name="chevronDown" size={13} /></button>
+            }>
+              {pick}
+            </Menu>
           )}
         </>
-      )}
-      {open && (
-        <div className="rv-pop" role="menu" aria-label={t('review.compare.pick')}>
-          <div className="rv-pop-h">{t('review.compare.with')}</div>
-          {others.map((x) => (
-            <button key={x.id} type="button" role="menuitemradio" aria-checked={x.id === compareId} className="rv-pop-item" onClick={() => { setOpen(false); onCompare(x.id); }}>
-              <span className="mono">V{x.number}</span>
-            </button>
-          ))}
-          {on && (
-            <>
-              <div className="rv-pop-sep" />
-              <button type="button" role="menuitem" className="rv-pop-item" onClick={() => { setOpen(false); onCompare(''); }}>{t('review.compare.stop')}</button>
-            </>
-          )}
-        </div>
       )}
     </div>
   );
@@ -574,7 +553,9 @@ function Details({ v }: { v: VersionDetail }) {
                 {a.kind === 'video' && Number(a.duration_ms) > 0 ? <> · <span className="mono">{timecode(Number(a.duration_ms) / 1000)}</span></> : null}
               </span>
             </div>
-            <a className="rv-ic rv-ic-filled" href={a.url} download={a.name} aria-label={`${t('common.download')} ${a.name}`} title={t('common.download')}><Icon name="download" size={16} /></a>
+            <Tip label={t('common.download')}>
+              <a className="rv-ic rv-ic-filled" href={a.url} download={a.name} aria-label={`${t('common.download')} ${a.name}`}><Icon name="download" size={16} /></a>
+            </Tip>
           </div>
         ))}
       </section>
@@ -739,22 +720,30 @@ function Review({ versionId }: { versionId: string }) {
   const onDialog = (d: DialogKind) => setDialog(d);
 
   const zoneTools = !compareId && !hasPdf && safeZones.length > 0 ? (
-    <label className={`rv-zone ${zoneId ? 'on' : ''}`} title={t('review.zone.hint')}>
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="5" y="2.5" width="14" height="19" rx="2.5" /><path d="M5 7h14M5 16.5h14" /></svg>
-      <select className="rv-select" aria-label={t('review.zone.label')} value={zoneId} onChange={(e) => setZoneId(e.target.value)}>
-        <option value="">{zoneId ? t('review.zone.off') : t('review.zone.prompt')}</option>
-        {safeZones.map((z) => <option key={z.id} value={z.id}>{z.label}</option>)}
-      </select>
-    </label>
+    <Select
+      className={`rv-zone ${zoneId ? 'on' : ''}`}
+      label={t('review.zone.label')}
+      placeholder={t('review.zone.prompt')}
+      value={zoneId || undefined}
+      onChange={(id) => setZoneId(id === 'none' ? '' : id)}
+      options={[
+        ...(zoneId ? [{ value: 'none', label: t('review.zone.off') }] : []),
+        ...safeZones.map((z) => ({ value: z.id, label: z.label, icon: <NetMark network={z.id.split(':')[0]!} size="xs" /> })),
+      ]}
+    />
   ) : null;
 
   return (
     <div ref={root} className={`rv ${leftOpen ? 'left-open' : 'left-closed'}`}>
       <header className="rv-top">
-        <button type="button" className="rv-ic rv-left-toggle" aria-pressed={leftOpen} onClick={() => setLeft(leftOpen ? 'closed' : 'open')} aria-label={t('review.left.toggle')} title={t('review.left.toggle')}>
-          <Icon name="panel" size={17} />
-        </button>
-        <Link to={`/pieces/${v.piece.id}`} className="rv-ic rv-back" aria-label={t('review.back')} title={t('review.back')}><Icon name="arrowLeft" size={17} /></Link>
+        <Tip label={t('review.left.toggle')} side="bottom">
+          <button type="button" className="rv-ic rv-left-toggle" aria-pressed={leftOpen} onClick={() => setLeft(leftOpen ? 'closed' : 'open')} aria-label={t('review.left.toggle')}>
+            <Icon name="panel" size={17} />
+          </button>
+        </Tip>
+        <Tip label={t('review.back')} side="bottom">
+          <Link to={`/pieces/${v.piece.id}`} className="rv-ic rv-back" aria-label={t('review.back')}><Icon name="arrowLeft" size={17} /></Link>
+        </Tip>
         <nav className="rv-crumbs" aria-label={t('review.crumbs.label')}>
           {campaign ? <Link to={`/pieces?campaign=${campaign.id}`} className="rv-crumb">{campaign.name}</Link> : <Link to="/pieces" className="rv-crumb">{t('review.crumbs.pieces')}</Link>}
           <span className="rv-crumb-sep" aria-hidden="true">/</span>

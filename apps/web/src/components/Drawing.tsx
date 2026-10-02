@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent as RPointerEvent, type R
 import type { DrawColour, Shape } from '../api';
 import { t } from '../i18n';
 import { Icon } from './icons';
+import { Popover, Tip } from './ui';
 
 /** What the pointer draws with, while drawing on the frame or the page. */
 export type Tool = 'pen' | 'rect' | 'arrow';
@@ -193,38 +194,35 @@ export function DrawTools({ tool, onTool, colour, onColour, count, onUndo, onCle
   onClear: () => void;
 }) {
   const [colours, setColours] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!colours) return;
-    const close = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setColours(false); };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [colours]);
-  const tools: [Tool, 'pen' | 'square' | 'arrow', string][] = [
-    ['pen', 'pen', t('review.draw.pen')],
-    ['rect', 'square', t('review.draw.rect')],
-    ['arrow', 'arrow', t('review.draw.arrow')],
+  const tools: [Tool, 'pen' | 'square' | 'arrow', string, string][] = [
+    ['pen', 'pen', t('review.draw.pen'), 'D'],
+    ['rect', 'square', t('review.draw.rect'), ''],
+    ['arrow', 'arrow', t('review.draw.arrow'), ''],
   ];
   return (
-    <div ref={box} className={`rv-tools ${tool ? 'on' : ''}`} role="toolbar" aria-label={t('review.draw.label')} aria-orientation="vertical">
-      {tools.map(([id, icon, label]) => (
-        <button
-          key={id}
-          type="button"
-          className="rv-tool"
-          aria-pressed={tool === id}
-          aria-label={label}
-          title={label}
-          onClick={() => onTool(tool === id ? null : id)}
-        >
-          <Icon name={icon} size={16} />
-        </button>
+    <div className={`rv-tools ${tool ? 'on' : ''}`} role="toolbar" aria-label={t('review.draw.label')} aria-orientation="vertical">
+      {tools.map(([id, icon, label, key]) => (
+        <Tip key={id} label={label} shortcut={key || undefined} side="right">
+          <button type="button" className="rv-tool" aria-pressed={tool === id} aria-label={label} onClick={() => onTool(tool === id ? null : id)}>
+            <Icon name={icon} size={16} />
+          </button>
+        </Tip>
       ))}
-      <button type="button" className="rv-tool" aria-label={t('review.draw.colour')} title={t('review.draw.colour')} aria-expanded={colours} onClick={() => setColours((o) => !o)}>
-        <span className="rv-swatch" style={{ background: colourHex(colour) }} />
-      </button>
-      {colours && (
-        <div className="rv-swatches" role="radiogroup" aria-label={t('review.draw.colour')}>
+      <Popover
+        open={colours}
+        onOpenChange={setColours}
+        side="right"
+        align="center"
+        width="auto"
+        label={t('review.draw.colour')}
+        className="rv-swatches"
+        trigger={
+          <button type="button" className="rv-tool" aria-label={t('review.draw.colour')}>
+            <span className="rv-swatch" style={{ background: colourHex(colour) }} />
+          </button>
+        }
+      >
+        <div role="radiogroup" aria-label={t('review.draw.colour')} className="rv-swatch-row">
           {DRAW_COLOURS.map((c) => (
             <button
               key={c.id}
@@ -232,7 +230,6 @@ export function DrawTools({ tool, onTool, colour, onColour, count, onUndo, onCle
               role="radio"
               aria-checked={c.id === colour}
               aria-label={t(`review.draw.colour.${c.id}`)}
-              title={t(`review.draw.colour.${c.id}`)}
               className="rv-swatch-btn"
               onClick={() => { onColour(c.id); setColours(false); if (!tool) onTool('pen'); }}
             >
@@ -240,16 +237,20 @@ export function DrawTools({ tool, onTool, colour, onColour, count, onUndo, onCle
             </button>
           ))}
         </div>
-      )}
+      </Popover>
       {count > 0 && (
         <>
           <span className="rv-tools-sep" aria-hidden="true" />
-          <button type="button" className="rv-tool" aria-label={t('review.draw.undo')} title={`${t('review.draw.undo')} (⌘Z)`} onClick={onUndo}>
-            <Icon name="undo" size={16} />
-          </button>
-          <button type="button" className="rv-tool" aria-label={t('review.draw.clear')} title={t('review.draw.clear')} onClick={onClear}>
-            <Icon name="trash" size={16} />
-          </button>
+          <Tip label={t('review.draw.undo')} shortcut="⌘Z" side="right">
+            <button type="button" className="rv-tool" aria-label={t('review.draw.undo')} onClick={onUndo}>
+              <Icon name="undo" size={16} />
+            </button>
+          </Tip>
+          <Tip label={t('review.draw.clear')} side="right">
+            <button type="button" className="rv-tool" aria-label={t('review.draw.clear')} onClick={onClear}>
+              <Icon name="trash" size={16} />
+            </button>
+          </Tip>
         </>
       )}
     </div>
