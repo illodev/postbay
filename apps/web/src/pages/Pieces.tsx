@@ -1,3 +1,4 @@
+import { slotWhen } from '../components/Scheduling';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -28,12 +29,22 @@ const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCas
 
 // ───────────────────────────── new piece ─────────────────────────────
 
-function NewPiece({ campaigns, campaignId, onClose }: { campaigns: Campaign[]; campaignId: string | null; onClose: () => void }) {
+/** A free slot of the calendar a new piece is made for: approving it then schedules it there. */
+export interface ForSlot {
+  id: string;
+  at: string;
+  day: string;
+  label: string;
+  network: string;
+  account_name: string;
+}
+
+export function NewPiece({ campaigns, campaignId, onClose, slot }: { campaigns: Campaign[]; campaignId: string | null; onClose: () => void; slot?: ForSlot }) {
   const { brand } = useSession();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
-  const [form, setForm] = useState({ title: '', kind: 'video', brief: '', targetDate: '', aiGenerated: false, campaignId: campaignId ?? '', source: '' });
+  const [form, setForm] = useState({ title: '', kind: 'video', brief: '', targetDate: slot?.day ?? '', aiGenerated: false, campaignId: campaignId ?? '', source: '' });
   const titleRef = useRef<HTMLInputElement>(null);
   // The dialog gives the focus to its first control (the close button) as it opens: the title is where typing starts.
   useEffect(() => {
@@ -50,6 +61,7 @@ function NewPiece({ campaigns, campaignId, onClose }: { campaigns: Campaign[]; c
         aiGenerated: form.aiGenerated,
         campaignId: form.campaignId || null,
         source: form.source.trim() || null,
+        ...(slot ? { slot: { id: slot.id, at: slot.at } } : {}),
       }),
     onSuccess: (p) => {
       qc.invalidateQueries({ queryKey: ['pieces'] });
@@ -62,8 +74,15 @@ function NewPiece({ campaigns, campaignId, onClose }: { campaigns: Campaign[]; c
     create.mutate();
   };
   return (
-    <Dialog title={t('pieces.newTitle')} onClose={onClose}>
+    <Dialog title={slot ? t('fx.slot.create') : t('pieces.newTitle')} onClose={onClose}>
       <form className="stack pz-form" onSubmit={submit}>
+        {slot && (
+          <div className="fx-slot fx-slot-for">
+            <span className="muted">{t('fx.slot.for')}</span>
+            <NetMark network={slot.network} size="xs" />
+            <span>{[slot.label || t('fx.slot.unnamed'), slotWhen(slot.at, brand.timezone), slot.account_name].join(' · ')}</span>
+          </div>
+        )}
         <Field label={t('pieces.field.title')}>
           <input ref={titleRef} type="text" required maxLength={200} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
         </Field>

@@ -44,6 +44,8 @@ export interface Me {
   brands: { id: string; name: string; timezone: string; paused: boolean; role: Role; workspace: string }[];
   /** Brands of other workspaces that asked this person to join; nothing changes until they accept. */
   invitations?: MyInvitation[];
+  /** Brands this person was deactivated in: they cannot open them until an admin reactivates them. */
+  deactivated_in?: { id: string; name: string; workspace: string; deactivated_at: string }[];
 }
 
 export interface MyInvitation {
@@ -74,7 +76,13 @@ export interface BrandSettings {
   locale: string;
   paused: boolean;
   role: Role;
-  rules: { required_approvals: number; reapprove_on_move: boolean; checklist: string[] };
+  rules: {
+    required_approvals: number; reapprove_on_move: boolean; checklist: string[];
+    /** Approved versions nobody scheduled go into the free weekly slots; since when it is on. */
+    auto_fill_slots?: boolean; auto_fill_since?: string | null;
+    /** The styles a variant can have, in order. */
+    variant_styles?: string[];
+  };
   publishing: { prepare_lead_minutes: number; late_tolerance_minutes: number };
   agent: AgentSettings;
   prizes: PrizeSettings;
@@ -93,6 +101,8 @@ export interface AgentSettings {
   max_run_minutes: number;
   slot_alert_days: number;
   currency: string;
+  /** Whether the agent, inside one of its runs, may schedule what people approved. */
+  can_schedule_approved?: boolean;
 }
 
 export interface PieceSummary {
@@ -176,6 +186,21 @@ export interface PublicationRow {
   native_scheduled: boolean;
   last_error: string | null;
   last_error_class: string | null;
+  /** Who put it on the calendar: a person, the studio filling a free slot ('auto'), or the agent; and their name. */
+  scheduled_by?: 'person' | 'auto' | 'agent';
+  scheduled_by_name?: string | null;
+  /** The slot occurrence it fills, if it was scheduled into one. */
+  slot_id?: string | null;
+}
+
+/** The slot occurrence a piece was made for (removed: the slot has been deleted since). */
+export interface PieceSlot {
+  id: string | null;
+  at: string;
+  label: string | null;
+  active: boolean;
+  removed: boolean;
+  account: { id: string; network: string; display_name: string } | null;
 }
 
 export interface PieceDetail {
@@ -190,6 +215,8 @@ export interface PieceDetail {
   discarded_at: string | null;
   variants: Variant[];
   publications: PublicationRow[];
+  /** The slot occurrence it was made for: approving it schedules it there. */
+  slot?: PieceSlot | null;
 }
 
 export interface Asset {
@@ -239,6 +266,30 @@ export interface VersionDetail {
   assets: Asset[];
   approvals: Approval[];
   versions: { id: string; number: number }[];
+  /** For a piece made for a slot: what approving it schedules there, or why it would not. */
+  slot_schedule?: SlotSchedule | null;
+  /** Whether the brand puts what is approved into its free slots by itself. */
+  auto_fill_slots?: boolean;
+}
+
+/** What approving a version of a piece made for a slot schedules there (the version's page), or did (the approval's answer). */
+export interface SlotSchedule {
+  slot: { id: string | null; label: string | null };
+  account: { id: string; network: string; display_name: string } | null;
+  at: string;
+  day: string;
+  time: string;
+  timezone: string;
+  ready: boolean;
+  /** Why not: slot_removed, slot_inactive, already_scheduled, time_passed, brand_paused, blocked_date, slot_taken, unticked, awaiting_approvals… */
+  code: string | null;
+  /** The sentence to show, in the reader's language. */
+  summary: string | null;
+  reason: string | null;
+  publication_id: string | null;
+  /** In the approval's answer: whether it was scheduled, and the publication. */
+  scheduled?: boolean;
+  publication?: { id: string; status: string; scheduled_at: string; manual: boolean; scheduled_by: string };
 }
 
 /** The colours a reviewer can draw with (the API names them; the review page gives each its hue). */
@@ -492,7 +543,7 @@ export interface WebhookDeliveryDetail {
   attempts: { at: string; http_status: number | null; error: string | null; duration_ms: number | null }[];
 }
 
-export type AgentOutcome = 'uploaded' | 'needs_people' | 'failed' | 'checks_failed' | 'timeout' | 'aborted' | 'blocked';
+export type AgentOutcome = 'uploaded' | 'needs_people' | 'failed' | 'checks_failed' | 'timeout' | 'aborted' | 'blocked' | 'scheduled';
 
 export interface AgentRun {
   id: string;
@@ -576,7 +627,13 @@ export interface BrandMetrics {
 export interface Prize {
   id: string;
   name: string;
-  kind: 'file' | 'link';
+  /** A piece of the studio (what is handed out is its latest approved version's main file), a file kept here, or a link. */
+  kind: 'piece' | 'file' | 'link';
+  /** For a piece prize: the piece, and the version it would hand out now (null: it has no approved version). */
+  piece?: { id: string; title: string | null } | null;
+  version?: { id: string; number: number; format: string; approved_at: string; file_name: string; mime: string } | null;
+  /** Why it cannot be used now, in the reader's language ("Sin versión aprobada"). */
+  unavailable_reason?: string | null;
   file_name: string | null;
   file_bytes: number | null;
   url: string | null;

@@ -69,7 +69,7 @@ function RuleForm({ pub, info, prizes, onClose }: { pub: PublicationRow; info: P
             label={t('prizes.rule.prize')}
             value={prizeId || undefined}
             onChange={setPrizeId}
-            options={usable.map((p) => ({ value: p.id, label: `${p.name} (${p.kind === 'file' ? t('prizes.kind.file') : t('prizes.kind.link')})` }))}
+            options={usable.map((p) => ({ value: p.id, label: `${p.name} (${p.kind === 'piece' ? t('fx.prizes.kindPiece') : p.kind === 'file' ? t('prizes.kind.file') : t('prizes.kind.link')})` }))}
           />
         </Field>
       )}

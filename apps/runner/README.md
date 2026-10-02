@@ -309,6 +309,7 @@ brand is the point: house style, what the agent may and may not invent, and how 
 | `result_format` | What to write in `result.json` (put it in every template) |
 | `input_dir`, `output_dir`, `sources_dir`, `run_dir` | Where things are, relative to the run directory |
 | `slot`, `slot_day`, `campaigns` | For an empty slot: which, when, and the campaign briefs |
+| `styles` | The styles a variant of the brand can have (*Settings → General*). The variant made for an empty slot gets the one the agent names, as the brand spells it; a style the brand does not have is dropped |
 | `source`, `project_dir`, `project_branch` | For a piece made from a project: its source as the studio has it, the directory the agent works in (absolute, as the agent sees it) and, in git, the piece's branch. Empty otherwise |
 | `version_id`, `accounts`, `calendar` | For an approved version (`version.approved`): its id, the accounts it was approved for (with their ids), and their calendar for the next three weeks: free slots (with the `at` and `accountId` to use), what is already scheduled, blocked days. `result_format` then says how to ask for scheduling |
 

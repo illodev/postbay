@@ -4,9 +4,9 @@ Three decisions the owner took after the five phases, built on top of them. Noth
 **nothing goes out without a person's approval of that very version**. What follows can schedule by itself, but only a version that is
 approved, for an account it was approved for, through every check a person's scheduling goes through.
 
-> **Read this first.** Everything here was built and tested against the API and the runner (with the scripted stand-in for the agent).
-> **The web app does not show any of it yet**: a redesign of `apps/web` is in progress, and the screens are listed at the end of each
-> section as *what the web needs*.
+> **Read this first.** Everything here was built and tested against the API and the runner (with the scripted stand-in for the agent),
+> and the web shows it (*in the web* at the end of each section), checked in a browser against the development API at desktop and phone
+> sizes, in Spanish and English.
 
 ## Deactivating a member
 
@@ -42,10 +42,11 @@ reactivating someone active, is `409` (`already_deactivated`, `not_deactivated`)
 `409 already_member` with `details.deactivated: true`: reactivate them instead. Both steps are audited (`member.deactivated`,
 `member.reactivated`, with who, the role and how many tokens were revoked).
 
-**What the web needs** (*Settings → People*): a *Deactivate* / *Reactivate* action per member (not on oneself, and explain `last_admin`);
-deactivated members shown apart, greyed, with "Desactivado por {deactivated_by} el {deactivated_at}"; the number of tokens revoked after
-deactivating, and on reactivating that the tokens stay revoked. For the person: a clear page when a brand answers `member_deactivated`, and
-the brands of `deactivated_in` shown as unavailable in the brand switcher.
+**In the web** (*Ajustes › Miembros*): *Desactivar* in a member's ⋯ menu, asking first and saying the tokens are revoked for good
+(offered on oneself or the last active admin, it says why not instead); deactivated members listed apart, greyed, "Desactivado por X el
+Y", with *Reactivar* (saying the tokens stay revoked) and *Quitar*. For the person: a line where the brand they had open was, the brands
+they were deactivated in listed apart (and closed) in the brand switcher, a page saying where when they are deactivated everywhere, and a
+brand that answers `member_deactivated` mid-session makes the app read who they are again.
 
 ## Scheduling after approval
 
@@ -90,11 +91,11 @@ says what happened in `slot_schedule`: `{ scheduled: true, publication: { id, st
 language: "Se programará el martes 6 a las 19:00 en @cuenta (hueco «Reel de la semana»)"), or `code` and `reason` when it would not,
 and `publication_id` once it is there. `approvals[]` now include `auto_schedule`, `schedule_text` and `schedule_first_comment`.
 
-**What the web needs** (the approval dialog): when `slot_schedule` is present, a ticked box with `summary` ("Programar al aprobar"), the
-slot's account preselected among the accounts to approve for, and optional text and first comment; when `ready` is false, the `reason`
-instead of the box. After approving, show what `slot_schedule` in the answer says (scheduled, with a link to the post; or why not). On the
-piece, the slot it was made for (and "hueco eliminado" when `removed`); in the piece form, a way to link a piece to an empty slot of the
-calendar (a "Crear pieza para este hueco" from the calendar's empty slot).
+**In the web**: the approval dialog shows *Programar al aprobar*, ticked, with `summary` as its line, the slot's account ticked among
+the accounts, and an optional text and first comment (with a warning if the slot's account is unticked); when `ready` is false, the
+`reason` instead. After approving it stays to say what was scheduled (with *Ver en el calendario*) or why not. The piece shows its slot
+(*Hueco*: name, day and time, account; or *Hueco eliminado*). A free slot of the calendar (the grid and the agenda) starts *Crear pieza
+para este hueco*: the new-piece dialog, made for that occurrence.
 
 ### Filling free slots
 
@@ -130,11 +131,10 @@ that
 refuse the post in the earliest slot, the next one is tried (three at most), and the rest waits for the next sweep. It goes out with the
 text and first comment the approver gave when approving (or none).
 
-**What the web needs**: in *Settings → Rules*, a switch "Rellenar huecos libres con lo aprobado" (with `auto_fill_since` shown as "desde");
-in the approval dialog of a piece not made for a slot, when the version's `auto_fill_slots` is true, the same box ("Programar en el próximo
-hueco libre") and the optional text; in the calendar and the piece, a mark for posts with `scheduled_by: auto` ("programada por el estudio")
-and `agent` ("programada por el agente", with `scheduled_by_name`); the new notification kind in the bell and the preferences (its label
-comes from the API).
+**In the web**: *Ajustes › General*, *Reglas de aprobación*: the switch *Rellenar huecos libres con lo aprobado*, saying since when it is
+on. The approval dialog of a piece not made for a slot offers *Programar en el siguiente hueco libre* (and the text) while it is on. Posts
+Postbay or the agent scheduled carry a quiet mark (a calendar icon and *Postbay*, or the agent's teal icon and *Agente*, with who in a
+tooltip) in the piece's publications, the calendar's agenda and *Publicar hoy*. The bell names the new kind.
 
 ### The agent scheduling what is approved
 
@@ -157,8 +157,8 @@ The agent is shown the version, the accounts it was approved for and their calen
 `schedule: [{ versionId, accountId, at, text, firstComment }]` in `result.json`; the runner asks the studio for each, and the run's detail
 keeps what was scheduled and what was refused, with the studio's code.
 
-**What the web needs**: in *Settings → Agent*, the switch "El agente puede programar lo aprobado", with a line saying it never approves,
-cancels or moves anything; the run list showing `scheduled` runs (and their `detail.scheduled` / `detail.refused`).
+**In the web**: *Ajustes › Agente*, the switch *El agente puede programar lo aprobado* (only on the accounts it was approved for; it never
+approves, cancels or moves anything); the run list names `scheduled` runs and the `version.approved` trigger.
 
 ## Prizes from a piece of the studio
 
@@ -184,14 +184,28 @@ To know which version was approved last, the studio now keeps **when a version r
 filled from the audit log for versions approved before): a version's state only says where it is now, and a superseded one may or may not
 have been approved.
 
-**What the web needs** (*Settings → Prizes*): a third kind, first and preselected, "Pieza del estudio", with a piece picker (pieces with
-an approved version); the list showing for each piece prize its piece and the version it hands out ("v3, aprobada el …"), or "Sin versión
-aprobada" in a warning style; the public prize page showing `unavailable_reason` when `available` is false.
+**In the web** (*Ajustes › Premios*): *Pieza del estudio* is the first kind of prize, and preselected, with a piece picker with thumbnails
+(approved pieces first; the piece's title becomes the name to start from); the library shows, for a piece prize, its thumbnail and the
+version and file it hands out ("v3 · post.png · aprobada el 3 oct"), or *Sin versión aprobada*; the public prize page says it is not
+available right now instead of offering a download.
+
+## Variant styles
+
+A brand keeps the list of styles its variants can have (`rules.variant_styles`: in order, each trimmed and at most 40 characters, at
+most 30, no two alike whatever their case, refused as `duplicate_style` in the reader's language). A variant's `style` stays free text,
+so what was written before keeps showing.
+
+- **In the web**: *Ajustes › General*, *Estilos de variante*, one per line like the checklist. The add-variant dialog picks the style from
+  them (*Sin estilo* first), and a value that is not in the list is offered too, marked *no está en la lista*. A brand without styles says
+  so there, with a link to set them for those who manage the brand.
+- **The agent**: `GET /api/brands/:id/requirements` carries `variant_styles`; the runner gives them to the agent as `{{styles}}` (the
+  example template for an empty slot asks for one), and the variant it makes for an empty slot gets the style as the brand spells it, or
+  none if the agent invented one (`apps/runner/test/loop.test.ts`, `apps/api/test/variant-styles.test.ts`).
 
 ## What was verified, and how
 
-All against a real PostgreSQL, through the HTTP API (the whole suite: 899 API tests and 105 runner tests, 24 and 4 of them new here, plus
-changes to two older ones):
+All against a real PostgreSQL, through the HTTP API (27 API tests and 4 runner tests new for these features, plus changes to older
+ones; on 3 October 2026 the whole suites were 925 API tests and 107 runner tests, all passing):
 
 - `test/member-deactivation.test.ts`: refused with the code in both languages, `/api/me`, the member list, twice and back; only admins, never
   oneself, re-adding; two admins taking each other out at once (one refused) and the last active admin on removal and demotion; tokens
@@ -227,7 +241,6 @@ changes to two older ones):
 
 ## Known limits
 
-- The **web app has none of this yet** (see *what the web needs* above).
 - A post the studio schedules by itself has the text the approver gave when approving, or none: there is no caption generated for it.
 - A piece prize hands out one file: a carousel gives its first image or video, not all of them.
 - Filling free slots looks two weeks ahead and tries at most three slots per version per sweep.

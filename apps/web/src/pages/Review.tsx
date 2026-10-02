@@ -1,14 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, type Account, type Anchor, type CommentThread, type DrawColour, type Integrations, type PieceDetail, type Shape, type VersionDetail, type VersionSummary } from '../api';
+import { api, type Account, type Anchor, type CommentThread, type DrawColour, type Integrations, type PieceDetail, type Shape, type SlotSchedule, type VersionDetail, type VersionSummary } from '../api';
 import { Avatar, displayName } from '../components/Avatar';
 import { ago, CommentsPanel, NO_FILTER, numberThreads, type CommentFilter, type ComposeHint } from '../components/comments';
 import type { Tool } from '../components/Drawing';
 import { Icon } from '../components/icons';
 import { approvedAccountIds, ScheduleDialog } from '../components/publications';
 import { SubtitlePanel } from '../components/Subtitles';
-import { Chip, ConfirmDialog, CopyButton, Dialog, ErrorBox, Field, Menu, MenuItem, MenuLabel, MenuSeparator, NetMark, Select, Skeleton, Tip, Tipped, useToast } from '../components/ui';
+import { Chip, ConfirmDialog, CopyButton, Dialog, ErrorBox, Field, Menu, MenuItem, MenuLabel, MenuSeparator, NetMark, Select, Skeleton, Switch, Tip, Tipped, useToast } from '../components/ui';
+import { slotWhen } from '../components/Scheduling';
 import { CompareStage, liveVideo, shortName, Stage, timecode, type DrawProps, type Jump, type SafeZone } from '../components/viewer';
 import { t, tMaybe } from '../i18n';
 import { fmtBytes, fmtDateTime, NETWORK_LABEL, STATE_LABEL } from '../lib/format';
@@ -70,14 +71,28 @@ function DecisionDialog({ version, decision, openCount, onClose, onSeeComments }
   const { data: accounts } = useQuery({ queryKey: ['accounts', brand.id], queryFn: () => api.get<Account[]>(`/api/brands/${brand.id}/accounts`) });
   const usable = (accounts ?? []).filter((a) => a.status !== 'reconnect_required');
   const [picked, setPicked] = useState<Set<string> | null>(null);
-  const chosen = picked ?? new Set(usable.length === 1 ? [usable[0]!.id] : []);
+  // A piece made for a slot starts with the slot's account ticked: approving for it is what lets it be scheduled there.
+  const slot = version.slot_schedule ?? null;
+  const slotAccount = slot?.account && usable.some((a) => a.id === slot.account!.id) ? slot.account.id : null;
+  const chosen = picked ?? new Set(slotAccount ? [slotAccount] : usable.length === 1 ? [usable[0]!.id] : []);
   const [checks, setChecks] = useState<Record<string, boolean>>({});
   const [note, setNote] = useState('');
+  // Scheduling by itself once approved: at the slot (a piece made for one), or in a free slot (a brand that fills them).
+  const offersSchedule = slot ? slot.ready : !!version.auto_fill_slots;
+  const [autoSchedule, setAutoSchedule] = useState(true);
+  const [schedText, setSchedText] = useState('');
+  const [schedComment, setSchedComment] = useState('');
+  const [outcome, setOutcome] = useState<SlotSchedule | null>(null);
   const approving = decision === 'approve';
   const send = useMutation({
-    mutationFn: () => api.post(`/api/versions/${version.id}/approvals`, { decision, accountIds: [...chosen], checklist: checks, note }),
-    onSuccess: () => {
-      for (const k of ['version', 'comments', 'piece', 'pieces']) qc.invalidateQueries({ queryKey: [k] });
+    mutationFn: () => api.post<{ slot_schedule?: SlotSchedule | null }>(`/api/versions/${version.id}/approvals`, {
+      decision, accountIds: [...chosen], checklist: checks, note,
+      ...(approving ? { autoSchedule: offersSchedule ? autoSchedule : true, scheduleText: autoSchedule ? schedText : '', scheduleFirstComment: autoSchedule ? schedComment : '' } : {}),
+    }),
+    onSuccess: (r) => {
+      for (const k of ['version', 'comments', 'piece', 'pieces', 'calendar']) qc.invalidateQueries({ queryKey: [k] });
+      // A piece made for a slot: the dialog stays to say what the approval scheduled there, or why not.
+      if (approving && r.slot_schedule) return setOutcome(r.slot_schedule);
       toast(approving ? t('review.approve.done') : t('review.reject.done'));
       onClose();
     },
@@ -89,6 +104,26 @@ function DecisionDialog({ version, decision, openCount, onClose, onSeeComments }
   };
   const allChecked = rules.checklist.every((c) => checks[c]);
   const ready = approving ? chosen.size > 0 && allChecked && openCount === 0 : note.trim().length > 0;
+
+  if (outcome) {
+    const done = !!outcome.scheduled;
+    const waiting = outcome.code === 'awaiting_approvals';
+    return (
+      <Dialog title={done ? t('fx.approve.scheduled') : waiting ? t('fx.approve.counted') : t('fx.approve.notScheduled')} onClose={onClose}>
+        <div className="fx-result">
+          <div className={`fx-result-head ${done ? '' : 'is-off'}`}>
+            <Icon name={done ? 'check' : 'clock'} />
+            <span>{outcome.account ? [outcome.slot.label || t('fx.slot.unnamed'), slotWhen(outcome.at, outcome.timezone), outcome.account.display_name].join(' · ') : t('fx.slot.removed')}</span>
+          </div>
+          {!done && outcome.reason && <p>{outcome.reason}</p>}
+          <div className="row" style={{ justifyContent: 'flex-end' }}>
+            {done && <Link className="btn" to="/calendar" onClick={onClose}><Icon name="calendar" />{t('fx.approve.seeCalendar')}</Link>}
+            <button type="button" className="btn btn-primary" onClick={onClose} autoFocus>{t('common.close')}</button>
+          </div>
+        </div>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog title={approving ? t('review.approve.title', { n: version.number }) : t('review.reject.title', { n: version.number })} onClose={onClose}>
@@ -131,6 +166,29 @@ function DecisionDialog({ version, decision, openCount, onClose, onSeeComments }
                   ))}
                 </div>
               </fieldset>
+            )}
+            {(slot || version.auto_fill_slots) && (
+              <div className="fx-sched">
+                {offersSchedule ? (
+                  <Switch
+                    label={slot ? t('fx.approve.atSlot') : t('fx.approve.nextFree')}
+                    hint={slot ? slot.summary : t('fx.approve.nextFreeHint')}
+                    checked={autoSchedule}
+                    onChange={setAutoSchedule}
+                  />
+                ) : (
+                  <div className="fx-sched-why"><Icon name="info" /><span><strong>{t('fx.approve.wontSchedule')}</strong> {slot?.reason}</span></div>
+                )}
+                {offersSchedule && autoSchedule && slot?.account && !chosen.has(slot.account.id) && (
+                  <div className="fx-sched-why"><Icon name="alert" /><span>{t('fx.approve.needsAccount', { account: slot.account.display_name })}</span></div>
+                )}
+                {offersSchedule && autoSchedule && (
+                  <div className="fx-sched-fields">
+                    <Field label={`${t('fx.approve.text')} ${t('common.optional')}`}><textarea value={schedText} maxLength={10_000} onChange={(e) => setSchedText(e.target.value)} /></Field>
+                    <Field label={`${t('fx.approve.firstComment')} ${t('common.optional')}`}><input type="text" value={schedComment} maxLength={5000} onChange={(e) => setSchedComment(e.target.value)} /></Field>
+                  </div>
+                )}
+              </div>
             )}
             <Field label={t('review.approve.note')}><textarea value={note} onChange={(e) => setNote(e.target.value)} style={{ minHeight: 56 }} /></Field>
           </>

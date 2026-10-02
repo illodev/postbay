@@ -4,10 +4,10 @@ import { Link } from 'react-router-dom';
 import { api, type AgentRun, type AgentSettings, type BrandAgent } from '../api';
 import { t } from '../i18n';
 import { BLOCK_REASON_LABEL, fmtMoney, fmtShort, OUTCOME_LABEL, TRIGGER_LABEL } from '../lib/format';
-import { ErrorBox, Field, Spinner, Tip, useToast } from './ui';
+import { ErrorBox, Field, Spinner, Switch, Tip, useToast } from './ui';
 
 const OUTCOME_CHIP: Record<string, string> = {
-  uploaded: 'chip-approved', needs_people: 'chip-changes_requested', failed: 'chip-failed', checks_failed: 'chip-failed',
+  uploaded: 'chip-approved', scheduled: 'chip-scheduled', needs_people: 'chip-changes_requested', failed: 'chip-failed', checks_failed: 'chip-failed',
   timeout: 'chip-failed', aborted: '', blocked: 'chip-on_hold',
 };
 
@@ -23,11 +23,11 @@ export function AgentTab({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const { data, error } = useQuery({ queryKey: ['brand-agent', brandId], queryFn: () => api.get<BrandAgent>(`/api/brands/${brandId}/agent`), refetchInterval: 15_000 });
-  const [form, setForm] = useState<null | { rounds: string; piece: string; month: string; minutes: string; slots: string; currency: string }>(null);
+  const [form, setForm] = useState<null | { rounds: string; piece: string; month: string; minutes: string; slots: string; currency: string; schedule: boolean }>(null);
   useEffect(() => {
     if (data && !form) {
       const s = data.settings;
-      setForm({ rounds: String(s.max_rounds), piece: s.max_cost_per_piece === null ? '' : String(s.max_cost_per_piece), month: s.max_cost_per_month === null ? '' : String(s.max_cost_per_month), minutes: String(s.max_run_minutes), slots: String(s.slot_alert_days), currency: s.currency });
+      setForm({ rounds: String(s.max_rounds), piece: s.max_cost_per_piece === null ? '' : String(s.max_cost_per_piece), month: s.max_cost_per_month === null ? '' : String(s.max_cost_per_month), minutes: String(s.max_run_minutes), slots: String(s.slot_alert_days), currency: s.currency, schedule: !!s.can_schedule_approved });
     }
   }, [data, form]);
   const save = useMutation({
@@ -35,7 +35,7 @@ export function AgentTab({ brandId }: { brandId: string }) {
       const f = form!;
       const agent: AgentSettings = {
         max_rounds: Number(f.rounds), max_cost_per_piece: toNumber(f.piece), max_cost_per_month: toNumber(f.month),
-        max_run_minutes: Number(f.minutes), slot_alert_days: Number(f.slots), currency: f.currency.trim() || 'USD',
+        max_run_minutes: Number(f.minutes), slot_alert_days: Number(f.slots), currency: f.currency.trim() || 'USD', can_schedule_approved: f.schedule,
       };
       return api.patch(`/api/brands/${brandId}`, { agent });
     },
@@ -105,6 +105,7 @@ export function AgentTab({ brandId }: { brandId: string }) {
         <Field label={t('settings.agent.slots')} hint={t('settings.agent.slotsHint')}>
           <input className="set-num-input" type="number" min={0} max={30} required value={form.slots} onChange={set('slots')} />
         </Field>
+        <Switch label={t('fx.agent.canSchedule')} hint={t('fx.agent.canScheduleHint')} checked={form.schedule} onChange={(v) => setForm({ ...form, schedule: v })} />
         {save.error && <ErrorBox error={save.error} />}
         <div><button className="btn btn-primary" disabled={save.isPending}>{save.isPending ? t('common.saving') : t('common.save')}</button></div>
       </form>

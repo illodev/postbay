@@ -32,6 +32,9 @@ interface PublicPrizeData {
   prize: { name: string; kind: 'file' | 'link'; file_name: string | null };
   brand: string;
   expires_at: string;
+  /** False when the prize has nothing to hand out right now (a piece with no approved version), with why, in the visitor's language. */
+  available?: boolean;
+  unavailable_reason?: string | null;
 }
 
 /** Why a link does not work, in words for someone who only clicked it. */
@@ -82,9 +85,13 @@ export function PublicPrizePage() {
           <p className="pp-from">{t('prizes.public.from', { brand: data.brand })}</p>
           <h1>{data.prize.name}</h1>
           {data.prize.file_name && <span className="pp-file"><FileIcon />{data.prize.file_name}</span>}
-          <button className="btn btn-primary" onClick={() => go.mutate()} disabled={go.isPending}>
-            {go.isPending ? t('prizes.public.opening') : data.prize.kind === 'file' ? t('prizes.public.download') : t('prizes.public.open')}
-          </button>
+          {data.available === false ? (
+            <p className="muted" role="status" style={{ margin: 0 }}>{data.unavailable_reason ?? t('fx.prizes.unavailable')}</p>
+          ) : (
+            <button className="btn btn-primary" onClick={() => go.mutate()} disabled={go.isPending}>
+              {go.isPending ? t('prizes.public.opening') : data.prize.kind === 'file' ? t('prizes.public.download') : t('prizes.public.open')}
+            </button>
+          )}
           {go.error && <div className="notice notice-bad" role="alert" style={{ margin: 0, width: '100%' }}>{linkProblem(go.error)}</div>}
           <p className="pp-note">{t('prizes.public.until', { date: fmtDateTime(data.expires_at, 'local') })}</p>
         </>
