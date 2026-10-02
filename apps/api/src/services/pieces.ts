@@ -197,7 +197,7 @@ export async function discardPiece(ctx: Ctx, p: Principal, pieceId: string) {
       [pieceId],
     );
     await db.query(
-      `update publication set status = 'cancelled', updated_at = now(), next_run_at = case when native_scheduled then $2::timestamptz else null end
+      `update publication set status = 'cancelled', updated_at = now(), next_run_at = case when native_scheduled or held_on_network then $2::timestamptz else null end
        where variant_id in (select id from variant where piece_id = $1) and status in ('scheduled','awaiting_reapproval','on_hold','preparing','ready')`,
       [pieceId, ctx.now()],
     );

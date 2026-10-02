@@ -6,7 +6,7 @@ import { scanMetrics } from './services/metrics.js';
 import { pollComments, purgePrizeData, scanPrizeDeliveries } from './services/prizes.js';
 import { scanSlotAlerts } from './services/slots.js';
 import { deliver, dueDeliveries, purgeOldEvents } from './services/webhooks.js';
-import { advance, dueForAttention, TIMING } from './services/publisher.js';
+import { advance, dueForAttention, TIMING, wakeFrozen, wakeOrphans } from './services/publisher.js';
 
 export const QUEUE = { advance: 'publication.advance', health: 'account.health', deliver: 'webhook.deliver' } as const;
 
@@ -31,7 +31,7 @@ export async function startWorker(ctx: Ctx): Promise<Worker> {
     // "short": one queued job per key, so a publication that is already waiting is not queued twice.
     await boss.createQueue(name, { policy: 'short', retryLimit, retryDelay: 30, retryBackoff: true, expireInSeconds, retentionSeconds: 6 * 3600, deleteAfterSeconds: 3600 });
   };
-  await make(QUEUE.advance, 3, TIMING.leaseMinutes * 60 + 300);
+  await make(QUEUE.advance, 3, TIMING.jobExpireSeconds);
   await make(QUEUE.health, 1, 300);
   await make(QUEUE.deliver, 2, 180);
 
@@ -62,6 +62,9 @@ export async function startWorker(ctx: Ctx): Promise<Worker> {
     if (sweeping) return 0;
     sweeping = true;
     try {
+      // What a pause, a blocked date or a dependency that will not go out has caught is looked at now, not at its hour.
+      await wakeFrozen(ctx);
+      await wakeOrphans(ctx);
       const due = await dueForAttention(ctx);
       for (const d of due) await boss.send(QUEUE.advance, { id: d.id }, { singletonKey: d.id });
       for (const id of await accountsDueForHealth(ctx)) await boss.send(QUEUE.health, { id }, { singletonKey: id });

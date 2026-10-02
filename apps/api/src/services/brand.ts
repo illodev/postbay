@@ -64,13 +64,26 @@ export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: 
   });
 }
 
-/** Crisis button: freezes everything scheduled without losing the dates. */
+/**
+ * Crisis button: freezes everything scheduled without losing the dates. The publisher holds back every automatic publication of a
+ * paused brand and takes down what a network already holds for one, so it is woken now for those already being prepared; on resuming,
+ * the ones it held back are woken to be prepared again (or handed to a person if their hour passed meanwhile).
+ */
 export async function setPaused(ctx: Ctx, p: Principal, brandId: string, paused: boolean) {
   return ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.pause');
     const before = await loadBrand(db, brandId);
     await db.query('update brand set paused = $2, paused_at = case when $2 then now() else null end where id = $1', [brandId, paused]);
-    await audit(db, p, brandId, paused ? 'brand.paused' : 'brand.resumed', 'brand', brandId, { paused: before.paused }, { paused });
+    const woken = await db.query(
+      `update publication pub set next_run_at = $3
+       from variant v join piece pc on pc.id = v.piece_id
+       where v.id = pub.variant_id and pc.brand_id = $1 and not pub.manual
+         and (case when $2 then pub.status in ('preparing','ready') and pub.scheduled_at > $3
+                   else pub.status in ('scheduled','preparing','ready') and pub.frozen_at is not null end)
+       returning pub.id`,
+      [brandId, paused, ctx.now()],
+    );
+    await audit(db, p, brandId, paused ? 'brand.paused' : 'brand.resumed', 'brand', brandId, { paused: before.paused }, { paused, publications: woken.length });
     return { paused };
   });
 }

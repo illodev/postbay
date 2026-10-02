@@ -200,7 +200,7 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
     // being published this very moment cannot be stopped and goes out as approved.
     const held = await db.query(
       `update publication set status = 'on_hold', updated_at = now(), hold_reason = 'A new version is awaiting approval',
-         next_run_at = case when native_scheduled then $2::timestamptz else null end
+         next_run_at = case when native_scheduled or held_on_network then $2::timestamptz else null end
        where variant_id = $1 and status in ('scheduled','awaiting_reapproval','preparing','ready') returning id`,
       [variantId, ctx.now()],
     );
