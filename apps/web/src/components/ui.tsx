@@ -3,6 +3,7 @@ import { ApiError } from '../api';
 import { t, tMaybe } from '../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import '../styles/ui.css';
+import { HAS_LOGO, NetLogo } from './netlogos';
 
 /** What to tell the person about an error: the translated text for a known API code, else the server's message. */
 export const errorMessage = (e: unknown): string => {
@@ -238,7 +239,7 @@ export const NET_MARK: Record<string, string> = {
 export const netMark = (network: string) => NET_MARK[network] ?? network.slice(0, 2).toUpperCase();
 
 /**
- * A network's square mark. Decorative by default (the name is beside it); pass `labelled` where the mark stands alone, and
+ * A network's square mark: its logo, or its initials for a network without one. Decorative by default (the name is beside it); pass `labelled` where the mark stands alone, and
  * it says the network's name to a screen reader and in a tooltip.
  */
 export function NetMark({ network, size = 'md', labelled, className = '' }: { network: string; size?: 'xs' | 'sm' | 'md' | 'lg'; labelled?: boolean; className?: string }) {
@@ -249,7 +250,7 @@ export function NetMark({ network, size = 'md', labelled, className = '' }: { ne
       data-network={network}
       {...(labelled ? { role: 'img', 'aria-label': name, title: name } : { 'aria-hidden': true })}
     >
-      {netMark(network)}
+      {HAS_LOGO.has(network) ? <NetLogo network={network} /> : netMark(network)}
     </span>
   );
 }

@@ -3,7 +3,7 @@ import { Info } from 'luxon';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, type Account, type BrandSettings, type Integrations, type PendingConnection, type Provider, type Role, type SlackSettings, type Webhook } from '../api';
-import { Chip, CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, Spinner, useToast } from '../components/ui';
+import { Chip, CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, NetMark, Spinner, useToast } from '../components/ui';
 import { t, tMaybe, type Key } from '../i18n';
 import { fmtDateTime, fmtDay, fmtShort, NETWORK_LABEL, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -448,7 +448,7 @@ function Accounts({ brandId }: { brandId: string }) {
               }
               return (
                 <li key={a.id} className="ent">
-                  <span className="net net-lg" aria-hidden="true">{NET_SHORT[a.network] ?? a.network.slice(0, 2).toUpperCase()}</span>
+                  <NetMark network={a.network} size="lg" />
                   <div className="ent-main">
                     <div className="ent-title">{a.display_name}</div>
                     <div className="ent-sub">{network} · <span className="mono">{handle}</span>{a.last_health_at && a.status === 'active' && a.connected && <> · {t('settings.accounts.checked', { when: fmtShort(a.last_health_at) })}</>}</div>
@@ -492,7 +492,7 @@ function Accounts({ brandId }: { brandId: string }) {
         <div className="set-providers">
           {integ?.providers.map((p) => (
             <button key={p.id} className="btn set-provider" disabled={!p.configured || connect.isPending} onClick={() => start(p)} title={p.configured ? undefined : t('settings.accounts.notConfigured')}>
-              <span className="nets" aria-hidden="true">{p.networks.map((n) => <span key={n} className="net">{NET_SHORT[n] ?? n.slice(0, 2).toUpperCase()}</span>)}</span>
+              <span className="nets" aria-hidden="true">{p.networks.map((n) => <NetMark key={n} network={n} />)}</span>
               {t('settings.accounts.connectProvider', { name: providerLabel(p) })}
             </button>
           ))}
@@ -580,7 +580,7 @@ function Schedule({ brandId }: { brandId: string }) {
                     <td className="mono" data-label={t('settings.schedule.time')}>{s.local_time.slice(0, 5)}</td>
                     <td data-label={t('settings.schedule.account')}>
                       <span className="row" style={{ gap: '.45rem', flexWrap: 'nowrap' }}>
-                        <span className="net" aria-hidden="true">{NET_SHORT[s.network] ?? s.network.slice(0, 2).toUpperCase()}</span>
+                        <NetMark network={s.network} />
                         <span>{s.account_name} <span className="muted small">· {NETWORK_LABEL[s.network] ?? s.network}</span></span>
                       </span>
                     </td>
