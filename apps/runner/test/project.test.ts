@@ -3,10 +3,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { planAgent } from '../src/agent.js';
+import { buildCommand, planAgent } from '../src/agent.js';
 import { parseConfig, type GitRepo, type ProjectSpec } from '../src/config.js';
 import { acquire, commitProject, parseSource, prepareProject, ProjectError } from '../src/project.js';
 import { Secrets } from '../src/secrets.js';
+import { loadTemplates } from '../src/runner.js';
 import { dirsFor, ensureDirs } from '../src/workspace.js';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'runner-project-'));
@@ -103,6 +104,9 @@ describe('a project in a git repository', () => {
     expect(sh(project.dir, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('studio/piece-1');
     // The clone lives with the brand, not in the piece, and nothing the runner keeps there holds a credential.
     expect(project.repoDir).toBe(path.join(dirs.brand, '_repos', 'videos.git'));
+    expect(execFileSync('git', ['config', '--get', 'remote.origin.url'], { cwd: project.repoDir!, encoding: 'utf8' }).trim()).toBe(repo);
+    // git refuses repositories of other users (a person's, mounted into the runner's container) unless a global configuration says so.
+    expect(readFileSync(path.join(dirs.brand, '_repos', 'gitconfig'), 'utf8')).toMatch(/\[safe\]\n\tdirectory = \*/);
 
     // Work left in the worktree is still there the next round: it is the same worktree.
     writeFileSync(path.join(project.dir, 'note.txt'), 'from round 1');
@@ -297,5 +301,39 @@ describe('the project configuration', () => {
     expect(() => parse({ repos: { a: { mode: 'git', repo: '/x', branch: 'studio/{{title}}-{{pieceId}}' } } })).toThrow(/\{\{title\}\}/);
     expect(() => parse({ repos: { a: { mode: 'ftp', root: '/x' } } })).toThrow(/Invalid configuration/);
     expect(parse({ repos: { a: { mode: 'git', repo: 'https://bob:hunter2@git.example/videos.git' } } }).warnings.join('\n')).toMatch(/password in its address/);
+  });
+});
+
+describe('the example configuration for a code-driven brand', () => {
+  it('is valid, its templates load, and its command gives Claude Code the project only when the piece has one', () => {
+    const example = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'examples', 'drawn-by-code.config.json');
+    const templates = path.join(path.dirname(example), '..', 'templates');
+    // Where the image keeps things, mapped to this checkout; the secrets, to files of this test.
+    const secret = (name: string) => {
+      const f = path.join(dir, `example-${name}`);
+      writeFileSync(f, `${name}-0123456789abcdef`);
+      chmodSync(f, 0o600);
+      return f;
+    };
+    const text = readFileSync(example, 'utf8')
+      .replaceAll('/opt/studio/apps/runner/templates', templates)
+      .replace('/run/secrets/lumen.token', secret('token'))
+      .replace('/run/secrets/lumen.webhook-secret', secret('webhook'))
+      .replace('/run/secrets/claude-oauth-token', secret('claude'));
+    const c = parseConfig(JSON.parse(text), dir, {}, { uid: 0 });
+    expect(c.warnings).toEqual([]);
+    const brand = c.brands.lumen!;
+    expect(brand.project?.repos.videos).toMatchObject({ mode: 'git', repo: '/srv/projects/videos', push: false });
+    expect(brand.agent.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('claude-0123456789abcdef');
+    expect(c.secrets.foundIn('x claude-0123456789abcdef')).toEqual(['lumen: agent.env.CLAUDE_CODE_OAUTH_TOKEN']);
+    expect([...loadTemplates(c).keys()].sort()).toEqual(['lumen:project', 'lumen:version.changes_requested']);
+
+    const vars = { pieceDir: '/w/p', outputDir: '/w/p/runs/r/output', sourcesDir: '/w/p/sources', maxBudget: '2' };
+    const without = buildCommand(brand.agent.command, vars);
+    expect(without.join(' ')).not.toContain('projectDir');
+    const withProject = buildCommand(brand.agent.command, { ...vars, projectDir: '/w/p/project/videos/a' });
+    expect(withProject).toEqual(expect.arrayContaining(['--add-dir', '/w/p/project/videos/a', 'Edit(//w/p/project/videos/a/**)', 'Bash(node /opt/drawn-by-code/engine/render.mjs:*)']));
+    // Every --add-dir comes before the list of allowed tools, which takes everything after it.
+    expect(withProject.lastIndexOf('--add-dir')).toBeLessThan(withProject.indexOf('--allowedTools'));
   });
 });

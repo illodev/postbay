@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, chown, lchown, lstat, mkdir, readdir, readFile, realpath, rename, stat } from 'node:fs/promises';
+import { chmod, chown, lchown, lstat, mkdir, readdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { GitRepo, ProjectRepo, ProjectSpec } from './config.js';
 import type { Secrets } from './secrets.js';
@@ -129,6 +129,8 @@ export interface GitOptions {
   input?: string;
   timeoutMs?: number;
   env?: Record<string, string>;
+  /** A global configuration file for this git (see gitConfigFor). */
+  globalConfig?: string;
 }
 
 /**
@@ -139,7 +141,7 @@ export interface GitOptions {
 export function git(args: string[], o: GitOptions): Promise<string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^GIT_|ASKPASS$/.test(k)) env[k] = v;
-  Object.assign(env, { GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' }, o.env ?? {});
+  Object.assign(env, { GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' }, o.globalConfig ? { GIT_CONFIG_GLOBAL: o.globalConfig } : {}, o.env ?? {});
   if (o.auth?.token) {
     const basic = Buffer.from(`${o.auth.username}:${o.auth.token}`).toString('base64');
     Object.assign(env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.extraHeader', GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}` });
@@ -160,7 +162,9 @@ export function git(args: string[], o: GitOptions): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile('git', full, { env, cwd: o.workTree ?? o.gitDir, timeout: o.timeoutMs ?? 120_000, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
       if (err) {
-        const why = (stderr || err.message).trim().split('\n').slice(-3).join(' ');
+        const lines = (stderr || err.message).trim().split('\n');
+        const fatal = lines.filter((l) => /^(fatal|error):/.test(l));
+        const why = (fatal.length ? fatal : lines.slice(-3)).join(' ');
         reject(new Error(`git ${args[0]} failed: ${scrub(why)}`));
       } else resolve(stdout);
     });
@@ -171,6 +175,46 @@ export function git(args: string[], o: GitOptions): Promise<string> {
 }
 
 const gitOk = (args: string[], o: GitOptions) => git(args, o).then(() => true, () => false);
+
+const GLOBAL_CONFIG = `# Written by the studio runner for the git it runs. Repositories here belong to other users (the agent's worktrees, a person's
+# repository it fetches from), which git refuses to work in unless told otherwise, and only in a global configuration such as this
+# one (before git 2.40, "-c safe.directory" is not enough). The runner's user's own configuration still applies.
+[safe]
+	directory = *
+[include]
+	path = ~/.gitconfig
+	path = ~/.config/git/config
+`;
+
+/** The global configuration file the runner's git uses, written once per brand. */
+async function gitConfigFor(dirs: Dirs, access: Access): Promise<string> {
+  const file = path.join(dirs.brand, '_repos', 'gitconfig');
+  await runnerDir(path.dirname(file), access);
+  const now = await readFile(file, 'utf8').catch(() => '');
+  if (now !== GLOBAL_CONFIG) await writeFile(file, GLOBAL_CONFIG, { mode: 0o644 });
+  return file;
+}
+
+/**
+ * After a push into a repository on this machine that belongs to someone else (the person's own, mounted into a container where the
+ * runner is root), what git just wrote there is given to that repository's owner: otherwise the owner could no longer write in the
+ * directories git made, and their next commit could fail. Files of any third user are left alone.
+ */
+async function giveBackPushed(repo: string): Promise<void> {
+  const me = process.getuid?.();
+  if (me === undefined || !path.isAbsolute(repo)) return;
+  let gitDir = path.join(repo, '.git');
+  if (!(await stat(gitDir).then((st) => st.isDirectory(), () => false))) gitDir = repo;
+  const owner = await stat(gitDir).catch(() => null);
+  if (!owner || owner.uid === me) return;
+  const walk = async (p: string): Promise<void> => {
+    const st = await lstat(p).catch(() => null);
+    if (!st) return;
+    if (st.uid === me) await lchown(p, owner.uid, owner.gid);
+    if (st.isDirectory()) for (const name of await readdir(p)) await walk(path.join(p, name));
+  };
+  for (const part of ['objects', 'refs', 'logs', 'packed-refs', 'FETCH_HEAD']) await walk(path.join(gitDir, part));
+}
 
 /** Where the brand's clone of a repository is kept. */
 export const repoDirOf = (dirs: Dirs, key: string) => path.join(dirs.brand, '_repos', `${key}.git`);
@@ -252,11 +296,11 @@ export async function prepareProject(o: PrepareOptions): Promise<Project> {
   const worktree = worktreeOf(o.dirs, repo.key);
   const branch = branchName(repo, { pieceId: o.pieceId, brand: o.brandKey });
   const knownHosts = path.join(o.dirs.brand, '_repos', 'known_hosts');
-  const g = { gitDir: repoDir, auth: repo.auth, knownHosts };
   const access = o.access ?? {};
+  const globalConfig = await gitConfigFor(o.dirs, access);
+  const g = { gitDir: repoDir, auth: repo.auth, knownHosts, globalConfig };
 
   const adminDir = await locked(repoDir, async () => {
-    await runnerDir(path.dirname(repoDir), access);
     await runnerDir(repoDir, access);
     if (!existsSync(path.join(repoDir, 'HEAD'))) {
       await git(['init', '--bare', '--quiet'], g);
@@ -294,7 +338,7 @@ export async function prepareProject(o: PrepareOptions): Promise<Project> {
     return admin;
   });
 
-  const w = { gitDir: adminDir, workTree: worktree };
+  const w = { gitDir: adminDir, workTree: worktree, globalConfig };
   const on = (await git(['symbolic-ref', '--quiet', 'HEAD'], w).catch(() => '')).trim();
   if (on !== `refs/heads/${branch}`) throw new ProjectError(`the piece's worktree is not on its branch ${branch} any more (${on || 'detached'}): a person has to look at ${worktree}`);
   await giveToAgent(worktree, access);
@@ -320,10 +364,11 @@ export interface CommitResult {
 export async function commitProject(project: Project, repo: GitRepo, o: { message: string; secrets: Secrets; dirs: Dirs }): Promise<CommitResult> {
   if (project.mode !== 'git' || !project.worktree || !project.repoDir || !project.branch) throw new Error('not a git project');
   const knownHosts = path.join(o.dirs.brand, '_repos', 'known_hosts');
+  const globalConfig = path.join(o.dirs.brand, '_repos', 'gitconfig');
   return locked(project.repoDir, async () => {
     const adminDir = await adminDirOf(project.repoDir!, project.worktree!);
     if (!adminDir) throw new Error(`the worktree ${project.worktree} is no longer one of the repository's`);
-    const w = { gitDir: adminDir, workTree: project.worktree! };
+    const w = { gitDir: adminDir, workTree: project.worktree!, globalConfig };
     const on = (await git(['symbolic-ref', '--quiet', 'HEAD'], w).catch(() => '')).trim();
     if (on !== `refs/heads/${project.branch}`) throw new Error(`the worktree is not on ${project.branch} any more (${on || 'detached'}), so nothing was committed`);
 
@@ -359,7 +404,8 @@ export async function commitProject(project: Project, repo: GitRepo, o: { messag
     const commit = (await git(['rev-parse', 'HEAD'], w)).trim();
     if (!repo.push) return { commit, changedFiles: changed.length };
     try {
-      await git(['push', '--quiet', 'origin', `refs/heads/${project.branch}:refs/heads/${project.branch}`], { gitDir: project.repoDir!, auth: repo.auth, knownHosts, timeoutMs: 10 * 60_000 });
+      await git(['push', '--quiet', 'origin', `refs/heads/${project.branch}:refs/heads/${project.branch}`], { gitDir: project.repoDir!, auth: repo.auth, knownHosts, globalConfig, timeoutMs: 10 * 60_000 });
+      await giveBackPushed(repo.repo).catch(() => {});
       return { commit, changedFiles: changed.length, pushed: true };
     } catch (err) {
       return { commit, changedFiles: changed.length, pushed: false, pushError: (err as Error).message };
