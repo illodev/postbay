@@ -9,6 +9,7 @@ import { badRequest, conflict, forbidden } from '../errors.js';
 import { audit } from './audit.js';
 import { loadVariant, loadVersion } from './loaders.js';
 import { notifyRoles } from './notify.js';
+import { runCovering } from './agent.js';
 import { refreshPieceState } from './pieces.js';
 import { probeMeta } from './renditions.js';
 import { CHUNK_BYTES, RESUME_TTL_SEC } from './resumable.js';
@@ -179,6 +180,11 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
     await db.query('select 1 from variant where id = $1 for update', [variantId]);
     const fresh = await loadVariant(db, variantId);
     if (fresh.piece_discarded) throw conflict('piece_discarded', 'The piece is discarded');
+    // A token is the agent's hand: it uploads only inside a run it started on this piece (or, for a run that makes something new, on
+    // the piece it made during that run), so the round cap, the budgets, the longest run and one run per piece hold for every upload.
+    if (a.token && !(await runCovering(db, a.token, fresh.piece_id, ctx.now()))) {
+      throw conflict('no_run', 'A producer token uploads a version only inside a run it started on this piece and that is still running: start one first (POST /pieces/:id/agent-runs)');
+    }
     const still = await db.query('select id from upload where id = any($1) and consumed_at is null for update', [ids]);
     if (still.length !== ids.length) throw conflict('upload_consumed', 'An upload was already used in another version');
 

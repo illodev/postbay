@@ -58,9 +58,67 @@ type BlockReason = 'budget_not_set' | 'rounds_exhausted' | 'piece_budget_reached
 
 const monthStartOf = (ctx: Ctx, zone: string) => DateTime.fromJSDate(ctx.now(), { zone }).startOf('month').toJSDate();
 
+/**
+ * What has been spent: the cost each finished run reported, and for a run still going what it was allowed to spend when it started
+ * (it may yet spend all of it). So runs at the same time share what is left instead of each being told all of it.
+ */
 async function spend(db: Queryable, where: string, params: unknown[]): Promise<number> {
-  const r = await db.one<{ s: string }>(`select coalesce(sum(cost), 0) as s from agent_run where outcome is distinct from 'blocked' and ${where}`, params);
-  return Number(r?.s ?? 0);
+  const r = await spending(db, where, params);
+  return r.spent + r.reserved;
+}
+
+/** Spent by finished runs, and set aside for the runs still going, separately: what people are shown. */
+async function spending(db: Queryable, where: string, params: unknown[]): Promise<{ spent: number; reserved: number }> {
+  const r = await db.one<{ spent: string; reserved: string }>(
+    `select coalesce(sum(cost) filter (where status <> 'running'), 0) as spent,
+       coalesce(sum(greatest(cost, reserved)) filter (where status = 'running'), 0) as reserved
+     from agent_run where outcome is distinct from 'blocked' and ${where}`,
+    params,
+  );
+  return { spent: Number(r?.spent ?? 0), reserved: Number(r?.reserved ?? 0) };
+}
+
+const STUDIO_TIMEOUT_NOTE = 'The runner stopped reporting, or ran past the longest run, so the studio closed the run';
+
+/**
+ * Closes the runs whose lease ran out (the runner stopped reporting) or that went past their longest run, as timeouts, and tells the
+ * people who can pick the pieces up. What they cost is not known yet: a late report from the runner is still recorded (finishRun).
+ */
+async function closeExpired(ctx: Ctx, db: Queryable, where: string, params: unknown[]): Promise<number> {
+  const now = ctx.now();
+  const closed = await db.query<{ id: string; brand_id: string; piece_id: string | null; token_id: string }>(
+    `update agent_run set status = 'finished', outcome = 'timeout', finished_at = $1, notes = '${STUDIO_TIMEOUT_NOTE}',
+       detail = detail || '{"closed_by_studio": true}'::jsonb
+     where status = 'running' and (lease_until < $1 or deadline_at < $1) and ${where}
+     returning id, brand_id, piece_id, token_id`,
+    [now, ...params],
+  );
+  for (const r of closed) {
+    const piece = r.piece_id ? await db.one('select title from piece where id = $1', [r.piece_id]) : null;
+    await audit(db, null, r.brand_id, 'agent.timed_out', 'agent_run', r.id, { status: 'running' }, { outcome: 'timeout' });
+    await notifyRoles(db, r.brand_id, ['approver', 'admin'], 'agent.failed', { pieceId: r.piece_id, title: piece?.title ?? null, runId: r.id, outcome: 'timeout', message: STUDIO_TIMEOUT_NOTE }, null);
+  }
+  return closed.length;
+}
+
+/** For the worker: closes every run past its lease or its longest run, whichever brand it is in. */
+export async function expireRuns(ctx: Ctx): Promise<number> {
+  return ctx.db.tx((db) => closeExpired(ctx, db, 'true', []));
+}
+
+/**
+ * The run of this token that covers work on this piece right now, if any: one it started on the piece, or one it started for the
+ * brand (an empty slot) during which it made the piece. Only a run that is still running, inside its lease and its longest run.
+ */
+export async function runCovering(db: Queryable, tokenId: string, pieceId: string, now: Date): Promise<string | null> {
+  const r = await db.one<{ id: string }>(
+    `select r.id from agent_run r join piece p on p.id = $2
+     where r.token_id = $1 and r.status = 'running' and r.lease_until >= $3 and (r.deadline_at is null or r.deadline_at >= $3)
+       and (r.piece_id = p.id or (r.piece_id is null and p.created_by_token = r.token_id and p.created_at >= r.opened_at))
+     order by r.started_at limit 1`,
+    [tokenId, pieceId, now],
+  );
+  return r?.id ?? null;
 }
 
 function requireToken(p: Principal) {
@@ -106,15 +164,18 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
     const s = agentOf(brand);
     const now = ctx.now();
 
-    // A runner that stopped reporting does not hold the piece forever.
+    // A runner that stopped reporting, or ran past its longest run, does not hold the piece (nor the budget) forever.
+    await closeExpired(ctx, db, 'brand_id = $2', [brandId]);
     if (pieceId) {
-      await db.query(
-        `update agent_run set status = 'finished', outcome = 'timeout', finished_at = $2, notes = 'The runner stopped reporting, so the run was closed'
-         where piece_id = $1 and status = 'running' and lease_until < $2`,
-        [pieceId, now],
-      );
       const running = await db.one('select id, lease_until from agent_run where piece_id = $1 and status = \'running\'', [pieceId]);
       if (running) throw conflict('piece_busy', 'An agent is already working on this piece', { runId: running.id, retryAfterSeconds: 60 });
+      // A run for the brand that made this piece is still working on it: it is that run's until it finishes.
+      const making = await db.one(
+        `select r.id from agent_run r join piece p on p.id = $1
+         where r.status = 'running' and r.piece_id is null and r.token_id = p.created_by_token and p.created_at >= r.opened_at limit 1`,
+        [pieceId],
+      );
+      if (making) throw conflict('piece_busy', 'An agent is still making this piece', { runId: making.id, retryAfterSeconds: 60 });
     }
     if (input.eventId) {
       const done = await db.one(
@@ -142,7 +203,7 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
     } else if (pieceId && spentPiece >= s.max_cost_per_piece) {
       blocked = { reason: 'piece_budget_reached', message: `The agent has reached the budget for this piece (${spentPiece.toFixed(2)} of ${s.max_cost_per_piece} ${s.currency}).`, details: { spent: spentPiece, cap: s.max_cost_per_piece } };
     } else if (spentMonth >= s.max_cost_per_month) {
-      blocked = { reason: 'monthly_budget_reached', message: `The agent has reached this month's budget (${spentMonth.toFixed(2)} of ${s.max_cost_per_month} ${s.currency}).`, details: { spent: spentMonth, cap: s.max_cost_per_month } };
+      blocked = { reason: 'monthly_budget_reached', message: `The agent has reached this month's budget (${spentMonth.toFixed(2)} of ${s.max_cost_per_month} ${s.currency}, counting what runs in progress may still spend).`, details: { spent: spentMonth, cap: s.max_cost_per_month } };
     }
 
     if (blocked) {
@@ -162,17 +223,20 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
     // Not blocked, so both budgets are set.
     const capPiece = s.max_cost_per_piece as number;
     const capMonth = s.max_cost_per_month as number;
-    const remaining = Math.min(pieceId ? capPiece - spentPiece : capPiece, capMonth - spentMonth);
+    // What this run may spend, and what is set aside for it while it runs: what is left of the piece and of the month, after what the
+    // runs already going were given.
+    const remaining = Math.round(Math.min(pieceId ? capPiece - spentPiece : capPiece, capMonth - spentMonth) * 10_000) / 10_000;
     const lease = new Date(now.getTime() + (s.max_run_minutes + LEASE_GRACE_MINUTES) * 60_000);
     const run = (await db.one(
-      `insert into agent_run (brand_id, piece_id, token_id, trigger, trigger_event_id, lease_until, started_at) values ($1,$2,$3,$4,$5,$6,$7) returning id`,
-      [brandId, pieceId, token.tokenId, input.trigger, input.eventId ?? null, lease, now],
+      `insert into agent_run (brand_id, piece_id, token_id, trigger, trigger_event_id, lease_until, started_at, reserved, deadline_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$6) returning id`,
+      [brandId, pieceId, token.tokenId, input.trigger, input.eventId ?? null, lease, now, remaining],
     ))!;
     await audit(db, p, brandId, 'agent.started', 'agent_run', run.id, null, { piece_id: pieceId, trigger: input.trigger, round: rounds + 1 });
     return {
       started: {
         id: run.id, round: rounds + 1, maxRounds: s.max_rounds, leaseUntil: lease,
-        limits: { maxMinutes: s.max_run_minutes, maxCost: Math.round(remaining * 10_000) / 10_000, currency: s.currency },
+        limits: { maxMinutes: s.max_run_minutes, maxCost: remaining, currency: s.currency },
       },
     };
   });
@@ -184,14 +248,22 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
   return outcome.started;
 }
 
-/** The runner says it is still working: the lease moves ahead, so a stuck runner is told apart from a busy one. */
+/**
+ * The runner says it is still working: the lease moves ahead, so a stuck runner is told apart from a busy one. Never past the run's
+ * longest time: a run that has used it up is closed here, and the runner is told to stop.
+ */
 export async function heartbeat(ctx: Ctx, p: Principal, runId: string) {
   const token = requireToken(p);
-  const row = await ctx.db.one(
-    `update agent_run set lease_until = $3 where id = $1 and token_id = $2 and status = 'running' returning id, lease_until`,
-    [runId, token.tokenId, new Date(ctx.now().getTime() + HEARTBEAT_MINUTES * 60_000)],
-  );
-  if (!row) throw conflict('not_running', 'That run is not running (it finished, or it was closed because the runner stopped reporting)');
+  const now = ctx.now();
+  const row = await ctx.db.tx(async (db) => {
+    await closeExpired(ctx, db, 'id = $2 and token_id = $3', [runId, token.tokenId]);
+    return db.one(
+      `update agent_run set lease_until = case when deadline_at is null then $3 else least($3, deadline_at) end
+       where id = $1 and token_id = $2 and status = 'running' returning id, lease_until`,
+      [runId, token.tokenId, new Date(now.getTime() + HEARTBEAT_MINUTES * 60_000)],
+    );
+  });
+  if (!row) throw conflict('not_running', 'That run is not running (it finished, it ran past the longest run allowed, or it was closed because the runner stopped reporting)');
   return { id: row.id, leaseUntil: row.lease_until };
 }
 
@@ -202,6 +274,17 @@ export async function finishRun(ctx: Ctx, p: Principal, runId: string, raw: unkn
     const run = await db.one('select * from agent_run where id = $1 for update', [runId]);
     if (!run || run.token_id !== token.tokenId) throw notFound('Run');
     if (run.status === 'finished') {
+      // A run the studio closed as a timeout still spent what it spent: the runner's late word on it is recorded, once, so the
+      // budgets count it. The outcome stays a timeout.
+      if (run.outcome === 'timeout' && run.detail?.closed_by_studio && !run.detail?.late_report) {
+        const late = { outcome: input.outcome, cost: input.cost, notes: input.notes.slice(0, 900), at: ctx.now().toISOString() };
+        const row = (await db.one(
+          `update agent_run set cost = $2, detail = detail || $3::jsonb where id = $1 returning *`,
+          [runId, input.cost, JSON.stringify({ late_report: late })],
+        ))!;
+        await audit(db, p, run.brand_id, 'agent.late_report', 'agent_run', runId, { cost: Number(run.cost) }, { cost: input.cost, outcome: input.outcome });
+        return runView(row);
+      }
       if (run.outcome === input.outcome) return runView(run);
       throw conflict('already_finished', `This run already finished as ${run.outcome}`);
     }
@@ -273,7 +356,7 @@ export async function pieceAgent(ctx: Ctx, p: Principal, pieceId: string) {
     rounds: counted.length,
     max_rounds: s.max_rounds,
     spent_piece: counted.reduce((n, r) => n + Number(r.cost), 0),
-    spent_month: await spend(ctx.db, 'brand_id = $1 and started_at >= $2', [piece.brand_id, monthStart]),
+    spent_month: (await spending(ctx.db, 'brand_id = $1 and started_at >= $2', [piece.brand_id, monthStart])).spent,
     status: live ? 'running' : needsPerson ? 'needs_person' : 'idle',
     blocked_reason: needsPerson ? lastBlocked!.blocked_reason : null,
     blocked_message: needsPerson ? lastBlocked!.notes : null,
@@ -320,7 +403,7 @@ export async function brandAgent(ctx: Ctx, p: Principal, brandId: string) {
   return {
     settings: agentOf(brand),
     month_start: monthStart,
-    spent_month: await spend(ctx.db, 'brand_id = $1 and started_at >= $2', [brandId, monthStart]),
+    ...(await spending(ctx.db, 'brand_id = $1 and started_at >= $2', [brandId, monthStart]).then((m) => ({ spent_month: m.spent, reserved_month: m.reserved }))),
     runs: runs.map((r) => ({ ...runView(r), piece_title: r.piece_title, version_number: r.version_number, token_name: r.token_name })),
   };
 }

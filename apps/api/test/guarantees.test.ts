@@ -165,8 +165,13 @@ describe('producer tokens', () => {
     expect(JSON.stringify((await call(users.admin, 'GET', `/api/brands/${brandId}/tokens`)).body)).not.toContain(token);
 
     const agent = { id: created.body.id as string, email: 'agent', bearer: token };
-    // A token produces…
+    // A token produces… inside a run it started on the piece, so the agent's limits apply to everything it uploads.
     const { variantId, pieceId } = await makePiece(agent);
+    const outside = await newVersion(agent, variantId);
+    expect(outside.status).toBe(409);
+    expect(outside.body.error.code).toBe('no_run');
+    await call(users.admin, 'PATCH', `/api/brands/${brandId}`, { agent: { max_cost_per_piece: 5, max_cost_per_month: 50 } });
+    expect((await call(agent, 'POST', `/api/pieces/${pieceId}/agent-runs`, { trigger: 'manual' })).status).toBe(201);
     const v = await newVersion(agent, variantId);
     expect(v.status).toBe(201);
     expect(v.body.author_token_id).toBe(agent.id);
