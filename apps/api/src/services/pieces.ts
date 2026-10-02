@@ -102,7 +102,11 @@ export async function createPiece(ctx: Ctx, p: Principal, brandId: string, raw: 
   });
 }
 
-export async function listPieces(ctx: Ctx, p: Principal, brandId: string, f: { state?: string; q?: string }) {
+/**
+ * The brand's pieces, newest first (discarded last), up to 200. Optional filters: the piece's state, a search in the title, a campaign, and
+ * whether the latest version of any variant was uploaded by the agent (`byAgent`).
+ */
+export async function listPieces(ctx: Ctx, p: Principal, brandId: string, f: { state?: string; q?: string; campaignId?: string; byAgent?: boolean }) {
   await authorize(ctx.db, p, brandId, 'brand.view');
   const params: unknown[] = [brandId];
   let where = 'p.brand_id = $1';
@@ -113,6 +117,14 @@ export async function listPieces(ctx: Ctx, p: Principal, brandId: string, f: { s
   if (f.q) {
     params.push(`%${f.q.replace(/[%_]/g, '\\$&')}%`);
     where += ` and p.title ilike $${params.length}`;
+  }
+  if (f.campaignId) {
+    params.push(f.campaignId);
+    where += ` and p.campaign_id = $${params.length}`;
+  }
+  if (f.byAgent !== undefined) {
+    params.push(f.byAgent);
+    where += ` and coalesce(la.by_agent, false) = $${params.length}`;
   }
   // Everything a card in the list shows, in this one query: the latest version of the first variant (the one the preview is
   // drawn from, see thumbs.latestVersionId) with its main file, who made the latest version anywhere, the campaign, and what is

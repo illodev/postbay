@@ -13,6 +13,7 @@ import { subscribeEvents } from './connectors.js';
 import { recipientLocale } from './notify.js';
 import { msg, t, type Localized } from '../i18n/index.js';
 import { loadBrand, rulesOf } from './loaders.js';
+import { mcpOf, mcpSettings } from '../mcp/settings.js';
 
 export const NETWORKS = ['instagram', 'facebook', 'youtube', 'tiktok', 'linkedin', 'x', 'threads', 'pinterest', 'bluesky'] as const;
 
@@ -40,12 +41,14 @@ export const brandPatch = z.object({
   publishing: publishingInput.partial().optional(),
   agent: agentSettings.partial().optional(),
   prizes: prizeSettings.partial().optional(),
+  /** AI assistants (MCP): whether they may approve and request changes (src/mcp/settings.ts). */
+  mcp: mcpSettings.partial().optional(),
 });
 
 export async function getBrand(ctx: Ctx, p: Principal, brandId: string) {
   const role = await authorize(ctx.db, p, brandId, 'brand.view');
   const b = await loadBrand(ctx.db, brandId);
-  return { id: b.id, name: b.name, timezone: b.timezone, locale: b.locale, paused: b.paused, rules: rulesOf(b), publishing: publishingOf(b as never), agent: agentOf(b), prizes: prizesOf(b), role };
+  return { id: b.id, name: b.name, timezone: b.timezone, locale: b.locale, paused: b.paused, rules: rulesOf(b), publishing: publishingOf(b as never), agent: agentOf(b), prizes: prizesOf(b), mcp: mcpOf(b), role };
 }
 
 export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: unknown) {
@@ -61,17 +64,18 @@ export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: 
     const publishing = { ...publishingOf(before as never), ...(input.publishing ?? {}) };
     const agent = { ...agentOf(before), ...(input.agent ?? {}) };
     const prizes = { ...prizesOf(before), ...(input.prizes ?? {}) };
+    const mcp = { ...mcpOf(before), ...(input.mcp ?? {}) };
     await db.query(
-      'update brand set name = coalesce($2, name), timezone = coalesce($3, timezone), locale = coalesce($4, locale), approval_rules = $5, publishing = $6, agent = $7, prizes = $8 where id = $1',
-      [brandId, input.name ?? null, input.timezone ?? null, input.locale ?? null, JSON.stringify(rules), JSON.stringify(publishing), JSON.stringify(agent), JSON.stringify(prizes)],
+      'update brand set name = coalesce($2, name), timezone = coalesce($3, timezone), locale = coalesce($4, locale), approval_rules = $5, publishing = $6, agent = $7, prizes = $8, mcp = $9 where id = $1',
+      [brandId, input.name ?? null, input.timezone ?? null, input.locale ?? null, JSON.stringify(rules), JSON.stringify(publishing), JSON.stringify(agent), JSON.stringify(prizes), JSON.stringify(mcp)],
     );
     const after = await loadBrand(db, brandId);
     await audit(db, p, brandId, 'brand.updated', 'brand', brandId,
-      { name: before.name, timezone: before.timezone, rules: rulesOf(before), publishing: publishingOf(before as never), agent: agentOf(before), prizes: prizesOf(before) },
-      { name: after.name, timezone: after.timezone, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after), prizes: prizesOf(after) });
+      { name: before.name, timezone: before.timezone, rules: rulesOf(before), publishing: publishingOf(before as never), agent: agentOf(before), prizes: prizesOf(before), mcp: mcpOf(before) },
+      { name: after.name, timezone: after.timezone, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after), prizes: prizesOf(after), mcp: mcpOf(after) });
     return {
       prizesSwitchedOn: !prizesOf(before).enabled && prizesOf(after).enabled,
-      brand: { id: after.id, name: after.name, timezone: after.timezone, locale: after.locale, paused: after.paused, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after), prizes: prizesOf(after) },
+      brand: { id: after.id, name: after.name, timezone: after.timezone, locale: after.locale, paused: after.paused, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after), prizes: prizesOf(after), mcp: mcpOf(after) },
     };
   });
   if (out.prizesSwitchedOn) await subscribeForPrizes(ctx, brandId);
@@ -632,7 +636,7 @@ export async function listAudit(ctx: Ctx, p: Principal, brandId: string, f: { en
   }
   params.push(Math.min(f.limit ?? 100, 500));
   return ctx.db.query(
-    `select a.id, a.action, a.entity, a.entity_id, a.before, a.after, a.at, coalesce(u.name, u.email, t.name) as actor
+    `select a.id, a.action, a.entity, a.entity_id, a.before, a.after, a.at, coalesce(u.name, u.email, t.name) as actor, a.via
      from audit_event a left join app_user u on u.id = a.actor_user_id left join api_token t on t.id = a.actor_token_id
      where ${where} order by a.id desc limit $${params.length}`,
     params,
