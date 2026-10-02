@@ -173,13 +173,13 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
       }
     }
     await refreshPieceState(db, version.piece_id);
-    // A piece made for a slot is scheduled there once approved (unless unticked); the answer says what happened, or what will.
-    const slotSchedule = state === 'approved' ? await scheduleOnApproval(ctx, db, p, versionId) : approving ? await awaitingApprovals(ctx, db, versionId) : null;
     // Who uploaded what was decided on, a person or a token (and who made that token), is part of the record of the decision.
     await audit(db, p, version.brand_id, `version.${input.decision === 'approve' ? 'approved' : 'rejected'}`, 'version', versionId,
       { review_state: 'in_review' },
       { review_state: state, fingerprint, accounts: input.accountIds, note: input.note, uploaded_by: await uploaderOf(db, versionId), title: piece.title, ai_generated: piece.ai_generated,
         ...(approving ? { auto_schedule: input.autoSchedule } : {}) });
+    // A piece made for a slot is scheduled there once approved (unless unticked); the answer says what happened, or what will.
+    const slotSchedule = state === 'approved' ? await scheduleOnApproval(ctx, db, p, versionId) : approving ? await awaitingApprovals(ctx, db, versionId) : null;
     if (state !== 'in_review') await notifyAuthor(db, version, state === 'approved' ? 'version.approved' : 'version.changes_requested', p.userId);
     if (input.decision === 'reject') {
       await emit(ctx, db, version.brand_id, 'version.rejected', {
