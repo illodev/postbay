@@ -18,8 +18,10 @@ studio ──signed webhook──▶ runner ──▶ asks the studio for permis
                               └─ replies to each comment, one by one ("needs a person" for what it could not do)
 ```
 
-It needs Node 22, `ffmpeg` and `ffprobe` (for the checks), and whatever the agent's command needs. Run it wherever the agent
-lives: it only makes outgoing calls to the studio and accepts webhooks from it. It is not part of the studio's Docker image.
+It needs Node 22, `ffmpeg` and `ffprobe` (for the checks), `git` (for [pieces made from a project](#pieces-made-from-a-project)
+in git), and whatever the agent's command needs. Run it wherever the agent lives: it only makes outgoing calls to the studio and
+accepts webhooks from it. It is not part of the studio's Docker image: it has [its own](#running-the-runner-on-any-machine), with
+Claude Code, Chromium and a rendering engine next to it.
 
 ## Setting it up
 
@@ -64,6 +66,7 @@ proxy with TLS, or on the same private network with that setting.
       "templates": { "version.changes_requested": "templates/changes-requested.md", "slot.needs_content": "templates/slot-needs-content.md" },
       "agent": { /* see below */ },
       "checks": { /* see below */ },
+      "project": { /* optional: pieces made from a project, see below */ },
       "checkRetries": 1                               // extra tries when the output fails the checks (each is another agent run)
     }
   }
@@ -90,14 +93,17 @@ can read it (below). Relative paths are resolved against the configuration file.
 | `killGraceSeconds` | After the time allowed, SIGTERM; this many seconds later SIGKILL (to the whole process group) |
 
 Placeholders in `command`: `instructionsFile`, `runDir`, `inputDir`, `outputDir`, `pieceDir`, `sourcesDir`, `maxBudget` (what is
-left for this piece), `maxMinutes`, `runId`, `pieceId`. With a sandbox that mounts the piece elsewhere, the paths are the ones the
+left for this piece), `maxMinutes`, `runId`, `pieceId`, and `projectDir` (the piece's project, only when it has one: use it inside
+`{ "if": "projectDir", "args": [...] }`). With a sandbox that mounts the piece elsewhere, the paths are the ones the
 agent sees. In `sandbox.command`: `runDir`, `inputDir`, `outputDir`, `pieceDir`, `sourcesDir` (the runner's own paths),
-`agentRunDir` and `agentPieceDir` (as the agent sees them), `home` (`env.HOME`), `uid`, `gid`, `brand`, `runId`, `pieceId`.
+`agentRunDir` and `agentPieceDir` (as the agent sees them), `home` (`env.HOME`), `uid`, `gid`, `brand`, `runId`, `pieceId`; and for a
+piece's project `projectDir` and `agentProjectDir`, `projectMount` (set only when the project is outside the piece directory, which
+needs a mount of its own) and `projectRepo` (a git project's clone). See [the project in a sandbox](#the-project-in-a-sandbox).
 
 The agent runs in the run's directory, in its own process group, **without the runner's environment**: it gets `PATH`, `HOME`,
 `USER`, `LANG`, `TERM`, `TMPDIR`, `TZ`, the proxy and certificate variables, `agent.env`, and `ESTUDIO_RUN_DIR`,
-`ESTUDIO_INPUT_DIR`, `ESTUDIO_OUTPUT_DIR`, `ESTUDIO_SOURCES_DIR` (with `runAs`, not the runner's `HOME`, `USER`, `LOGNAME` or
-`SHELL`). That keeps secrets out of the agent's own environment, and that alone is not enough: read on.
+`ESTUDIO_INPUT_DIR`, `ESTUDIO_OUTPUT_DIR`, `ESTUDIO_SOURCES_DIR` and, for a piece with a project, `ESTUDIO_PROJECT_DIR` (with `runAs`,
+not the runner's `HOME`, `USER`, `LOGNAME` or `SHELL`). That keeps secrets out of the agent's own environment, and that alone is not enough: read on.
 
 ### Checks
 
@@ -165,6 +171,124 @@ So the runner does four things, and the first two are on you:
 and `sources/`, and allows only `ffmpeg` and `ffprobe` as commands (no `cp`, `mv` or `ls` with any arguments). `ffmpeg` can still
 read any file it is given: outside a sandbox, that is a way to read anything the user can.
 
+## Pieces made from a project
+
+Some pieces are not edited as finished files: they are **made with code**. Each is a project folder (a scene, its assets, voices, a
+mix script) that a rendering tool turns into the video, and the person who made it changes the project and renders again. An agent
+can do the same: "change this line", "the logo goes in the corner", "the shadow is missing" become edits to the project's sources and a
+new render, instead of an ffmpeg patch over the last video.
+
+The piece says where its project lives with **`source`** (on the piece page in the studio, or `source` when the piece is created or
+edited through the API: whoever may create pieces may set it). The studio does not interpret it. The runner turns it into a working
+directory with the brand's `project` configuration:
+
+```jsonc
+"project": {
+  "repos": {
+    "videos": {                                  // the key a source starts with: "videos:2026-09-29-quarterly-taxes/telenovela"
+      "mode": "git",
+      "repo": "git@github.com:acme/videos.git",  // a URL, or a path on this machine
+      "baseBranch": "main",                      // what a piece's own branch starts from
+      "branch": "studio/{{pieceId}}",            // the piece's own branch ({{pieceId}} and {{brand}})
+      "author": { "name": "Studio agent", "email": "studio-agent@acme.example" },
+      "push": false,                             // push the piece's branch after each commit
+      "auth": { "sshKeyFile": "/etc/studio-runner/videos.deploy-key", "knownHostsFile": "/etc/studio-runner/known_hosts" }
+    },
+    "scratch": { "mode": "dir", "root": "/srv/projects" }   // folders worked on in place
+  },
+  "default": "videos",                           // a source with no "<key>:" (default: the only key, when there is one)
+  "template": "templates/project-changes-requested.md"     // the instructions for a piece with a project
+}
+```
+
+A source is `<key>:<folder>` (or just `<folder>`, for the default key): the folder inside the repository or directory where the project
+is. In git, `videos:` alone means the whole repository is the project.
+
+**`git` mode.** The runner keeps a clone of the repository under the brand's directory (`_repos/<key>.git`, fetched when a piece first
+needs it) and gives each piece **its own worktree, on its own branch** (`studio/<piece id>`, started from `baseBranch`, or from the branch
+if it already exists, here or on the remote), inside the piece's directory: `<piece>/project/<key>/`. The worktree is kept between the
+piece's rounds, so round 2 starts from what round 1 left. After the agent runs, the runner **commits everything that changed in the
+worktree**, as `author`:
+
+```
+Studio round 2: Quarterly taxes: the telenovela
+
+What the agent changed in round 2 of "Quarterly taxes: the telenovela", asked for on version 2.
+
+<the agent's notes>
+
+Comments:
+- 6d1c…: fixed
+- 0b9a…: needs_human
+
+Studio-Piece: <piece id>
+Studio-Run: <run id>
+Studio-Round: 2
+Studio-Comment: 6d1c…
+Studio-Comment: 0b9a…
+```
+
+and the new version's notes say `Project videos:…: commit <sha> on branch studio/<piece id>` (the run's detail in *Settings → Agent* has it
+too). `git log --format=%(trailers:key=Studio-Comment) studio/<piece id>` lists what each round answered. A run that ends without a version
+(failed checks, a timeout, a crash) still commits what the agent changed, with "(not uploaded: <why>)" in the subject: its work waits on
+the branch for a person instead of mixing into the next round. With `push`, the branch is pushed after each commit; a refused push is said
+in the notes and the commit stays. Merging a piece's branch is a person's decision: the runner never touches `baseBranch`, nor the
+repository you gave it (it fetches from it, and pushes only the piece's branch, when told to).
+
+- **Credentials.** For a private repository or for pushing: `auth.tokenFile` (HTTPS: a token, sent as basic authentication with `username`,
+  `x-access-token` by default, which is GitHub's; GitLab's is `oauth2`), or `auth.sshKeyFile` (SSH, with `knownHostsFile` to pin the
+  server's key; without it, the key the server shows first is remembered and then required). Both are files, mode 600 and the runner's
+  own, like the studio token, and are treated as secrets: never posted, never in git's arguments (which any user can read) or the clone's
+  configuration (which the agent can read), only in the environment of the git process that needs them. Do not put a password in `repo`.
+- **What gets committed** is everything not ignored, so the project's `.gitignore` has to keep renders, frames and caches out (the
+  template tells the agent to render into its output directory, outside the project). A project in Git LFS needs `git-lfs` installed
+  next to the runner.
+- **What git is told.** The agent can rewrite any file of its worktree, `.git` included. The runner names the repository itself, and runs
+  git with hooks and the file-system monitor off, so nothing in the worktree can make git run a program for it. A worktree that is no longer
+  on its branch is refused rather than committed elsewhere.
+
+**`dir` mode.** The source is a folder under `root`, and the agent works in it **in place**: nothing is cloned or committed (put the folder
+under version control yourself if you want history). The runner never has two agents in one folder at once, but it cannot stop a person
+editing it while an agent does: **if people also work in that folder, use git mode**, where each piece has its own worktree. With
+`agent.runAs`, the agent's user must be able to write there.
+
+**Never trusted.** A source must name a configured key; its folder cannot be absolute or hold `..`; its real path, symbolic links
+followed, must stay inside the repository or directory (a link committed to the repository that leads to `/etc` is refused); and it must
+be a folder. Anything else ends the run before the agent starts, as *failed*, with the reason in the run's notes and every comment told a
+person needs to look. And before anything is committed, every changed file is searched for the runner's secrets, as `result.json` is: if
+one turns up, the changes are thrown away and the run fails.
+
+**A piece without a source**, or a brand without `project`, works exactly as before: the agent revises the last version's files.
+A slot (`slot.needs_content`) has no piece yet, so it has no project either.
+
+The agent gets the project as `{{projectDir}}` in its command, `project_dir`, `source` and `project_branch` in its template, and
+`ESTUDIO_PROJECT_DIR` in its environment. The last version's files are still in `input/previous/`, for reference.
+
+### The project in a sandbox
+
+A git worktree is inside the piece directory, so a sandbox that shows the piece (`--bind {{pieceDir}} …`) shows the project too, at the
+matching path. Inside it, `git status` and `git diff` need the clone as well, read-only:
+
+```json
+{ "if": "projectRepo", "args": ["--ro-bind", "{{projectRepo}}", "{{projectRepo}}"] }
+```
+
+A `dir` project is outside the piece directory and needs a mount of its own: `projectMount` is set only then, and `sandbox.projectDir` says
+where the agent sees it (by default, at its own path):
+
+```json
+"sandbox": {
+  "command": ["bwrap", "…", "--bind", "{{pieceDir}}", "/work",
+              { "if": "projectMount", "args": ["--bind", "{{projectMount}}", "{{agentProjectDir}}"] },
+              "--chdir", "{{agentRunDir}}", "--"],
+  "pieceDir": "/work",
+  "projectDir": "/project"
+}
+```
+
+(`-v {{projectMount}}:{{agentProjectDir}}` with Docker.) With `agent.runAs`, the runner hands the worktree to the agent's user each round,
+and the clone stays the runner's, readable by the agent's group: the agent can look at the history, not change it.
+
 ## Templates
 
 A template is plain text (Markdown works well) with `{{name}}` placeholders. A name the runner does not know is an error when it
@@ -184,6 +308,11 @@ brand is the point: house style, what the agent may and may not invent, and how 
 | `result_format` | What to write in `result.json` (put it in every template) |
 | `input_dir`, `output_dir`, `sources_dir`, `run_dir` | Where things are, relative to the run directory |
 | `slot`, `slot_day`, `campaigns` | For an empty slot: which, when, and the campaign briefs |
+| `source`, `project_dir`, `project_branch` | For a piece made from a project: its source as the studio has it, the directory the agent works in (absolute, as the agent sees it) and, in git, the piece's branch. Empty otherwise |
+
+[`templates/project-changes-requested.md`](templates/project-changes-requested.md) is the example for pieces made from a project
+(`project.template`): read the project's own instructions first, change the sources and not the rendered file, render again with the
+project's own command, leave the result in the output directory, and never commit (the runner does).
 
 ## The workspace
 
@@ -191,6 +320,7 @@ brand is the point: house style, what the agent may and may not invent, and how 
 <workspaceRoot>/                   0700 (0711 with runAs: others may pass through, not look); the queue is in .state, 0700
 <workspaceRoot>/<brand>/<piece id>/  0700 per brand (0750 with the agent's group under runAs)
   sources/                         kept between rounds of the piece: the agent's project files and scripts
+  project/<key>/                   a piece made from a project in git: its own worktree, on its own branch, kept between rounds
   runs/<run id>/
     instructions.md                what the agent was told
     input/  comments.json  people-only.json  requirements.json  brief.md  event.json
@@ -201,7 +331,8 @@ brand is the point: house style, what the agent may and may not invent, and how 
     output-attempt-1/              the output of an attempt that failed its checks, moved aside
 ```
 
-For an empty slot the directory is `_slots_<slot id>-<day>`: there is no piece yet.
+For an empty slot the directory is `_slots_<slot id>-<day>`: there is no piece yet. `<workspaceRoot>/<brand>/_repos/<key>.git` is the
+runner's clone of a project repository, shared by that brand's pieces.
 
 ## `result.json`: what the agent leaves
 
@@ -284,6 +415,18 @@ check-failed runs also notify approvers and admins.
   what it needs (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`), from a file. Do not pass `CLAUDE_*` wholesale:
   some of those variables tie a child process to the session that launched it.
 - Give each brand its own `HOME` (Claude Code keeps its settings and sign-in there), so one brand's agent never sees another's.
+- **With a Claude subscription** instead of an API key: run `claude setup-token` once, on any machine where you can sign in to Claude
+  in a browser. It prints a long-lived token: put it in a file (mode 600, the runner's own) and give it to the agent as
+  `"CLAUDE_CODE_OAUTH_TOKEN": { "file": "/run/secrets/claude-oauth-token" }`. Nothing else is needed: no `claude login` on the runner's
+  machine. The cost Claude Code then reports is what the same use would cost on the API; the studio's budgets count that.
+- **For a piece made from a project**, give the agent the project and the tools its render needs, and nothing more:
+  `{ "if": "projectDir", "args": ["--add-dir", "{{projectDir}}"] }` before `--allowedTools`, `Edit`, `Write` and `Read` on
+  `{{projectDir}}`, the render commands by their full path (`Bash(node /opt/drawn-by-code/engine/render.mjs:*)`), and git to look,
+  not to change (`Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git log:*)`). If your projects' instructions render through a script of
+  their own (`npm run render`, `sh render.sh`), allow that command too: the agent cannot run what is not on the list.
+  [`examples/drawn-by-code.config.json`](examples/drawn-by-code.config.json) is a complete brand set up this way. It does not set
+  `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD`, which would load the `CLAUDE.md` of every added directory, the engine's included (written
+  for working on the engine itself, not for a client's piece): the template tells the agent to read the project's own.
 - The cost the studio records is the one Claude Code reports (`total_cost_usd`), not the one the agent writes in `result.json`.
 
 ## Running it as a service
@@ -313,6 +456,80 @@ stage after the restart.
 
 With `agent.runAs` the service runs as root (`User=root`) instead; with a sandbox it does not have to.
 
+## Running the runner on any machine
+
+[`Dockerfile`](Dockerfile) builds one image with the runner and everything an agent needs to revise a piece made with code, so a
+machine needs nothing but Docker:
+
+| In the image | |
+| --- | --- |
+| The runner | Node 22, built from this repository, at `/opt/studio`; templates and examples included |
+| `ffmpeg`, `ffprobe` | The runner's checks, and the agent's renders and copies |
+| Chromium and fonts | `/usr/bin/chromium` (`CHROME_PATH`), for an engine that renders in a headless browser. It renders in software (SwiftShader): no GPU is needed, or used |
+| `git`, `ssh`, `python3` | Projects in git, and projects' own scripts |
+| Claude Code | `claude`, the CLI, from npm (`--build-arg CLAUDE_CODE_VERSION=2.1.287` to pin it; `latest` by default) |
+| A rendering engine | [drawn-by-code](https://github.com/illodev/drawn-by-code) by default, cloned at build time into `/opt/drawn-by-code` (`DRAWN_BY_CODE_DIR`) with its npm dependencies: `--build-arg ENGINE_REPO=… --build-arg ENGINE_REF=<branch, tag or commit>`. Its finished renders and review sheets are left out (`ENGINE_SLIM=false` keeps them). Its Claude skills are linked into the agent's `~/.claude/skills`, so the agent knows how to animate, review and render with it. `/opt/drawn-by-code/.engine-version` says which commit it is |
+| Two users | The runner runs as root inside the container, only to run each agent as `agent` (uid `AGENT_UID`, 2001 by default) and read back what it made; [the compose file](../../deploy/runner/docker-compose.yml) drops every capability but the six that takes. The agent cannot read the runner's secrets, configuration, queue or environment |
+
+There is no bubblewrap: Docker's default seccomp profile does not let it make namespaces, and the container plus `agent.runAs` is what keeps
+the agent apart here. The agent can reach whatever the container can on the network (Claude Code needs it).
+
+**1. Build.** From the repository's root, `docker compose -f deploy/runner/docker-compose.yml build` (or
+`docker build -f apps/runner/Dockerfile -t studio-runner .`). About 1.5 GB; a few minutes the first time.
+
+**2. Secrets**, one per file, mode 600, in `deploy/runner/secrets/` (mounted at `/run/secrets`, read-only; the directory is in
+`.gitignore`):
+
+```sh
+cd deploy/runner && mkdir -p secrets config projects && chmod 700 secrets
+printf '%s' '<the producer token>'   > secrets/lumen.token            # Settings → API tokens in the studio
+printf '%s' '<the webhook secret>'   > secrets/lumen.webhook-secret   # Settings → Webhooks
+printf '%s' '<claude setup-token>'   > secrets/claude-oauth-token     # run `claude setup-token` anywhere you can sign in
+chmod 600 secrets/*
+```
+
+A deploy key or token for the project repositories goes here too (`project.repos.<key>.auth`).
+
+**3. Configuration.** `cp ../../apps/runner/examples/drawn-by-code.config.json config/runner.config.json`, then set the studio's address
+(`api`), the brand's key, and where its projects are: `"repo": "/srv/projects/<repository>"` for a repository in the folder you mount
+(`PROJECTS_DIR`, `./projects` by default), or its URL with `auth`. Keep `agent.runAs` equal to `AGENT_UID`. For folders worked on in place
+(`dir` mode), build with `AGENT_UID`/`AGENT_GID` of the folders' owner, so what the agent writes there stays theirs.
+
+**4. Start.** `PROJECTS_DIR=/path/to/your/projects docker compose up -d`, then `docker compose logs -f runner`: `runner listening` and
+`connected to the studio`, and no `unsafe configuration` warning. The port listens on `127.0.0.1:8787` unless `RUNNER_BIND` says
+otherwise; the studio must reach it (a webhook to a private address needs `WEBHOOK_ALLOW_PRIVATE_NETWORKS=true` on the studio).
+
+**5. Point the studio at it.** *Settings → Webhooks*: `http://<this machine>:8787/webhooks/lumen`, event `version.changes_requested`;
+*Send a test* is answered 200. Set the budgets in *Settings → Agent*. On a piece, set where its project is (`source`, e.g.
+`videos:2026-09-29-quarterly-taxes/telenovela`).
+
+**6. Check it.**
+
+```sh
+docker compose exec -u agent runner claude --version
+docker compose exec -u agent runner sh -c 'cd /tmp && node $DRAWN_BY_CODE_DIR/engine/render.mjs \
+  $DRAWN_BY_CODE_DIR/sandbox/2026-09-24-coffee-first/scene.js --at 4.5 --size 640 --out /tmp/check'   # a still: the engine and Chromium work
+curl -s http://127.0.0.1:8787/health                                                                # {"ok":true,"queued":0}
+```
+
+Then a first round: comment on a version of a piece with a source and ask for changes. The log says `working in the piece's project`,
+then `project committed`; the new version's notes say which commit; and the branch is in the runner's clone:
+`docker compose exec runner git --git-dir /var/lib/studio-runner/lumen/_repos/videos.git log studio/<piece id>`. With `push`, it is in
+your repository too.
+
+Good to know:
+
+- **Renders take CPU.** A full-length render in software GL can take minutes: set the longest run (*Settings → Agent*) with that in mind,
+  and `RUNNER_CPUS` / `RUNNER_MEMORY` to what the machine can spare.
+- **The engine is the agent's to use, not to change**: it is root's, read-only to the agent. drawn-by-code's `render.mjs` writes an `out/`
+  folder next to the scene, so a scene renders to a file only where it can write: in a project (the piece's worktree is the agent's), not
+  inside the engine (stills with `--at … --out` work anywhere).
+- **A repository on this machine** (`/srv/projects/…`) is fetched from, and pushed to only with `push`. What a push writes into it is given
+  back to the repository's owner, so the runner, root in the container, never leaves files the owner cannot write. Pushing to a remote
+  (GitHub, GitLab) with a deploy key is the usual way, and the branches then come back to people the way any branch does.
+- **Updating** Claude Code or the engine is a rebuild (`--build-arg CLAUDE_CODE_VERSION=…`, `ENGINE_REF=…`). Pin both for a setup you can
+  reproduce. The workspace volume, with every piece's worktree and the queue, carries over.
+
 ## Tests
 
 ```sh
@@ -322,3 +539,9 @@ npm test -w @estudio/runner
 The tests use a real PostgreSQL, a real API, real ffmpeg and a **scripted stand-in for the agent** (`test/fake-agent.mjs`, driven by
 `FAKE_AGENT_MODE`): they prove everything around the agent, not what a model does with the instructions. `e2e/phase3.sh`
 drives the same loop in a browser, and with `AGENT=claude` runs it with Claude Code as the agent (see [e2e/README.md](../../e2e/README.md)).
+
+Pieces made from a project are tested with real git: a local repository of projects, each piece's worktree and branch, commits with
+their author, message and trailers, a second round in the same worktree, pushes (and a refused one), the changes thrown away when they
+hold a secret, a rewritten `.git` that must not be followed, a link committed to the repository that leads out of it, sources that try
+`..` or an absolute path, a folder worked on in place, a piece without a source, and both kinds of project inside a real bwrap sandbox
+where bwrap can run. The Docker image was built, and checked by hand as [above](#running-the-runner-on-any-machine).

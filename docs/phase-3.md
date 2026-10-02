@@ -191,7 +191,8 @@ a version with `resolves`, comments, replies, slots) are unchanged. Added in thi
   low-resolution file, loudness, or text under a network's interface becomes a warning in the version's notes, where reviewers see it.
 - **Safe zones stay approximate** (phase 2), so *covered zones* is a heuristic that looks for fine detail where a network's interface
   sits. It can only warn.
-- **The runner is not in the studio's image.** It runs where the agent's command is installed, with its own queue on disk. One studio
+- **The runner is not in the studio's image.** It runs where the agent's command is installed, with its own queue on disk (or in
+  [an image of its own](../apps/runner/README.md#running-the-runner-on-any-machine), with Claude Code, Chromium and a rendering engine). One studio
   can serve several runners and one runner several brands.
 
 ## What was verified, and how
