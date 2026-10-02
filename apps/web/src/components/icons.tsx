@@ -53,6 +53,7 @@ const PATHS = {
   userPlus: 'M16 21a6 6 0 0 0-12 0M10 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M22 11h-6',
   copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
   eye: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  layers: 'm12 3 9 5-9 5-9-5zM3 13l9 5 9-5',
 } as const;
 
 export type IconName = keyof typeof PATHS;

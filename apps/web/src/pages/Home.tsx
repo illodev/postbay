@@ -3,20 +3,17 @@ import { DateTime } from 'luxon';
 import { Fragment, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type ActivityItem, type AttentionItem, type AwaitingItem, type Overview, type PublicationRow, type TodayItem } from '../api';
-import { Avatar } from '../components/Avatar';
+import { Avatar, displayName } from '../components/Avatar';
 import { Icon, type IconName } from '../components/icons';
 import { PageBar } from '../components/PageBar';
 import { RetryDialog } from '../components/publications';
 import { Chip, ErrorBox, errorMessage, NetMark, Skeleton, useToast } from '../components/ui';
-import { getLocale, t, tMaybe, type Key } from '../i18n';
+import { getLocale, t, type Key } from '../i18n';
 import { BLOCK_REASON_LABEL, ERROR_CLASS_LABEL, NETWORK_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
 import '../styles/home.css';
 
 // ───────────────────────────── small helpers ─────────────────────────────
-
-/** "Lucía (Marketing)" → Lucía, "ana@x.es" → ana. */
-const firstName = (name: string | null | undefined) => (name ?? '').trim().split(/[\s@(]/)[0] || '?';
 
 /** A long title cut to fit inside a sentence. */
 const clip = (s: string | null, max = 46) => (!s ? '' : s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s);
@@ -27,7 +24,7 @@ const tc = (seconds: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
-/** How long ago, said the way a feed says it: "hace 4 min", "ayer", then the date. */
+/** How long ago, as short as a meta line says it: "ahora", "4 min", "3 h", "ayer", "3 d", then the date. */
 function ago(iso: string): string {
   const then = DateTime.fromISO(iso);
   const mins = Math.floor(-then.diffNow('minutes').minutes);
@@ -39,22 +36,12 @@ function ago(iso: string): string {
   return then.toFormat('d LLL');
 }
 
-/** The same, in as few characters as possible, for a narrow column: "4 min", "3 h", "ayer", "2 oct". */
-function agoShort(iso: string): string {
-  const then = DateTime.fromISO(iso);
-  const mins = Math.floor(-then.diffNow('minutes').minutes);
-  if (mins < 1) return t('home.ago.now');
-  if (mins < 60) return `${mins} min`;
-  if (then.hasSame(DateTime.now(), 'day')) return `${Math.floor(mins / 60)} h`;
-  if (then.hasSame(DateTime.now().minus({ days: 1 }), 'day')) return t('home.ago.yesterday');
-  return then.toFormat('d LLL');
-}
-
 const fullDate = (iso: string) => DateTime.fromISO(iso).toFormat('ccc d LLL yyyy, HH:mm');
 const netName = (n: string | null) => (n ? (NETWORK_LABEL[n] ?? n) : '');
 const list = (items: string[]) => new Intl.ListFormat(getLocale(), { style: 'long', type: 'conjunction' }).format(items);
+const who = (name: string | null) => displayName(name);
 
-/** A translated sentence whose {placeholders} are filled with elements (a bold name, a link) instead of text. */
+/** A translated sentence whose {placeholders} are filled with elements (a name, a link) instead of text. */
 function rich(template: string, parts: Record<string, ReactNode>): ReactNode {
   return template.split(/(\{\w+\})/g).map((seg, i) => {
     const m = /^\{(\w+)\}$/.exec(seg);
@@ -80,17 +67,17 @@ function Thumb({ src, className }: { src: string | null; className: string }) {
   const [broken, setBroken] = useState(false);
   return (
     <span className={`home-thumb ${className}`} aria-hidden="true">
-      {src && !broken ? <img src={src} alt="" loading="lazy" onError={() => setBroken(true)} /> : <Icon name="square" />}
+      {src && !broken ? <img src={src} alt="" loading="lazy" onError={() => setBroken(true)} /> : <Icon name="image" />}
     </span>
   );
 }
 
-function SectionHead({ id, title, count, to, linkLabel, hint }: { id: string; title: string; count?: number; to?: string; linkLabel?: string; hint?: string }) {
+/** A short noun and its count, and where to see all of it. */
+function SectionHead({ id, title, count, to, linkLabel }: { id: string; title: string; count?: number; to?: string; linkLabel?: string }) {
   return (
     <div className="home-sec-head">
       <h2 id={id}>{title}</h2>
       {count !== undefined && count > 0 && <span className="home-count">{count}</span>}
-      {hint && <span className="home-sec-hint">{hint}</span>}
       {to && linkLabel && (
         <Link className="home-all" to={to}>
           {linkLabel}
@@ -101,15 +88,16 @@ function SectionHead({ id, title, count, to, linkLabel, hint }: { id: string; ti
   );
 }
 
-function EmptyBlock({ icon, title, hint }: { icon: IconName; title: string; hint: string }) {
+/** An empty block: one muted line. */
+const Empty = ({ text }: { text: string }) => <p className="home-empty">{text}</p>;
+
+/** Who did something, in a meta line: their mark and name, or the agent's. */
+function By({ agent, name }: { agent: boolean; name: string | null }) {
   return (
-    <div className="home-empty">
-      <span className="home-empty-icon" aria-hidden="true"><Icon name={icon} /></span>
-      <div>
-        <strong>{title}</strong>
-        <p>{hint}</p>
-      </div>
-    </div>
+    <span className="home-by" title={name ?? undefined}>
+      {agent ? <Avatar agent size={16} title={name ?? undefined} /> : <Avatar name={name} size={16} />}
+      <span className="home-by-name">{agent ? t('common.agent') : who(name)}</span>
+    </span>
   );
 }
 
@@ -126,50 +114,36 @@ function groupByPiece(items: AwaitingItem[]) {
   return [...groups.values()];
 }
 
-function Progress({ a }: { a: AwaitingItem }) {
-  if (a.earlier_comments > 0) {
-    const pct = Math.round((a.resolves / a.earlier_comments) * 100);
-    return (
-      <div className="hw-progress">
-        <span>{t('home.awaiting.resolves', { n: a.resolves, count: a.earlier_comments })}</span>
-        <span className="hw-bar" role="progressbar" aria-valuemin={0} aria-valuemax={a.earlier_comments} aria-valuenow={a.resolves}>
-          <i style={{ width: `${pct}%` }} />
-        </span>
-      </div>
-    );
-  }
-  if (a.version_number === 1) return <div className="hw-progress"><span>{t('home.awaiting.first')}</span></div>;
-  return <div className="hw-progress"><span>{a.open_comments > 0 ? t('home.awaiting.open', { count: a.open_comments }) : t('home.awaiting.clear')}</span></div>;
-}
-
 function AwaitingCard({ a, more, mode }: { a: AwaitingItem; more: number; mode: Overview['awaiting_mode'] }) {
   const to = `/review/${a.version_id}`;
+  const resolving = a.earlier_comments > 0;
   return (
     <article className="hw-card">
       <Link to={to} className="hw-thumb" tabIndex={-1} aria-hidden="true">
         <Thumb src={`/api/versions/${a.version_id}/thumb?w=480`} className="hw-img" />
-        <span className="hw-ov hw-ov-v" title={t('home.awaiting.version', { n: a.version_number })}>V{a.version_number}</span>
+        <span className="hw-ov hw-ov-tr" title={t('home.awaiting.version', { n: a.version_number })}>V{a.version_number}</span>
         {a.open_comments > 0 && (
-          <span className="hw-ov hw-ov-c" title={t('home.awaiting.open', { count: a.open_comments })}>
-            <Icon name="bubble" />{a.open_comments}
-          </span>
+          <span className="hw-ov hw-ov-bl" title={t('home.awaiting.open', { count: a.open_comments })}><Icon name="bubble" />{a.open_comments}</span>
+        )}
+        {more > 0 && (
+          <span className="hw-ov hw-ov-br" title={t('home.awaiting.moreVariants', { count: more })}><Icon name="layers" />{more + 1}</span>
         )}
       </Link>
       <div className="hw-body">
         <h3 className="hw-title"><Link to={to} title={a.piece_title}>{a.piece_title}</Link></h3>
-        <div className="hw-by">
-          {a.by_agent ? (
-            <span className="tag tag-agent hw-agent" title={a.author ?? undefined}><Icon name="bot" />{t('common.agent')}</span>
-          ) : (
-            <span className="hw-author"><Avatar name={a.author} size={18} /><span>{firstName(a.author)}</span></span>
-          )}
-          <time className="hw-when" dateTime={a.created_at} title={fullDate(a.created_at)}>{ago(a.created_at)}</time>
-          {more > 0 && <span className="hw-more">{t('home.awaiting.moreVariants', { count: more })}</span>}
-        </div>
-        <Progress a={a} />
-        <Link to={to} data-nav className={`btn btn-small hw-cta ${mode === 'approve' ? 'btn-primary' : ''}`}>
-          {t(`home.awaiting.cta.${mode}` as Key)}
-        </Link>
+        <p className="home-meta">
+          <By agent={a.by_agent} name={a.author} />
+          <time className="home-meta-when" dateTime={a.created_at} title={fullDate(a.created_at)}>{ago(a.created_at)}</time>
+        </p>
+        {resolving && (
+          <div className="hw-progress" title={t('home.awaiting.resolves', { n: a.resolves, count: a.earlier_comments })}>
+            <span className="home-meta"><Icon name="check" />{t('home.awaiting.resolvesShort', { n: a.resolves, count: a.earlier_comments })}</span>
+            <span className="hw-bar" role="progressbar" aria-label={t('home.awaiting.resolves', { n: a.resolves, count: a.earlier_comments })} aria-valuemin={0} aria-valuemax={a.earlier_comments} aria-valuenow={a.resolves}>
+              <i style={{ width: `${Math.round((a.resolves / a.earlier_comments) * 100)}%` }} />
+            </span>
+          </div>
+        )}
+        <Link to={to} data-nav className="btn btn-small hw-cta">{t(`home.awaiting.cta.${mode}` as Key)}</Link>
       </div>
     </article>
   );
@@ -178,22 +152,14 @@ function AwaitingCard({ a, more, mode }: { a: AwaitingItem; more: number; mode: 
 function Awaiting({ data }: { data: Overview }) {
   const groups = groupByPiece(data.awaiting);
   const mode = data.awaiting_mode;
-  const shown = groups.slice(0, 6);
   return (
     <section className="home-sec home-sec-wait" aria-labelledby="home-awaiting">
-      <SectionHead
-        id="home-awaiting"
-        title={t(`home.awaiting.${mode}` as Key)}
-        count={groups.length}
-        hint={mode === 'comment' ? t('home.awaiting.commentHint') : mode === 'view' ? t('home.awaiting.viewHint') : undefined}
-        to={groups.length ? '/pieces?state=in_review' : undefined}
-        linkLabel={t('home.seeAll')}
-      />
-      {shown.length === 0 ? (
-        <EmptyBlock icon="check" title={mode === 'approve' ? t('home.awaiting.empty') : t('home.awaiting.emptyReview')} hint={t('home.awaiting.emptyHint')} />
+      <SectionHead id="home-awaiting" title={t(`home.awaiting.${mode}` as Key)} count={groups.length} to={groups.length ? '/pieces?state=in_review' : undefined} linkLabel={t('home.seeAll')} />
+      {groups.length === 0 ? (
+        <Empty text={mode === 'approve' ? t('home.awaiting.empty') : t('home.awaiting.emptyReview')} />
       ) : (
         <div className="home-wait" onKeyDown={arrowNav}>
-          {shown.map((g) => <AwaitingCard key={g.item.piece_id} a={g.item} more={g.more} mode={mode} />)}
+          {groups.slice(0, 6).map((g) => <AwaitingCard key={g.item.piece_id} a={g.item} more={g.more} mode={mode} />)}
         </div>
       )}
     </section>
@@ -207,12 +173,14 @@ function TodayRow({ p, canPrepare }: { p: TodayItem; canPrepare: boolean }) {
   return (
     <li className="hl-row">
       <span className="hl-time" title={fullDate(p.scheduled_at)}>{p.time}</span>
-      <span className="hl-mark"><NetMark network={p.network} labelled /></span>
+      <span className="hl-mark"><NetMark network={p.network} size="sm" labelled /></span>
       <Thumb src={p.thumb} className="hl-thumb" />
       <div className="hl-text">
         <Link to={`/pieces/${p.piece_id}`} className="hl-title" data-nav title={p.piece_title}>{p.piece_title}</Link>
-        <span className="hl-sub">
-          {tMaybe(`kind.${p.piece_kind}`, p.piece_kind)} · {p.account_name} · {p.manual ? t('home.today.manual') : t('home.today.auto')}
+        <span className="home-meta">
+          {p.account_name}
+          <span className="dot" aria-hidden="true">·</span>
+          {p.manual ? t('home.today.manual') : t('home.today.auto')}
         </span>
       </div>
       <div className="hl-end">
@@ -221,11 +189,7 @@ function TodayRow({ p, canPrepare }: { p: TodayItem; canPrepare: boolean }) {
             <Icon name="external" />
           </a>
         )}
-        {prepare ? (
-          <Link to="/today" className={`btn btn-small ${p.due ? 'btn-primary' : ''}`}>{t('home.today.prepare')}</Link>
-        ) : (
-          <Chip state={p.status} />
-        )}
+        {prepare ? <Link to="/today" className={`btn btn-small ${p.due ? 'btn-primary' : ''}`}>{t('home.today.prepare')}</Link> : <Chip state={p.status} />}
       </div>
     </li>
   );
@@ -237,7 +201,7 @@ function Today({ data }: { data: Overview }) {
     <section className="home-sec" aria-labelledby="home-today">
       <SectionHead id="home-today" title={t('home.today.title')} count={data.today.length} to="/calendar" linkLabel={t('home.today.calendar')} />
       {data.today.length === 0 ? (
-        <EmptyBlock icon="calendar" title={t('home.today.empty')} hint={t('home.today.emptyHint')} />
+        <Empty text={t('home.today.empty')} />
       ) : (
         <ul className="home-list" onKeyDown={arrowNav}>
           {data.today.map((p) => <TodayRow key={p.id} p={p} canPrepare={can('schedule')} />)}
@@ -249,30 +213,28 @@ function Today({ data }: { data: Overview }) {
 
 // ───────────────────────────── needs attention ─────────────────────────────
 
-function attentionText(a: AttentionItem): { title: string; line: string; detail: string | null } {
-  const network = netName(a.network);
+/** The row's title, its state (a quiet chip) and one terse meta line; the detail goes in the tooltip. */
+function attentionText(a: AttentionItem): { title: string; state: { code: string; label?: string } | null; meta: string[] } {
   const account = a.account_name ?? '';
   switch (a.kind) {
-    case 'publication_failed': {
-      const cls = a.reason ? (ERROR_CLASS_LABEL[a.reason] ?? a.reason) : null;
-      return { title: a.piece_title ?? '', line: `${t('home.attention.failed', { network, account })}${cls ? ` · ${cls}` : ''}`, detail: a.detail };
-    }
+    case 'publication_failed':
+      return { title: a.piece_title ?? '', state: { code: 'failed' }, meta: [account, a.reason ? (ERROR_CLASS_LABEL[a.reason] ?? a.reason) : ''] };
     case 'publication_on_hold':
-      return { title: a.piece_title ?? '', line: a.reason === 'new_version' ? t('home.attention.heldNew', { network }) : t('home.attention.held', { network, account }), detail: a.detail };
+      return { title: a.piece_title ?? '', state: { code: 'on_hold' }, meta: [account, a.reason === 'new_version' ? t('home.attention.newVersion') : ''] };
     case 'publication_awaiting_confirmation':
-      return { title: a.piece_title ?? '', line: a.reason === 'moved_by_you' ? t('home.attention.movedByYou', { network }) : t('home.attention.moved', { network }), detail: null };
+      return { title: a.piece_title ?? '', state: { code: 'awaiting_reapproval' }, meta: [account, a.reason === 'moved_by_you' ? t('home.attention.movedByYou') : ''] };
     case 'account_reconnect':
-      return { title: account, line: t('home.attention.reconnect', { network }), detail: a.detail };
+      return { title: account, state: { code: 'failed', label: t('home.attention.disconnected') }, meta: [netName(a.network)] };
     case 'webhook_failing': {
       let host = a.piece_title ?? '';
       try { host = new URL(host).host; } catch { /* not a full address: shown as it is */ }
-      return { title: host, line: a.reason === 'disabled' ? t('home.attention.webhookDisabled') : t('home.attention.webhookFailing'), detail: a.detail };
+      return { title: host, state: { code: 'failed', label: a.reason === 'disabled' ? t('home.attention.webhookOff') : t('home.attention.webhookFailing') }, meta: [t('home.attention.webhook')] };
     }
     case 'agent_needs_person':
       return {
         title: a.piece_title ?? '',
-        line: a.reason === 'agent_declined' ? t('home.attention.agentDeclined') : t('home.attention.agentBlocked', { reason: BLOCK_REASON_LABEL[a.reason ?? ''] ?? a.reason ?? '' }),
-        detail: a.reason === 'agent_declined' ? a.detail : null,
+        state: { code: 'needs_person' },
+        meta: [a.reason === 'agent_declined' ? t('home.attention.agentDeclined') : (BLOCK_REASON_LABEL[a.reason ?? ''] ?? a.reason ?? '')],
       };
   }
 }
@@ -296,19 +258,19 @@ function AttentionRow({ a, onRetry }: { a: AttentionItem; onRetry: (a: Attention
     onError: (e) => toast(errorMessage(e), 'error'),
   });
   const text = attentionText(a);
-  const icon = ATTENTION_ICON[a.kind];
   const act = a.action;
   // A publication that failed for its connection is fixed by connecting the account again, and then retried.
   const reconnectToo = a.kind === 'publication_failed' && a.reason === 'auth' && can('manage');
+  const quote = a.kind === 'agent_needs_person' && a.reason === 'agent_declined' && a.detail ? a.detail.split('\n')[0] : null;
   return (
-    <li className="hl-row ha-row">
-      <span className="hl-time hl-when" title={fullDate(a.at)}>{agoShort(a.at)}</span>
+    <li className="hl-row ha-row" title={a.detail && !quote ? a.detail : undefined}>
+      <span className="hl-time hl-when" title={fullDate(a.at)}>{ago(a.at)}</span>
       {/* Where (the network) and what (the piece, or the kind of thing when there is no piece), in the same columns as "today". */}
-      <span className="hl-mark">{a.network && <NetMark network={a.network} labelled />}</span>
+      <span className="hl-mark">{a.network && <NetMark network={a.network} size="sm" labelled />}</span>
       {a.thumb ? (
         <Thumb src={a.thumb} className="hl-thumb" />
       ) : (
-        <span className={`hl-thumb ha-tile ${a.kind === 'agent_needs_person' ? 'ha-tile-agent' : ''}`} aria-hidden="true"><Icon name={icon} /></span>
+        <span className={`hl-thumb ha-tile ${a.kind === 'agent_needs_person' ? 'ha-tile-agent' : ''}`} aria-hidden="true"><Icon name={ATTENTION_ICON[a.kind]} /></span>
       )}
       <div className="hl-text">
         {a.piece_id ? (
@@ -316,8 +278,14 @@ function AttentionRow({ a, onRetry }: { a: AttentionItem; onRetry: (a: Attention
         ) : (
           <span className="hl-title" title={text.title}>{text.title}</span>
         )}
-        <span className="hl-sub ha-sub" title={text.detail ?? undefined}>{text.line}</span>
-        {text.detail && a.kind === 'agent_needs_person' && <q className="ha-quote">{text.detail.split('\n')[0]}</q>}
+        <span className="home-meta">
+          {text.state && <Chip state={text.state.code} label={text.state.label} />}
+          {/* each part carries its dot, so a wrapped line never ends on one */}
+          {text.meta.filter(Boolean).map((m, i) => (
+            <span key={i} className="home-meta-part"><span className="dot" aria-hidden="true">·</span><span className="home-meta-cut">{m}</span></span>
+          ))}
+        </span>
+        {quote && <q className="ha-quote">{quote}</q>}
       </div>
       {act && (
         <div className="hl-end ha-actions">
@@ -343,7 +311,7 @@ function Attention({ data }: { data: Overview }) {
     <section className="home-sec" aria-labelledby="home-attention">
       <SectionHead id="home-attention" title={t('home.attention.title')} count={data.attention.length} />
       {data.attention.length === 0 ? (
-        <EmptyBlock icon="check" title={t('home.attention.empty')} hint={t('home.attention.emptyHint')} />
+        <Empty text={t('home.attention.empty')} />
       ) : (
         <ul className="home-list" onKeyDown={arrowNav}>
           {data.attention.map((a) => <AttentionRow key={`${a.kind}-${a.id}`} a={a} onRetry={setRetrying} />)}
@@ -366,25 +334,26 @@ function Attention({ data }: { data: Overview }) {
 // ───────────────────────────── activity ─────────────────────────────
 
 function ActorMark({ e }: { e: ActivityItem }) {
-  if (e.by_agent) return <Avatar agent size={28} title={e.actor ?? undefined} />;
-  if (!e.actor) return <span className="avatar hf-studio" style={{ width: 28, height: 28 }} aria-hidden="true"><Icon name="send" /></span>;
-  return <Avatar name={e.actor} size={28} />;
+  if (e.by_agent) return <Avatar agent size={24} title={e.actor ?? undefined} />;
+  if (!e.actor) return <span className="avatar hf-studio" style={{ width: 24, height: 24 }} aria-hidden="true"><Icon name="send" /></span>;
+  return <Avatar name={e.actor} size={24} />;
 }
 
 function ActivityEvent({ e }: { e: ActivityItem }) {
-  const who = <b title={e.actor ?? undefined}>{e.by_agent ? t('home.activity.agent') : firstName(e.actor)}</b>;
+  const name = <b title={e.actor ?? undefined}>{e.by_agent ? t('home.activity.agent') : who(e.actor)}</b>;
   const pieceTo = e.version_id && (e.kind === 'comment' || e.kind === 'version' || e.kind === 'changes_requested') ? `/review/${e.version_id}` : `/pieces/${e.piece_id}`;
   const piece = e.piece_id ? <Link to={pieceTo} className="hf-piece" title={e.piece_title ?? undefined}>{clip(e.piece_title)}</Link> : <b>{clip(e.piece_title)}</b>;
   const networks = list(e.networks.map((n) => netName(n)));
+  const parts = { who: name, piece };
   let line: ReactNode;
   switch (e.kind) {
-    case 'comment': line = rich(t('home.activity.comment'), { who, piece }); break;
-    case 'version': line = rich(t('home.activity.version', { n: e.version_number ?? 1 }), { who, piece }); break;
-    case 'approved': line = e.networks.length ? rich(t('home.activity.approved', { networks }), { who, piece }) : rich(t('home.activity.approvedPlain'), { who, piece }); break;
-    case 'rejected': line = rich(t('home.activity.rejected', { n: e.version_number ?? 1 }), { who, piece }); break;
-    case 'changes_requested': line = rich(t('home.activity.changes'), { who, piece }); break;
-    case 'published': line = e.actor ? rich(t('home.activity.publishedBy', { network: networks }), { who, piece }) : rich(t('home.activity.published', { network: networks }), { piece }); break;
-    case 'agent_handed': line = rich(t('home.activity.handed'), { who, piece }); break;
+    case 'comment': line = rich(t('home.activity.comment'), parts); break;
+    case 'version': line = rich(t('home.activity.version', { n: e.version_number ?? 1 }), parts); break;
+    case 'approved': line = e.networks.length ? rich(t('home.activity.approved', { networks }), parts) : rich(t('home.activity.approvedPlain'), parts); break;
+    case 'rejected': line = rich(t('home.activity.rejected', { n: e.version_number ?? 1 }), parts); break;
+    case 'changes_requested': line = rich(t('home.activity.changes'), parts); break;
+    case 'published': line = e.actor ? rich(t('home.activity.publishedBy', { network: networks }), parts) : rich(t('home.activity.published', { network: networks }), parts); break;
+    case 'agent_handed': line = rich(t('home.activity.handed'), parts); break;
   }
   const mark = e.t !== null ? (e.t_end !== null ? `${tc(e.t)}–${tc(e.t_end)}` : tc(e.t)) : e.page !== null ? t('home.activity.page', { n: e.page }) : null;
   const quoted = e.text && (e.kind === 'comment' || e.kind === 'rejected' || e.kind === 'agent_handed');
@@ -392,18 +361,19 @@ function ActivityEvent({ e }: { e: ActivityItem }) {
     <li className="hf-ev">
       <ActorMark e={e} />
       <div className="hf-body">
-        <p className="hf-line">{line}</p>
+        <p className="hf-line">
+          {line}
+          <time className="hf-when" dateTime={e.at} title={fullDate(e.at)}>{ago(e.at)}</time>
+        </p>
         {quoted && (
           <p className={`hf-quote ${e.kind === 'agent_handed' ? 'hf-quote-agent' : ''}`}>
-            {mark && <span className={e.t !== null ? 'tc' : 'tag hf-page'}>{mark}</span>}
-            {e.kind === 'agent_handed' ? `«${e.text}»` : e.text}
+            {mark && (e.t !== null ? <span className="tc">{mark}</span> : <span className="hf-page">{mark}</span>)}
+            {e.text}
           </p>
         )}
-        <p className="hf-meta">
-          <time dateTime={e.at} title={fullDate(e.at)}>{ago(e.at)}</time>
-          {e.kind === 'version' && (e.resolves ?? 0) > 0 && <> · {t('home.activity.resolved', { count: e.resolves! })}</>}
-          {e.kind === 'published' && e.account_name && <> · {e.account_name}</>}
-        </p>
+        {e.kind === 'version' && (e.resolves ?? 0) > 0 && (
+          <p className="home-meta hf-meta"><Icon name="check" />{t('home.activity.resolved', { count: e.resolves! })}</p>
+        )}
       </div>
     </li>
   );
@@ -413,9 +383,9 @@ function Activity({ data }: { data: Overview }) {
   const [all, setAll] = useState(false);
   return (
     <aside className="home-feed" aria-labelledby="home-feed-title">
-      <h2 id="home-feed-title">{t('home.activity.title')}</h2>
+      <div className="home-sec-head"><h2 id="home-feed-title">{t('home.activity.title')}</h2></div>
       {data.activity.length === 0 ? (
-        <EmptyBlock icon="clock" title={t('home.activity.empty')} hint={t('home.activity.emptyHint')} />
+        <Empty text={t('home.activity.empty')} />
       ) : (
         <>
           <ol className={`hf-list ${all ? 'all' : ''}`}>
@@ -439,49 +409,44 @@ function HomeSkeleton() {
   return (
     <div className="home" aria-busy="true" aria-label={t('common.loading')}>
       <div className="home-main">
-        <div className="home-hello">
-          <Skeleton width={280} height={26} />
-          <Skeleton width={360} height={14} style={{ marginTop: 10 }} />
-        </div>
         <div className="home-sec">
-          <Skeleton width={170} height={14} style={{ marginBottom: 14 }} />
+          <Skeleton width={180} height={12} style={{ marginBottom: 14 }} />
           <div className="home-wait">
             {[0, 1, 2].map((i) => (
               <div key={i} className="hw-card sk-card">
-                <Skeleton className="sk-thumb" width={104} height="auto" radius={0} />
+                <Skeleton className="sk-thumb" width={96} height="auto" radius={0} />
                 <div className="hw-body">
-                  <Skeleton width="85%" height={13} />
-                  <Skeleton width="55%" height={13} />
-                  <Skeleton width={64} height={18} radius={99} style={{ marginTop: 4 }} />
-                  <Skeleton width="70%" height={11} />
-                  <Skeleton width="100%" height={30} radius={8} style={{ marginTop: 'auto' }} />
+                  <Skeleton width="85%" height={12} />
+                  <Skeleton width="50%" height={12} />
+                  <Skeleton width="60%" height={10} style={{ marginTop: 4 }} />
+                  <Skeleton width="100%" height={26} radius={6} style={{ marginTop: 'auto' }} />
                 </div>
               </div>
             ))}
           </div>
         </div>
         <div className="home-sec">
-          <Skeleton width={130} height={14} style={{ marginBottom: 14 }} />
+          <Skeleton width={60} height={12} style={{ marginBottom: 14 }} />
           <div className="home-list sk-list">
-            {[0, 1].map((i) => (
+            {[0, 1, 2].map((i) => (
               <div key={i} className="hl-row">
-                <Skeleton width={40} height={12} />
-                <Skeleton width={22} height={22} />
-                <Skeleton width={34} height={42} />
-                <Skeleton height={12} style={{ flex: 1, maxWidth: 260 }} />
+                <Skeleton width={36} height={11} />
+                <Skeleton width={18} height={18} radius={5} />
+                <Skeleton width={30} height={38} radius={5} />
+                <Skeleton height={11} style={{ flex: 1, maxWidth: 280 }} />
               </div>
             ))}
           </div>
         </div>
       </div>
       <div className="home-feed">
-        <Skeleton width={80} height={14} style={{ marginBottom: 18 }} />
+        <Skeleton width={70} height={12} style={{ marginBottom: 18 }} />
         {[0, 1, 2, 3, 4].map((i) => (
           <div key={i} className="sk-ev">
-            <Skeleton width={28} height={28} radius="50%" />
+            <Skeleton width={24} height={24} radius="50%" />
             <div style={{ flex: 1 }}>
-              <Skeleton width="90%" height={12} />
-              <Skeleton width="40%" height={10} style={{ marginTop: 8 }} />
+              <Skeleton width="90%" height={11} />
+              <Skeleton width="45%" height={11} style={{ marginTop: 8 }} />
             </div>
           </div>
         ))}
@@ -492,28 +457,14 @@ function HomeSkeleton() {
 
 // ───────────────────────────── the page ─────────────────────────────
 
-function summary(data: Overview): string {
-  const pieces = new Set(data.awaiting.map((a) => a.piece_id)).size;
-  const parts: string[] = [];
-  if (pieces) parts.push(t(data.awaiting_mode === 'approve' ? 'home.summary.waiting' : 'home.summary.inReview', { count: pieces }));
-  if (data.today.length) parts.push(t('home.summary.today', { count: data.today.length }));
-  if (data.attention.length) parts.push(t('home.summary.attention', { count: data.attention.length }));
-  if (!parts.length) return t('home.summary.calm');
-  const text = list(parts);
-  return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
-}
-
-/** "For you": what is waiting for this person, what goes out today, what needs a hand, and what just happened. */
+/** "For you": what waits for this person, what goes out today, what needs a hand, and what just happened. */
 export function HomePage() {
-  const { me, brand } = useSession();
+  const { brand } = useSession();
   const { data, error, isLoading } = useQuery({
     queryKey: ['overview', brand.id],
     queryFn: () => api.get<Overview>(`/api/brands/${brand.id}/overview`),
     refetchInterval: 60_000,
   });
-  const hour = new Date().getHours();
-  const greet = hour < 14 ? 'home.morning' : hour < 21 ? 'home.afternoon' : 'home.evening';
-  const name = firstName(me.user.name ?? me.user.email);
   return (
     <>
       <PageBar crumbs={[{ label: t('layout.nav.home') }]} />
@@ -522,10 +473,6 @@ export function HomePage() {
       {data && (
         <div className="home">
           <div className="home-main">
-            <header className="home-hello">
-              <h1>{t(greet, { name })}</h1>
-              <p>{summary(data)}</p>
-            </header>
             <Awaiting data={data} />
             <Today data={data} />
             <Attention data={data} />
