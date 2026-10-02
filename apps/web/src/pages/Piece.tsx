@@ -33,9 +33,42 @@ const PENDING = ['scheduled', 'awaiting_reapproval', 'on_hold', 'preparing', 're
 
 // ───────────────────────────── dialogs ─────────────────────────────
 
+/** The Select's value for "no style" (a Select value may not be empty). */
+const NO_STYLE = '__none';
+
+/**
+ * The style of a variant: one of the brand's (Settings › General), or none. A value that is not in the list (made before the list,
+ * or by hand) is offered too, marked as such, so it is never lost by opening the dialog.
+ */
+export function StyleSelect({ styles, value, onChange }: { styles: string[]; value: string; onChange: (style: string) => void }) {
+  const { can } = useSession();
+  const missing = value && !styles.includes(value) ? value : null;
+  if (styles.length === 0 && !missing) {
+    return (
+      <p className="muted small" style={{ margin: 0 }}>
+        {t('fx.styles.none')}{can('manage') && <> · <Link to="/settings?tab=general">{t('fx.styles.define')}</Link></>}
+      </p>
+    );
+  }
+  return (
+    <Select
+      label={t('piece.addVariant.style')}
+      value={value || NO_STYLE}
+      onChange={(v) => onChange(v === NO_STYLE ? '' : v)}
+      options={[
+        { value: NO_STYLE, label: t('fx.styles.noStyle') },
+        ...styles.map((s) => ({ value: s, label: s })),
+        ...(missing ? [{ value: missing, label: t('fx.styles.notInList', { style: missing }) }] : []),
+      ]}
+    />
+  );
+}
+
 function AddVariant({ pieceId, kind, onClose }: { pieceId: string; kind: string; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const { brand } = useSession();
+  const { data: settings } = useQuery({ queryKey: ['brand', brand.id], queryFn: () => api.get<BrandSettings>(`/api/brands/${brand.id}`) });
   const defaultFormat = kind === 'carousel' ? 'carousel' : kind === 'pdf' ? 'document' : '9:16';
   const [format, setFormat] = useState<string>(defaultFormat);
   const [style, setStyle] = useState('');
@@ -63,9 +96,10 @@ function AddVariant({ pieceId, kind, onClose }: { pieceId: string; kind: string;
             ))}
           </div>
         </fieldset>
-        <Field label={t('piece.addVariant.style')} hint={t('piece.addVariant.styleHint')}>
-          <input type="text" maxLength={80} value={style} placeholder={t('piece.addVariant.stylePlaceholder')} onChange={(e) => setStyle(e.target.value)} />
-        </Field>
+        <div className="field">
+          <span className="field-label">{t('piece.addVariant.style')}</span>
+          <StyleSelect styles={settings?.rules.variant_styles ?? []} value={style} onChange={setStyle} />
+        </div>
         {add.error && <ErrorBox error={add.error} />}
         <div className="row pc-dialog-foot">
           <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>

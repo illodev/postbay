@@ -34,6 +34,10 @@
 .fx-slot { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .75rem; }
 .fx-slot svg { width: 13px; height: 13px; flex: none; }
 .fx-slot-gone { color: var(--faint); text-decoration: line-through; }
+.fx-slot-two { align-items: flex-start; }
+.fx-slot-two .net { margin-top: 2px; }
+.fx-slot-text { display: grid; gap: 1px; min-width: 0; }
+.fx-slot-name { color: var(--text); font-size: .8125rem; }
 
 /* Prizes: a piece with its thumbnail, in the picker and the list. */
 .fx-thumb { width: 28px; height: 28px; border-radius: 6px; object-fit: cover; background: var(--surface-2); flex: none; display: inline-grid; place-items: center; color: var(--faint); overflow: hidden; }
@@ -42,3 +46,9 @@
 .fx-prize-piece .grow { min-width: 0; }
 .fx-prize-meta { color: var(--muted); font-size: .75rem; }
 .fx-prize-off { color: var(--warn); font-size: .75rem; }
+
+/* The calendar: a free slot is a button that starts a piece for it. */
+.ops .oc-slot.fx-slot-btn { border: 0; font-family: inherit; text-align: left; cursor: pointer; width: 100%; }
+.ops .oc-slot.fx-slot-btn:hover, .ops .oc-slot.fx-slot-btn:focus-visible { background: var(--accent-soft); color: var(--text); }
+.ops .oc-slot.fx-slot-btn:hover .oc-time, .ops .oc-slot.fx-slot-btn:focus-visible .oc-time { color: var(--muted); }
+.fx-slot-for { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: .8125rem; }

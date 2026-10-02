@@ -2,7 +2,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { api, type Asset, type VersionDetail, type VersionSummary } from '../api';
+import { api, type Asset, type PieceSlot, type VersionDetail, type VersionSummary } from '../api';
+import { SlotLine } from './Scheduling';
 import { t, tMaybe } from '../i18n';
 import { fmtDateTime, fmtDay, STATE_LABEL } from '../lib/format';
 import { useStableUrls } from '../lib/stableUrls';
@@ -433,6 +434,8 @@ export interface HeroPiece {
   campaign_id?: string | null;
   source?: string | null;
   discarded_at: string | null;
+  /** The slot occurrence it was made for. */
+  slot?: PieceSlot | null;
 }
 
 interface HeroProps {
@@ -586,6 +589,11 @@ export function PieceFacts(p: HeroProps) {
             </button>
           ) : piece.target_date ? fmtDay(piece.target_date) : <span className="pc-empty-val">{t('piece.fields.noDate')}</span>}
         </FieldRow>
+        {piece.slot && (
+          <FieldRow label={t('fx.slot.field')} icon="clock">
+            <SlotLine slot={piece.slot} zone={zone} />
+          </FieldRow>
+        )}
         <FieldRow stacked icon="branch" label={<>{t('piece.fields.source')}<InfoTip text={t('piece.fields.sourceHint')} label={t('piece.fields.sourceWhat')} /></>}>
           <InlineText
             value={piece.source ?? ''}

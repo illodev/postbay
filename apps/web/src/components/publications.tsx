@@ -1,3 +1,4 @@
+import { ScheduledBy } from './Scheduling';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
@@ -683,9 +684,10 @@ export function PublicationNote({ pub }: { pub: Pick<PublicationRow, 'status' | 
 }
 
 /** How a publication goes out (the app or a person) and, once out, whether it is not public yet. */
-export function PublicationBadges({ pub }: { pub: Pick<PublicationRow, 'manual' | 'visibility' | 'status'> }) {
+export function PublicationBadges({ pub }: { pub: Pick<PublicationRow, 'manual' | 'visibility' | 'status'> & Partial<Pick<PublicationRow, 'scheduled_by' | 'scheduled_by_name'>> }) {
   return (
     <>
+      <ScheduledBy by={pub.scheduled_by} name={pub.scheduled_by_name} />
       <span className="pb-mode" data-mode={pub.manual ? 'manual' : 'auto'} title={pub.manual ? t('publications.mode.manualHint') : t('publications.mode.autoHint')}>
         <Icon d={pub.manual ? ICON.hand : ICON.auto} />
         {pub.manual ? t('publications.mode.manual') : t('publications.mode.auto')}
@@ -1085,6 +1087,7 @@ export function PublicationList({ pubs, variants = [], brandId, zone, brand, can
               <span>{netName(p.network)}</span>
               <span aria-hidden="true">·</span>
               <span className="pb-row-ver" title={t('publications.list.carries', { version: tag.full })}>{tag.short}</span>
+              {(p.scheduled_by === 'auto' || p.scheduled_by === 'agent') && <><span aria-hidden="true">·</span><ScheduledBy by={p.scheduled_by} name={p.scheduled_by_name} /></>}
             </span>
           </span>
           <time className="pb-row-when" dateTime={at} title={fmtDateTime(at, zone)}>{shortWhen(at, zone)}</time>
