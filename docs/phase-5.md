@@ -135,7 +135,22 @@ development unless set. Anyone else can turn it on in *Your account*.
 - A code works once: replaying a code that was just used is refused (the time step is claimed atomically). One step either side of now is accepted, for clocks that drift.
 - Five wrong codes lock the person out for 15 minutes. Recovery codes are stored hashed and each works once.
 - Removing the authenticator, or making new recovery codes, needs a current code. A role that needs a second factor cannot remove it.
-- **A person who lost their phone and their recovery codes** is reset by an admin (*Settings → Members → Reset authenticator*) or from the command line: `npm run reset-2fa -w @estudio/api -- --email them@example.com`. Their sessions have to do the second step again.
+- **A person who lost their phone and their recovery codes** is reset by an admin (*Settings → Members → Reset authenticator*) or from the command line: `npm run reset-2fa -w @estudio/api -- --email them@example.com`.
+  - The authenticator guards the whole account, not a place in one brand, so **only an admin of every brand the person belongs to** may reset it
+    from the screen (`can_reset_second_factor` in the member list says whether you may). Anyone else is refused with `not_admin_of_all_brands`,
+    without being told which other brands those are; whoever runs the server can still do it from the command line. Nobody resets their own.
+  - A reset **ends every session of the person** and spends any sign-in link not used yet, so a new authenticator is set up only after a
+    fresh sign-in: a stolen session or link cannot be used to put somebody else's phone on the account. The person is emailed about it, and it
+    is in the audit log of each of their brands.
+
+### Adding people
+
+- A new person, or one already in **the same workspace**, is added straight away (`201`), as before.
+- A person who already belongs to **another workspace** is **invited** instead (`202`, `invited: true`): they are emailed, see it in
+  `GET /api/me` (`invitations`) and `GET /api/invitations`, and become a member only when they accept, signed in as themselves
+  (`POST /api/invitations/:id/accept` or `/decline`). Until then the brand's admins have no say over their account. An invitation lasts
+  14 days; admins see the waiting ones (`GET /api/brands/:id/invitations`) and can cancel them (`DELETE …/invitations/:id`).
+- Otherwise an admin anywhere could make, say, another workspace's admin a reader of their brand without asking, and act on that account.
 - `OIDC_SECOND_FACTOR=idp` skips the app's second step for single sign-on, **trusting that you enforce one at the provider**. The app cannot see whether you do. The default (`app`) asks anyway.
 - With `OIDC_SECOND_FACTOR=idp` the **emailed link is off by default**: a link signs in without the provider, so it would be a way round
   the provider's second step (and a stolen link would let its holder set up their own authenticator). Set `EMAIL_LINK_LOGIN=true` to keep

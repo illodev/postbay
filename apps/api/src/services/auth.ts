@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Ctx } from '../context.js';
 import type { Principal } from '../auth/principal.js';
 import { forbidden, unauthorized } from '../errors.js';
-import { hashToken } from './brand.js';
+import { hashToken, myInvitations } from './brand.js';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const SESSION_DAYS = 14;
@@ -158,7 +158,8 @@ export async function me(ctx: Ctx, userId: string) {
      where m.user_id = $1 order by w.name, b.name`,
     [userId],
   );
-  return { user, brands };
+  // Brands of other workspaces that asked this person to join: nothing changes until they accept (POST /api/invitations/:id/accept).
+  return { user, brands, invitations: await myInvitations(ctx, userId) };
 }
 
 /** For a producer token: which brand it belongs to, so a script needs nothing but the address and the token. */

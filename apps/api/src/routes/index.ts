@@ -173,8 +173,20 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/api/brands/:brandId/members', async (req) => brand.listMembers(ctx, P(req), params(req, 'brandId').brandId));
-  app.post('/api/brands/:brandId/members', async (req, reply) =>
-    reply.code(201).send(await brand.addMember(ctx, P(req), params(req, 'brandId').brandId, req.body)));
+  // 201 with the member; 202 with an invitation when the person already belongs to another workspace and has to accept first.
+  app.post('/api/brands/:brandId/members', async (req, reply) => {
+    const r = await brand.addMember(ctx, P(req), params(req, 'brandId').brandId, req.body);
+    return reply.code(r.invited ? 202 : 201).send(r);
+  });
+  app.get('/api/brands/:brandId/invitations', async (req) => brand.listInvitations(ctx, P(req), params(req, 'brandId').brandId));
+  app.delete('/api/brands/:brandId/invitations/:invitationId', async (req) => {
+    const { brandId, invitationId } = params(req, 'brandId', 'invitationId');
+    return brand.cancelInvitation(ctx, P(req), brandId, invitationId);
+  });
+  // The invited person, signed in as themselves.
+  app.get('/api/invitations', async (req) => brand.myInvitations(ctx, userOnly(req).userId));
+  app.post('/api/invitations/:invitationId/accept', async (req) => brand.answerInvitation(ctx, userOnly(req), params(req, 'invitationId').invitationId, true));
+  app.post('/api/invitations/:invitationId/decline', async (req) => brand.answerInvitation(ctx, userOnly(req), params(req, 'invitationId').invitationId, false));
   app.patch('/api/brands/:brandId/members/:memberId', async (req) => {
     const { brandId, memberId } = params(req, 'brandId', 'memberId');
     return brand.changeMemberRole(ctx, P(req), brandId, memberId, (req.body as { role?: unknown })?.role);

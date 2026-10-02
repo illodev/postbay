@@ -172,7 +172,7 @@ declared.
 
 | Role | Can | Cannot |
 | --- | --- | --- |
-| Admin | Everything an approver can, plus manage accounts, people, rules and API tokens | Approve what they uploaded |
+| Admin | Everything an approver can, plus manage accounts, people, rules and API tokens. Someone from another workspace is invited and joins only on accepting | Approve what they uploaded; reset the authenticator of someone who also belongs to a brand they do not manage |
 | Approver | Everything a reviewer can, plus upload, approve or reject, schedule, move dates, pause the brand | Approve what they uploaded |
 | Reviewer | View, comment, request changes, resolve comments | Approve or schedule |
 | Producer | Create pieces, upload versions, reply to and resolve comments (a person or an API token) | Approve, schedule or touch accounts |

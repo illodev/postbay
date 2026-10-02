@@ -282,7 +282,7 @@ describe('managing it', () => {
     expect((await req(await firstStep('admin@example.com'), 'POST', '/api/auth/2fa/verify', { code: fresh.body.recoveryCodes[2] })).status).toBe(200);
   });
 
-  it('lets an admin reset a member who lost their phone: they enrol again, and sessions they had are asked again', async () => {
+  it('lets an admin reset a member who lost their phone: every session of theirs ends, and they enrol again after signing in', async () => {
     const mine = await enrol('approver@example.com');
     const id = await userId('approver@example.com');
     expect((await req(mine.cookie, 'GET', '/api/me')).status).toBe(200);
@@ -294,16 +294,22 @@ describe('managing it', () => {
       expect((await req(c, 'POST', `/api/brands/${env.brandId}/members/${member.id}/reset-2fa`)).status).toBe(403);
     }
     expect((await req(mine.cookie, 'POST', `/api/brands/${env.brandId}/members/${member.id}/reset-2fa`)).status).toBe(403); // an approver cannot either
+    env.mails.length = 0;
     const done = await req(adminCookie, 'POST', `/api/brands/${env.brandId}/members/${member.id}/reset-2fa`);
     expect(done.status).toBe(200);
     expect(await env.db.one('select 1 from user_totp where user_id = $1', [id])).toBeNull();
-    // The session they had is not trusted for the second step any more, and must enrol anew.
+    // The session they had is over: a new authenticator is set up only after a fresh sign-in.
     const after = await req(mine.cookie, 'GET', '/api/me');
     expect(after.status).toBe(401);
-    expect(after.body.error.details.step).toBe('enroll');
-    const ev = await env.db.one(`select after, entity_id from audit_event where action = 'user.second_factor_reset' order by id desc limit 1`);
+    expect(after.body.error.code).toBe('unauthorized');
+    expect((await req(await firstStep('approver@example.com'), 'GET', '/api/me')).body.error.details.step).toBe('enroll');
+    const ev = await env.db.one(`select after, entity_id, brand_id from audit_event where action = 'user.second_factor_reset' order by id desc limit 1`);
     expect(ev!.entity_id).toBe(id);
+    expect(ev!.brand_id).toBe(env.brandId);
     expect(JSON.stringify(ev!.after)).not.toContain(mine.secret);
+    // And they are told, so a reset they did not ask for does not go unnoticed.
+    await new Promise((r) => setImmediate(r));
+    expect(env.mails.find((m) => m.to === 'approver@example.com')?.text).toContain('admin@example.com reset the authenticator');
   });
 
   it('does not reset a member of another brand', async () => {
@@ -314,12 +320,105 @@ describe('managing it', () => {
     expect((await req(adminCookie, 'POST', `/api/brands/${env.brandId}/members/${m.id}/reset-2fa`)).status).toBe(404);
   });
 
-  it('can be reset from the command line, for the admin who lost both', async () => {
+  it('is only for an admin of every brand the person belongs to: the authenticator guards all of them', async () => {
+    const { secret } = await enrol('approver2@example.com');
+    const id = await userId('approver2@example.com');
+    const adminId = await userId('admin@example.com');
+    const member = (await env.db.one<{ id: string }>('select id from member where user_id = $1 and brand_id = $2', [id, env.brandId]))!;
+    // The same person is also in a brand of the same workspace, which this admin does not manage.
+    const second = (await env.db.one<{ id: string }>(`insert into brand (workspace_id, name, timezone) values ($1,'Sister brand','Europe/Madrid') returning id`, [env.workspaceId]))!;
+    await env.db.query(`insert into member (user_id, brand_id, role) values ($1,$2,'reviewer')`, [id, second.id]);
+    const adminCookie = (await enrol('admin@example.com')).cookie;
+    const listed = await req(adminCookie, 'GET', `/api/brands/${env.brandId}/members`);
+    expect(listed.body.find((m: any) => m.user_id === id).can_reset_second_factor).toBe(false);
+    const refused = await req(adminCookie, 'POST', `/api/brands/${env.brandId}/members/${member.id}/reset-2fa`);
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.code).toBe('not_admin_of_all_brands');
+    expect(refused.body.error.message).toMatch(/admin of every brand they belong to.*command line/);
+    expect(await env.db.one('select 1 from user_totp where user_id = $1 and confirmed_at is not null', [id])).not.toBeNull();
+    expect(secret).toBeTruthy();
+
+    // Admin of both: allowed, and it is on record in both brands.
+    await env.db.query(`insert into member (user_id, brand_id, role) values ($1,$2,'admin')`, [adminId, second.id]);
+    expect((await req(adminCookie, 'GET', `/api/brands/${env.brandId}/members`)).body.find((m: any) => m.user_id === id).can_reset_second_factor).toBe(true);
+    expect((await req(adminCookie, 'POST', `/api/brands/${env.brandId}/members/${member.id}/reset-2fa`)).status).toBe(200);
+    const evs = await env.db.query(`select brand_id from audit_event where action = 'user.second_factor_reset' and entity_id = $1 order by id`, [id]);
+    expect(evs.map((e) => e.brand_id).sort()).toEqual([env.brandId, second.id].sort());
+    await env.db.query('delete from member where brand_id = $1', [second.id]);
+  });
+
+  it('cannot be used to take over an admin of another workspace: they are invited, not added, and stay out of reach once they accept', async () => {
+    // Somebody else's workspace, with its own admin, who has an authenticator.
+    const ws = (await env.db.one<{ id: string }>(`insert into workspace (name) values ('Rival agency') returning id`))!;
+    const theirs = (await env.db.one<{ id: string }>(`insert into brand (workspace_id, name, timezone) values ($1,'Rival brand','Europe/Madrid') returning id`, [ws.id]))!;
+    const victim = (await env.db.one<{ id: string }>(`insert into app_user (email) values ('boss@rival.test') returning id`))!;
+    await env.db.query(`insert into member (user_id, brand_id, role) values ($1,$2,'admin')`, [victim.id, theirs.id]);
+    const victimSession = await enrol('boss@rival.test');
+    const attacker = (await enrol('admin@example.com')).cookie;
+
+    // Adding them to this brand only invites them.
+    env.mails.length = 0;
+    const added = await req(attacker, 'POST', `/api/brands/${env.brandId}/members`, { email: 'Boss@Rival.test', role: 'reader' });
+    expect(added.status).toBe(202);
+    expect(added.body).toMatchObject({ invited: true, invitation: { email: 'boss@rival.test', role: 'reader' } });
+    expect(await env.db.one('select 1 from member where user_id = $1 and brand_id = $2', [victim.id, env.brandId])).toBeNull();
+    await new Promise((r) => setImmediate(r));
+    expect(env.mails.find((m) => m.to === 'boss@rival.test')?.subject).toBe('Invitation to Test brand');
+
+    // Even if they accept, an admin of this brand alone cannot touch their authenticator.
+    const invitations = (await req(victimSession.cookie, 'GET', '/api/me')).body.invitations;
+    expect(invitations).toEqual([expect.objectContaining({ brand: 'Test brand', workspace: 'Test workspace', role: 'reader', invited_by: 'admin@example.com' })]);
+    expect((await req(victimSession.cookie, 'POST', `/api/invitations/${invitations[0].id}/accept`)).status).toBe(200);
+    const member = (await env.db.one<{ id: string }>('select id from member where user_id = $1 and brand_id = $2', [victim.id, env.brandId]))!;
+    const reset = await req(attacker, 'POST', `/api/brands/${env.brandId}/members/${member.id}/reset-2fa`);
+    expect(reset.status).toBe(403);
+    expect(reset.body.error.code).toBe('not_admin_of_all_brands');
+    expect(reset.body.error.message).not.toContain('Rival'); // what else they belong to is not given away
+    expect(await env.db.one('select 1 from user_totp where user_id = $1', [victim.id])).not.toBeNull();
+    expect((await req(victimSession.cookie, 'GET', '/api/me')).status).toBe(200);
+    await env.db.query('delete from member where user_id = $1', [victim.id]);
+  });
+
+  it('leaves no session or link behind that could set up the new authenticator: only a fresh sign-in can', async () => {
+    const { secret } = await enrol('approver@example.com');
+    const id = await userId('approver@example.com');
+    // What someone else might hold: a session stuck at the second step, and a link not used yet.
+    const stolenSession = await firstStep('approver@example.com');
+    env.mails.length = 0;
+    await req(null, 'POST', '/api/auth/magic-link', { email: 'approver@example.com' });
+    await magicLinksSettled(env.ctx);
+    const stolenLink = /token=([\w-]+)/.exec(env.mails.at(-1)!.text)![1]!;
+
+    const member = (await env.db.one<{ id: string }>('select id from member where user_id = $1 and brand_id = $2', [id, env.brandId]))!;
+    expect((await req((await enrol('admin@example.com')).cookie, 'POST', `/api/brands/${env.brandId}/members/${member.id}/reset-2fa`)).status).toBe(200);
+
+    expect((await req(stolenSession, 'POST', '/api/auth/2fa/enroll')).status).toBe(401);
+    expect((await env.app.inject({ method: 'POST', url: '/api/auth/verify', payload: { token: stolenLink }, headers: { 'x-forwarded-for': nextIp() } })).statusCode).toBe(401);
+    expect(await env.db.one('select 1 from user_totp where user_id = $1', [id])).toBeNull();
+    // The person themselves signs in again and sets one up.
+    const fresh = await firstStep('approver@example.com');
+    const start = await req(fresh, 'POST', '/api/auth/2fa/enroll');
+    expect(start.status).toBe(200);
+    expect(start.body.secret).not.toBe(secret);
+  });
+
+  it('is not for your own authenticator', async () => {
+    const { cookie } = await enrol('admin@example.com');
+    const own = (await env.db.one<{ id: string }>('select id from member where user_id = $1 and brand_id = $2', [await userId('admin@example.com'), env.brandId]))!;
+    const r = await req(cookie, 'POST', `/api/brands/${env.brandId}/members/${own.id}/reset-2fa`);
+    expect(r.status).toBe(403);
+    expect(r.body.error.code).toBe('own_second_factor');
+  });
+
+  it('can be reset from the command line, for the admin who lost both, ending their sessions', async () => {
     const { cookie } = await enrol('admin@example.com');
     const { resetByEmail } = await import('../src/services/secondfactor.js');
     expect(await resetByEmail(env.ctx, 'Admin@Example.com')).toBe(true);
     expect(await resetByEmail(env.ctx, 'nobody@example.com')).toBe(false);
-    expect((await req(cookie, 'GET', '/api/me')).body.error.details.step).toBe('enroll');
+    expect((await req(cookie, 'GET', '/api/me')).body.error.code).toBe('unauthorized');
+    expect((await req(await firstStep('admin@example.com'), 'GET', '/api/me')).body.error.details.step).toBe('enroll');
+    const ev = await env.db.one(`select brand_id, after from audit_event where action = 'user.second_factor_reset' order by id desc limit 1`);
+    expect(ev).toMatchObject({ brand_id: env.brandId, after: { by: 'command line' } });
   });
 });
 
