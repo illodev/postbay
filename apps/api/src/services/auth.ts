@@ -134,10 +134,17 @@ export async function markSecondFactor(ctx: Ctx, token: string): Promise<void> {
   await ctx.db.query('update session set second_factor_at = now() where token_hash = $1', [sha(token)]);
 }
 
+/**
+ * A producer token works while it is not revoked or expired, and while whoever made it is still an admin of its brand: someone
+ * who leaves the brand, or stops managing it, does not keep a way in through a token they made (their tokens are revoked then too,
+ * see services/brand.ts; this holds even for a change made straight in the database).
+ */
 export async function principalFromApiToken(ctx: Ctx, token: string): Promise<Principal | null> {
   const row = await ctx.db.one<{ id: string; brand_id: string; created_by: string }>(
-    `update api_token set last_used_at = now()
-     where token_hash = $1 and revoked_at is null and expires_at > now() returning id, brand_id, created_by`,
+    `update api_token t set last_used_at = now()
+     where t.token_hash = $1 and t.revoked_at is null and t.expires_at > now()
+       and exists (select 1 from member m where m.user_id = t.created_by and m.brand_id = t.brand_id and m.role = 'admin')
+     returning t.id, t.brand_id, t.created_by`,
     [hashToken(token)],
   );
   return row ? { kind: 'token', tokenId: row.id, brandId: row.brand_id, createdBy: row.created_by } : null;

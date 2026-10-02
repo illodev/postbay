@@ -157,6 +157,7 @@ declared.
 | A new version voids the previous approval and puts anything scheduled on hold | `services/versions.ts` |
 | Only what is approved, for the accounts approved, can be scheduled | `services/publications.ts` |
 | A producer token never approves, schedules or manages anything | role resolution in `auth/principal.ts` |
+| A producer token stops working when the admin who made it leaves the brand or stops being its admin | `services/auth.ts`, `services/brand.ts` |
 | Times are stored in UTC with the brand's IANA zone, so 19:00 stays 19:00 after a clock change | `domain/time.ts`, tested across both clock changes |
 | The approval is re-checked from the stored files right before anything is sent to a network | `services/publisher.ts` |
 | A post that would go out after its hour plus the tolerance is not sent late | `services/publisher.ts` |

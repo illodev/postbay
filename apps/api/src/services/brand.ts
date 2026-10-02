@@ -109,7 +109,22 @@ export async function addMember(ctx: Ctx, p: Principal, brandId: string, raw: un
   });
 }
 
-async function assertNotLastAdmin(db: Parameters<Parameters<Ctx['db']['tx']>[0]>[0], brandId: string, memberId: string) {
+type Tx = Parameters<Parameters<Ctx['db']['tx']>[0]>[0];
+
+/**
+ * Revokes the producer tokens a person made for a brand, when they stop being able to make them (they leave the brand, or are no
+ * longer its admin). An agent running on one of them stops at its next call; the brand's admins make it a new one.
+ */
+async function revokeTokensOf(db: Tx, p: Principal, brandId: string, userId: string, reason: 'member_removed' | 'no_longer_admin') {
+  const rows = await db.query<{ id: string; name: string }>(
+    'update api_token set revoked_at = now() where brand_id = $1 and created_by = $2 and revoked_at is null returning id, name',
+    [brandId, userId],
+  );
+  for (const t of rows) await audit(db, p, brandId, 'token.revoked', 'api_token', t.id, null, { name: t.name, reason });
+  return rows.length;
+}
+
+async function assertNotLastAdmin(db: Tx, brandId: string, memberId: string) {
   const other = await db.one(`select 1 from member where brand_id = $1 and role = 'admin' and id <> $2`, [brandId, memberId]);
   if (!other) throw conflict('last_admin', 'A brand needs at least one admin');
 }
@@ -123,7 +138,8 @@ export async function changeMemberRole(ctx: Ctx, p: Principal, brandId: string, 
     if (m.role === 'admin' && next !== 'admin') await assertNotLastAdmin(db, brandId, memberId);
     await db.query('update member set role = $2 where id = $1', [memberId, next]);
     await audit(db, p, brandId, 'member.role_changed', 'member', memberId, { role: m.role }, { role: next });
-    return { id: memberId, role: next };
+    const tokensRevoked = m.role === 'admin' && next !== 'admin' ? await revokeTokensOf(db, p, brandId, m.user_id, 'no_longer_admin') : 0;
+    return { id: memberId, role: next, tokensRevoked };
   });
 }
 
@@ -135,7 +151,8 @@ export async function removeMember(ctx: Ctx, p: Principal, brandId: string, memb
     if (m.role === 'admin') await assertNotLastAdmin(db, brandId, memberId);
     await db.query('delete from member where id = $1', [memberId]);
     await audit(db, p, brandId, 'member.removed', 'member', memberId, { role: m.role }, null);
-    return { id: memberId };
+    const tokensRevoked = await revokeTokensOf(db, p, brandId, m.user_id, 'member_removed');
+    return { id: memberId, tokensRevoked };
   });
 }
 
@@ -206,8 +223,10 @@ export const hashToken = (token: string) => createHash('sha256').update(token).d
 
 export async function listTokens(ctx: Ctx, p: Principal, brandId: string) {
   await authorize(ctx.db, p, brandId, 'brand.manage');
+  // Who made each one matters: a token stops working when its maker leaves the brand or stops being its admin.
   return ctx.db.query(
-    'select id, name, created_at, expires_at, revoked_at, last_used_at from api_token where brand_id = $1 order by created_at desc',
+    `select t.id, t.name, t.created_at, t.expires_at, t.revoked_at, t.last_used_at, u.email as created_by_email
+     from api_token t join app_user u on u.id = t.created_by where t.brand_id = $1 order by t.created_at desc`,
     [brandId],
   );
 }

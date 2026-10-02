@@ -147,6 +147,7 @@ or a bug would meet the same refusals.
 | Safeguard | How it works |
 | --- | --- |
 | **The agent cannot approve, schedule or manage anything** | Its token is a producer token, and phase 1's role rules (tested) never let one approve, schedule or manage |
+| **A token lives no longer than its maker's say** | A producer token works only while the admin who made it is still an admin of the brand. Removing them, or making them anything less than admin, revokes their tokens (in the audit log, with the reason); a change made any other way is caught when the token is next used. *Settings → API tokens* says who made each one. Make the runner's token with an account that stays |
 | **Round cap per piece** | 3 by default (*Settings → Agent*). A run counts as a round; refusals and runs closed before they did anything do not. After the cap the piece goes to a person: the studio refuses the next run, notifies approvers and admins once per request, and the piece page says so |
 | **Budget per piece and per month** | Both must be set or **the agent does not start** (a missing limit is not "unlimited"). Spending is what the runner reports per run; the month is the calendar month **in the brand's time zone**. The runner also passes what is left for the piece to the agent as a hard stop (`--max-budget-usd` for Claude Code) |
 | **Longest run** | 30 minutes by default, per brand. The runner stops the agent (SIGTERM, then SIGKILL to its whole process group) and answers every comment with "a person needs to look". The studio also closes a run whose lease expired |

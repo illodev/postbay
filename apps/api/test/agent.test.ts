@@ -82,6 +82,7 @@ describe('starting a run', () => {
 
     const other = await env.db.one(`insert into brand (workspace_id, name, timezone) values ($1,'Other','UTC') returning id`, [env.workspaceId]);
     const otherUser = (await env.db.one(`insert into app_user (email) values ('other-admin@example.com') returning id`))!;
+    await env.db.query(`insert into member (user_id, brand_id, role) values ($1,$2,'admin')`, [otherUser.id, other!.id]); // a token works while its maker is an admin
     const secret = `est_${randomBytes(24).toString('base64url')}`;
     const { hashToken } = await import('../src/services/brand.js');
     await env.db.query(`insert into api_token (brand_id, name, token_hash, created_by, expires_at) values ($1,'other',$2,$3, now() + interval '1 day')`, [other!.id, hashToken(secret), otherUser.id]);
