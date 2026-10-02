@@ -147,7 +147,7 @@ describe('Instagram', () => {
     const inp = input({ firstComment: 'Link in bio', aiGenerated: true, media: [media(), media({ kind: 'cover', name: 'c.jpg', mime: 'image/jpeg', url: 'https://media.test/cover.jpg' })] });
     let r = await ig().prepare(inp, igAccount, {}, en);
     expect(r.done).toBe(false); // the container is still processing
-    expect(r.retryAfterSec).toBeGreaterThan(0);
+    expect(r.retryAfterSec).toBe(60); // Meta: ask about a container no more than once a minute
     r = await ig().prepare(inp, igAccount, r.handle, en);
     expect(r.done).toBe(true);
 
@@ -204,6 +204,31 @@ describe('Instagram', () => {
     expect(creates[1]!.body.media_type).toBe('VIDEO');
     expect(creates[3]!.body).toMatchObject({ media_type: 'CAROUSEL' });
     expect(creates[3]!.body.children!.split(',')).toHaveLength(3);
+  });
+
+  it('asks about a container once a minute for five looks, then every five minutes', async () => {
+    const en = e();
+    meta.processingPolls = 8;
+    let h: Handle = {};
+    const waits: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const r = await ig().prepare(input(), igAccount, h, en);
+      h = r.handle;
+      if (r.done) break;
+      waits.push(r.retryAfterSec!);
+    }
+    expect(waits).toEqual([60, 60, 60, 60, 60, 300, 300, 300]);
+    expect(meta.callsTo(/^c-\d+$/)).toHaveLength(9); // one look per call, never a burst
+  });
+
+  it('discloses AI use on the carousel itself, never on its items', async () => {
+    const en = e();
+    const inp = input({ placement: 'carousel', aiGenerated: true, media: [media({ kind: 'image', position: 0, mime: 'image/jpeg' }), media({ kind: 'image', position: 1, mime: 'image/jpeg' })] });
+    let h: Handle = {};
+    for (let i = 0; i < 6; i++) { const r = await ig().prepare(inp, igAccount, h, en); h = r.handle; if (r.done) break; }
+    const creates = meta.callsTo(/^222\/media$/, 'POST');
+    expect(creates.slice(0, 2).every((c) => c.body.is_ai_generated === undefined)).toBe(true);
+    expect(creates[2]!.body).toMatchObject({ media_type: 'CAROUSEL', is_ai_generated: 'true' });
   });
 
   it('refuses before sending anything when the account has used its publishing cap', async () => {
@@ -263,6 +288,14 @@ describe('Instagram', () => {
     expect(codes(input({ media: [media({ width: 1920, height: 1080 })] }))).toContain('warning:media.aspect.recommended');
     expect(codes(input({ media: [media({ durationMs: 1000 })] }))).toContain('error:media.duration');
     expect(codes(input({ placement: 'story', text: 'caption' }))).toContain('warning:story.text');
+    // A story video runs 3 to 60 seconds; a video in a carousel is held to a Reel's length, with a warning past a minute.
+    expect(codes(input({ placement: 'story', text: '', media: [media({ durationMs: 2000 })] }))).toContain('error:media.duration');
+    expect(codes(input({ placement: 'story', text: '', media: [media({ durationMs: 3000 })] }))).toEqual([]);
+    const carousel = (ms: number) => input({ placement: 'carousel', media: [media({ kind: 'image', width: 1080, height: 1080 }), media({ position: 1, width: 1080, height: 1080, durationMs: ms })] });
+    expect(codes(carousel(2000))).toContain('error:media.duration');
+    expect(codes(carousel(30_000))).toEqual([]);
+    expect(codes(carousel(90_000))).toEqual(['warning:carousel.video.length']);
+    expect(codes(carousel(16 * 60_000))).toContain('error:media.duration');
     expect(codes(input({ placement: 'feed_image', media: [media({ kind: 'image', width: 1080, height: 1920 })] }))).toContain('error:media.aspect');
     expect(codes(input({ placement: 'carousel', media: [media({ kind: 'image', width: 1000, height: 1000 })] }))).toContain('error:media.count');
     expect(codes(input({ placement: 'nope' }))).toContain('error:placement.unknown');

@@ -11,8 +11,16 @@ import type { MetaClient } from './client.js';
  * Publishing is two calls: create a "container" from a file Meta downloads from a URL, then publish it.
  * Containers expire after 24 hours, so they are made shortly before the hour (see the brand's prepare lead).
  *
- * The limits here are the ones in Meta's public documentation as the specification recorded it. Meta's own pages
+ * The limits here are the ones in Meta's public documentation (the IG User Media reference, checked 2026-10-02): Reels 3 s to
+ * 15 min, up to 300 MB, 23 to 60 fps, MOV or MP4 with the moov atom at the front (the file profile sees to the last three);
+ * Stories 3 to 60 s, up to 100 MB; carousels up to 10 items, pictures and videos mixed; pictures JPEG only. Meta's own pages
  * disagree with each other in places, so the daily cap is read from the account (content_publishing_limit) instead of assumed.
+ *
+ * `is_ai_generated` (a self-disclosure of AI use) is a documented parameter of the container, "not available for carousel
+ * children": it is sent on the Reel, the feed photo and the carousel itself, never on its items.
+ *
+ * A container's status is asked about at most once a minute, as Meta recommends ("once per minute, for no more than 5
+ * minutes"); a video still processing after five looks is asked about every five minutes after that.
  */
 const CAPS: Capabilities = {
   network: 'instagram',
@@ -29,12 +37,14 @@ const CAPS: Capabilities = {
       profiles: { image: 'ig-feed-image' }, nativeScheduling: false,
     },
     {
+      // Meta's reference gives no length for a video in a carousel: it is held to a Reel's (3 s to 15 min) and validate() warns
+      // past the 60 seconds feed videos were limited to.
       id: 'carousel', label: 'Carousel', accepts: ['image', 'video'], items: { min: 2, max: 10 },
-      aspect: { min: 0.8, max: 1.91 }, profiles: { image: 'ig-feed-image', video: 'ig-reel' }, nativeScheduling: false,
+      aspect: { min: 0.8, max: 1.91 }, durationSec: { min: 3, max: 900 }, profiles: { image: 'ig-feed-image', video: 'ig-reel' }, nativeScheduling: false,
     },
     {
       id: 'story', label: 'Story', accepts: ['image', 'video'], items: { min: 1, max: 1 },
-      aspect: { min: 0.1, max: 10 }, recommendedAspect: { min: 0.5, max: 0.6 }, durationSec: { min: 1, max: 60 },
+      aspect: { min: 0.1, max: 10 }, recommendedAspect: { min: 0.5, max: 0.6 }, durationSec: { min: 3, max: 60 },
       safeZones: { top: 0.14, bottom: 0.2, left: 0.05, right: 0.05 },
       profiles: { image: 'ig-story-image', video: 'ig-story-video' }, nativeScheduling: false,
     },
@@ -45,6 +55,12 @@ const CAPS: Capabilities = {
 };
 
 const igUserId = (a: Account): string => a.providerData.igUserId ?? a.externalId;
+
+/** Waits between looks at a container: a minute for the first five (Meta's advice), then five minutes. */
+const POLL_EVERY_SEC = 60;
+const POLL_SLOW_SEC = 300;
+const POLL_FAST_LOOKS = 5;
+const nextLook = (h: Handle) => ((h.looks as number | undefined) ?? 0) < POLL_FAST_LOOKS ? POLL_EVERY_SEC : POLL_SLOW_SEC;
 const mainOf = (input: PublishInput): MediaItem[] =>
   input.media.filter((m) => m.kind === 'video' || m.kind === 'image').sort((a, b) => a.position - b.position);
 
@@ -93,6 +109,16 @@ export function createInstagram(client: MetaClient): Connector {
       if (input.placement === 'story' && input.text.trim()) {
         issues.push({ severity: 'warning', code: 'story.text', field: 'text', message: 'Instagram Stories take no caption: the text will be left out' });
       }
+      if (input.placement === 'carousel') {
+        for (const m of mainOf(input)) {
+          if (m.kind === 'video' && m.durationMs && m.durationMs > 60_000) {
+            issues.push({
+              severity: 'warning', code: 'carousel.video.length', field: 'media',
+              message: `${m.name} runs ${Math.round(m.durationMs / 1000)} s. Meta's reference gives no length for a video in a carousel, and feed videos were limited to 60 seconds: Instagram may refuse it.`,
+            });
+          }
+        }
+      }
       return issues;
     },
 
@@ -133,12 +159,19 @@ export function createInstagram(client: MetaClient): Connector {
           for (const id of h.children as string[]) {
             const s = await status(id, token);
             if (s.state === 'expired') { h = { quotaChecked: true }; await save(); return { done: false, handle: h, retryAfterSec: 1 }; }
-            if (s.state === 'pending') return { done: false, handle: h, retryAfterSec: 10 };
+            if (s.state === 'pending') {
+              const wait = nextLook(h);
+              h = { ...h, looks: ((h.looks as number | undefined) ?? 0) + 1 };
+              await save();
+              return { done: false, handle: h, retryAfterSec: wait };
+            }
           }
+          h = { ...h, looks: 0 };
           h = { ...h, childrenReady: true };
           await save();
         }
         if (!h.containerId) {
+          // The AI disclosure goes on the carousel itself: Meta does not take it on the items.
           const r = await client.post<{ id: string }>(`${ig}/media`, token, { media_type: 'CAROUSEL', children: (h.children as string[]).join(','), caption, ...ai });
           h = { ...h, containerId: r.id };
           await save();
@@ -158,10 +191,16 @@ export function createInstagram(client: MetaClient): Connector {
         await save();
       }
 
-      // Step 2: wait for Instagram to finish processing it. Videos take a while; the engine asks again later.
+      // Step 2: wait for Instagram to finish processing it. Videos take a while; the engine asks again later, no more than once a
+      // minute (Meta's advice), and every five minutes once five looks have not been enough.
       const s = await status(h.containerId as string, token);
       if (s.state === 'expired') return { done: false, handle: { quotaChecked: true }, retryAfterSec: 1 };
-      if (s.state === 'pending') return { done: false, handle: h, retryAfterSec: input.placement === 'feed_image' ? 3 : 10 };
+      if (s.state === 'pending') {
+        const wait = nextLook(h);
+        h = { ...h, looks: ((h.looks as number | undefined) ?? 0) + 1 };
+        await save();
+        return { done: false, handle: h, retryAfterSec: wait };
+      }
       return { done: true, handle: h };
     },
 

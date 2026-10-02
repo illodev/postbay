@@ -173,6 +173,8 @@ export class FakeMeta {
       return { data: [{ quota_usage: this.igQuota.usage, config: { quota_total: this.igQuota.total, quota_duration: 86400 } }] };
     }
     if ((m = /^(\d+)\/media$/.exec(c.path)) && c.method === 'POST') {
+      // The AI disclosure is "not available for carousel children" (IG User Media reference).
+      if (c.body.is_carousel_item === 'true' && c.body.is_ai_generated !== undefined) return this.err(100, '(#100) The parameter is_ai_generated is not supported for carousel items');
       const id = this.id('c-');
       this.containers.set(id, { params: c.body, polls: 0, state: 'IN_PROGRESS', ig: m[1]! });
       return { id };
