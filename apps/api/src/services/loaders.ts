@@ -67,11 +67,17 @@ export interface ApprovalRules {
   required_approvals: number;
   reapprove_on_move: boolean;
   checklist: string[];
+  /** Approved versions that are not scheduled yet are put into the brand's free weekly slots by the worker (services/scheduling.ts). */
+  auto_fill_slots: boolean;
+  /** When filling free slots was switched on (set by the studio): only versions approved since then are put into them. */
+  auto_fill_since: string | null;
 }
 
 export const rulesOf = (brand: Row): ApprovalRules => ({
   required_approvals: 1,
   reapprove_on_move: false,
   checklist: [],
+  auto_fill_slots: false,
+  auto_fill_since: null,
   ...(brand.approval_rules as Partial<ApprovalRules>),
 });

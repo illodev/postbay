@@ -69,10 +69,14 @@ export async function actorOf(db: Queryable, p: Principal | null): Promise<Actor
 
 export async function pieceRef(db: Queryable, pieceId: string) {
   const p = await db.one(
-    'select id, title, kind, brief, target_date, ai_generated, campaign_id, source from piece where id = $1',
+    'select id, title, kind, brief, target_date, ai_generated, campaign_id, source, slot_id, slot_at from piece where id = $1',
     [pieceId],
   );
-  return p && { id: p.id, title: p.title, kind: p.kind, brief: p.brief, target_date: p.target_date, ai_generated: p.ai_generated, campaign_id: p.campaign_id, source: p.source };
+  return p && {
+    id: p.id, title: p.title, kind: p.kind, brief: p.brief, target_date: p.target_date, ai_generated: p.ai_generated, campaign_id: p.campaign_id, source: p.source,
+    // The slot occurrence it was made for, or null.
+    slot: p.slot_at ? { id: p.slot_id, at: new Date(p.slot_at).toISOString() } : null,
+  };
 }
 
 export async function versionRef(db: Queryable, versionId: string) {

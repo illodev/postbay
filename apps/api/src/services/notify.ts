@@ -14,6 +14,7 @@ export type NotifyKind =
   | 'publication.failed'
   | 'publication.handed_over'
   | 'publication.private'
+  | 'publication.auto_scheduled'
   | 'account.reconnect'
   | 'account.expiring'
   | 'webhook.failing'
@@ -42,6 +43,8 @@ export const KINDS: Record<NotifyKind, { push: boolean; slack: boolean }> = {
   'publication.failed': { push: true, slack: true },
   'publication.handed_over': { push: true, slack: true },
   'publication.private': { push: true, slack: true },
+  // The studio put an approved version into a free slot by itself (services/scheduling.ts): told to whoever approved it.
+  'publication.auto_scheduled': { push: false, slack: true },
   'account.reconnect': { push: true, slack: true },
   'account.expiring': { push: false, slack: true },
   'webhook.failing': { push: false, slack: true },

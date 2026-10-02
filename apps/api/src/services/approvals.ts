@@ -11,6 +11,7 @@ import { openCommentCount } from './comments.js';
 import { loadBrand, loadVersion, rulesOf } from './loaders.js';
 import { notifyUsers } from './notify.js';
 import { refreshPieceState } from './pieces.js';
+import { awaitingApprovals, scheduleOnApproval } from './scheduling.js';
 import { recomputeFingerprint, storedFilesMatch, uploaderOf } from './versions.js';
 
 export const decisionInput = z.object({
@@ -18,6 +19,14 @@ export const decisionInput = z.object({
   accountIds: z.array(z.string().uuid()).max(50).default([]),
   checklist: z.record(z.string(), z.boolean()).default({}),
   note: z.string().max(5000).default(''),
+  /**
+   * Whether the studio may schedule this version by itself once it is approved: at its slot, for a piece made for one (see the version's
+   * `slot_schedule`), or in a free slot when the brand fills them. On unless the approver unticks it; any approver saying no is enough.
+   */
+  autoSchedule: z.boolean().default(true),
+  /** The text and first comment it goes out with when the studio schedules it. */
+  scheduleText: z.string().max(10_000).default(''),
+  scheduleFirstComment: z.string().max(5000).default(''),
 });
 
 export const requestChangesInput = z.object({
@@ -134,11 +143,13 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
 
     // What goes to a network besides the files is approved with them: the title and the AI label as the approver saw them.
     const piece = (await db.one<{ title: string; ai_generated: boolean }>('select title, ai_generated from piece where id = $1', [version.piece_id]))!;
+    const approving = input.decision === 'approve';
     await db.query(
-      `insert into approval (version_id, approver_user_id, decision, account_ids, approved_fingerprint, checklist, note, piece_title, ai_generated)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [versionId, p.userId, input.decision, input.decision === 'approve' ? input.accountIds : [], fingerprint, JSON.stringify(input.checklist), input.note,
-        piece.title, piece.ai_generated],
+      `insert into approval (version_id, approver_user_id, decision, account_ids, approved_fingerprint, checklist, note, piece_title, ai_generated,
+                             auto_schedule, schedule_text, schedule_first_comment)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [versionId, p.userId, input.decision, approving ? input.accountIds : [], fingerprint, JSON.stringify(input.checklist), input.note,
+        piece.title, piece.ai_generated, approving ? input.autoSchedule : null, approving ? input.scheduleText || null : null, approving ? input.scheduleFirstComment || null : null],
     );
 
     let state = 'in_review';
@@ -162,10 +173,13 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
       }
     }
     await refreshPieceState(db, version.piece_id);
+    // A piece made for a slot is scheduled there once approved (unless unticked); the answer says what happened, or what will.
+    const slotSchedule = state === 'approved' ? await scheduleOnApproval(ctx, db, p, versionId) : approving ? await awaitingApprovals(ctx, db, versionId) : null;
     // Who uploaded what was decided on, a person or a token (and who made that token), is part of the record of the decision.
     await audit(db, p, version.brand_id, `version.${input.decision === 'approve' ? 'approved' : 'rejected'}`, 'version', versionId,
       { review_state: 'in_review' },
-      { review_state: state, fingerprint, accounts: input.accountIds, note: input.note, uploaded_by: await uploaderOf(db, versionId), title: piece.title, ai_generated: piece.ai_generated });
+      { review_state: state, fingerprint, accounts: input.accountIds, note: input.note, uploaded_by: await uploaderOf(db, versionId), title: piece.title, ai_generated: piece.ai_generated,
+        ...(approving ? { auto_schedule: input.autoSchedule } : {}) });
     if (state !== 'in_review') await notifyAuthor(db, version, state === 'approved' ? 'version.approved' : 'version.changes_requested', p.userId);
     if (input.decision === 'reject') {
       await emit(ctx, db, version.brand_id, 'version.rejected', {
@@ -181,7 +195,7 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
         approvals: (await db.one<{ n: number }>(`select count(*)::int as n from approval where version_id = $1 and decision = 'approve' and approved_fingerprint = $2`, [versionId, fingerprint]))!.n,
       });
     }
-    return { versionId, review_state: state, fingerprint };
+    return { versionId, review_state: state, fingerprint, slot_schedule: slotSchedule };
   });
 }
 

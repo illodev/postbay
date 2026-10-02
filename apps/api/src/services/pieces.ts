@@ -7,6 +7,7 @@ import { can } from '../domain/roles.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { audit } from './audit.js';
 import { loadPiece, loadVariant } from './loaders.js';
+import { checkSlotOccurrence, slotLink, slotOfRun } from './slot-links.js';
 
 export const KINDS = ['video', 'carousel', 'post', 'story', 'pdf'] as const;
 export const FORMATS = ['9:16', '4:5', '1:1', '16:9', 'carousel', 'document'] as const;
@@ -30,6 +31,11 @@ export const pieceInput = z.object({
   targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   aiGenerated: z.boolean().default(false),
   source: pieceSource.nullish(),
+  /**
+   * The slot it is made for: `{ id, at }`, the slot and the occurrence (the instant the calendar gives). Approving it then schedules it
+   * there (services/scheduling.ts). A piece an agent makes in a run started by `slot.needs_content` is linked to that slot by itself.
+   */
+  slot: slotLink.nullish(),
 });
 
 /**
@@ -43,6 +49,8 @@ export const piecePatch = z.object({
   targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   aiGenerated: z.boolean().optional(),
   source: pieceSource.nullish(),
+  /** Links the piece to a slot occurrence, or (null) unlinks it. */
+  slot: slotLink.nullish(),
 });
 
 export const variantInput = z.object({
@@ -76,12 +84,20 @@ export async function createPiece(ctx: Ctx, p: Principal, brandId: string, raw: 
     await authorize(db, p, brandId, 'piece.create');
     await assertCampaign(db, brandId, input.campaignId);
     const a = actorCols(p);
+    // The slot it is for: the one named, or, for an agent making something for an empty slot, the slot of the run it is in.
+    let slot: { id: string; at: Date } | null = null;
+    if (input.slot) slot = { id: input.slot.id, at: await checkSlotOccurrence(db, brandId, input.slot) };
+    else if (p.kind === 'token') {
+      const fromRun = await slotOfRun(db, p.tokenId, brandId, ctx.now());
+      if (fromRun) slot = await checkSlotOccurrence(db, brandId, fromRun).then((at) => ({ id: fromRun.id, at })).catch(() => null);
+    }
     const piece = (await db.one(
-      `insert into piece (brand_id, campaign_id, title, kind, brief, target_date, ai_generated, created_by_user, created_by_token, source)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`,
-      [brandId, input.campaignId ?? null, input.title, input.kind, input.brief, input.targetDate ?? null, input.aiGenerated, a.user, a.token, input.source ?? null],
+      `insert into piece (brand_id, campaign_id, title, kind, brief, target_date, ai_generated, created_by_user, created_by_token, source, slot_id, slot_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning *`,
+      [brandId, input.campaignId ?? null, input.title, input.kind, input.brief, input.targetDate ?? null, input.aiGenerated, a.user, a.token, input.source ?? null,
+        slot?.id ?? null, slot?.at ?? null],
     ))!;
-    await audit(db, p, brandId, 'piece.created', 'piece', piece.id, null, { title: input.title, kind: input.kind, source: piece.source });
+    await audit(db, p, brandId, 'piece.created', 'piece', piece.id, null, { title: input.title, kind: input.kind, source: piece.source, slot_id: piece.slot_id, slot_at: piece.slot_at });
     return piece;
   });
 }
@@ -130,15 +146,28 @@ export async function getPiece(ctx: Ctx, p: Principal, pieceId: string) {
   const publications = await ctx.db.query(
     `select pub.id, pub.variant_id, pub.social_account_id, pub.version_id, pub.status, pub.scheduled_at, pub.text, pub.first_comment, pub.hold_reason,
        pub.url, pub.manual, pub.visibility, pub.placement, pub.native_scheduled, pub.last_error, pub.last_error_class, pub.published_at,
-       sa.network, sa.display_name as account_name, ver.number as version_number
+       sa.network, sa.display_name as account_name, ver.number as version_number,
+       pub.scheduled_by, coalesce(cu.name, cu.email, ct.name) as scheduled_by_name, pub.slot_id
      from publication pub
      join variant v on v.id = pub.variant_id
      join social_account sa on sa.id = pub.social_account_id
      join version ver on ver.id = pub.version_id
+     left join app_user cu on cu.id = pub.created_by left join api_token ct on ct.id = pub.created_by_token
      where v.piece_id = $1 order by pub.scheduled_at`,
     [pieceId],
   );
-  return { ...piece, variants, publications };
+  // The slot it was made for, as the calendar names it (`removed` when the slot has been deleted since).
+  const s = piece.slot_id
+    ? await ctx.db.one(
+        `select s.label, s.active, sa.id as account_id, sa.network, sa.display_name as account_name
+         from slot s join social_account sa on sa.id = s.social_account_id where s.id = $1`,
+        [piece.slot_id],
+      )
+    : null;
+  const slot = piece.slot_at
+    ? { id: piece.slot_id, at: piece.slot_at, label: s?.label ?? null, active: !!s?.active, removed: !s, account: s ? { id: s.account_id, network: s.network, display_name: s.account_name } : null }
+    : null;
+  return { ...piece, slot, variants, publications };
 }
 
 /**
@@ -160,12 +189,15 @@ export async function updatePiece(ctx: Ctx, p: Principal, pieceId: string, raw: 
       );
       if (approved) throw forbidden('This piece was approved as made with AI: only an approver can take that label away');
     }
+    const slotAt = input.slot ? await checkSlotOccurrence(db, before.brand_id, input.slot) : null;
     const after = (await db.one(
       `update piece set title = coalesce($2, title), brief = coalesce($3, brief),
          campaign_id = case when $4::boolean then $5 else campaign_id end,
          target_date = case when $6::boolean then $7 else target_date end,
          ai_generated = coalesce($8, ai_generated),
-         source = case when $9::boolean then $10 else source end
+         source = case when $9::boolean then $10 else source end,
+         slot_id = case when $11::boolean then $12::uuid else slot_id end,
+         slot_at = case when $11::boolean then $13::timestamptz else slot_at end
        where id = $1 returning *`,
       [
         pieceId,
@@ -178,11 +210,14 @@ export async function updatePiece(ctx: Ctx, p: Principal, pieceId: string, raw: 
         input.aiGenerated ?? null,
         input.source !== undefined,
         input.source ?? null,
+        input.slot !== undefined,
+        input.slot?.id ?? null,
+        slotAt,
       ],
     ))!;
     await audit(db, p, before.brand_id, 'piece.updated', 'piece', pieceId,
-      { title: before.title, brief: before.brief, target_date: before.target_date, ai_generated: before.ai_generated, source: before.source },
-      { title: after.title, brief: after.brief, target_date: after.target_date, ai_generated: after.ai_generated, source: after.source });
+      { title: before.title, brief: before.brief, target_date: before.target_date, ai_generated: before.ai_generated, source: before.source, slot_id: before.slot_id, slot_at: before.slot_at },
+      { title: after.title, brief: after.brief, target_date: after.target_date, ai_generated: after.ai_generated, source: after.source, slot_id: after.slot_id, slot_at: after.slot_at });
     return after;
   });
 }

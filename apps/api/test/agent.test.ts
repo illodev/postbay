@@ -48,7 +48,8 @@ describe('the agent settings', () => {
     expect(Object.keys(fresh!.agent)).toContain('max_rounds');
     await env.db.query(`update brand set agent = '{"max_rounds":3,"max_cost_per_piece":null,"max_cost_per_month":null,"max_run_minutes":30,"slot_alert_days":3,"currency":"USD"}' where id = $1`, [env.brandId]);
     const got = await env.call(admin(), 'GET', `/api/brands/${env.brandId}`);
-    expect(got.body.agent).toEqual({ max_rounds: 3, max_cost_per_piece: null, max_cost_per_month: null, max_run_minutes: 30, slot_alert_days: 3, currency: 'USD' });
+    // Settings added later (whether the agent may schedule what is approved) start off for a brand that never set them.
+    expect(got.body.agent).toEqual({ max_rounds: 3, max_cost_per_piece: null, max_cost_per_month: null, max_run_minutes: 30, slot_alert_days: 3, currency: 'USD', can_schedule_approved: false });
 
     const set = await limits({ max_rounds: 5, max_cost_per_piece: 2.5, currency: 'EUR' });
     expect(set.agent).toMatchObject({ max_rounds: 5, max_cost_per_piece: 2.5, currency: 'EUR', max_run_minutes: 30 }); // the rest is kept
