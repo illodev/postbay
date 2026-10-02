@@ -190,7 +190,7 @@ aprobada" in a warning style; the public prize page showing `unavailable_reason`
 
 ## What was verified, and how
 
-All against a real PostgreSQL, through the HTTP API (the whole suite: 899 API tests and 105 runner tests, 30 and 4 of them new here, plus
+All against a real PostgreSQL, through the HTTP API (the whole suite: 899 API tests and 105 runner tests, 24 and 4 of them new here, plus
 changes to two older ones):
 
 - `test/member-deactivation.test.ts`: refused with the code in both languages, `/api/me`, the member list, twice and back; only admins, never
