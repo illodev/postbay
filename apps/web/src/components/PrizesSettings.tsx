@@ -4,7 +4,7 @@ import { api, type BrandSettings, type Prize } from '../api';
 import { t } from '../i18n';
 import { fmtBytes } from '../lib/format';
 import { uploadPrizeFile, type Progress } from '../lib/upload';
-import { Chip, CopyButton, Empty, ErrorBox, errorMessage, Field, Spinner, useConfirm, useToast } from './ui';
+import { Chip, CopyButton, Empty, ErrorBox, errorMessage, Field, Spinner, Switch, useConfirm, useToast } from './ui';
 
 function Settings({ brand }: { brand: BrandSettings }) {
   const qc = useQueryClient();
@@ -18,19 +18,10 @@ function Settings({ brand }: { brand: BrandSettings }) {
   return (
     <form className="card stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
       <div className="set-card-head">
-        <div>
-          <h3>{t('prizes.settings.title')}</h3>
-          <p className="set-hint">{t('prizes.settings.hint')}</p>
-        </div>
+        <h3>{t('prizes.settings.title')}</h3>
         {brand.prizes.enabled ? <Chip state="approved" label={t('prizes.settings.on')} /> : <Chip state="draft" label={t('prizes.settings.off')} />}
       </div>
-      <label className="check">
-        <input type="checkbox" checked={f.enabled} onChange={(e) => setForm({ ...f, enabled: e.target.checked })} />
-        <span>
-          {t('prizes.settings.enable')}
-          <span className="muted small" style={{ display: 'block' }}>{t('prizes.settings.enableHint')}</span>
-        </span>
-      </label>
+      <Switch label={t('prizes.settings.enable')} hint={t('prizes.settings.enableHint')} checked={f.enabled} onChange={(v) => setForm({ ...f, enabled: v })} />
       <div className="set-fields">
         <Field label={t('prizes.settings.retention')} hint={t('prizes.settings.retentionHint')}>
           <input className="set-num-input" type="number" min={8} max={365} value={f.retention_days} onChange={(e) => setForm({ ...f, retention_days: Number(e.target.value) })} />

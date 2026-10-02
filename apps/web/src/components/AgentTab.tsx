@@ -91,10 +91,7 @@ export function AgentTab({ brandId }: { brandId: string }) {
 
       <form className="card stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
         <div className="set-card-head">
-          <div>
-            <h3>{t('settings.agent.limits')}</h3>
-            <p className="set-hint">{t('settings.agent.limitsHint')}</p>
-          </div>
+          <h3 title={t('settings.agent.limitsHint')}>{t('settings.agent.limits')}</h3>
         </div>
         <div className="set-fields">
           <Field label={t('settings.agent.rounds')} hint={t('settings.agent.roundsHint')}><input type="number" min={1} max={10} required value={form.rounds} onChange={set('rounds')} /></Field>

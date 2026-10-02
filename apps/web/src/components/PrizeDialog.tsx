@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { api, type Prize, type PrizeDelivery, type PublicationPrize, type PublicationRow } from '../api';
 import { t, tMaybe } from '../i18n';
 import { fmtDateTime, NETWORK_LABEL } from '../lib/format';
-import { Chip, CopyButton, Dialog, ErrorBox, Field, Spinner, useToast } from './ui';
+import { Chip, CopyButton, Dialog, ErrorBox, Field, Spinner, Switch, useToast } from './ui';
 import '../styles/settings.css';
 
 /**
@@ -107,10 +107,7 @@ function RuleForm({ pub, info, prizes, onClose }: { pub: PublicationRow; info: P
           <span className="muted small" style={{ display: 'block' }}>{t('prizes.rule.confirmHint', { notice: info.auto_notice })}</span>
         </span>
       </label>
-      <label className="check">
-        <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
-        <span>{t('prizes.rule.running')} <span className="muted small">{t('prizes.rule.runningHint')}</span></span>
-      </label>
+      <Switch label={t('prizes.rule.running')} hint={t('prizes.rule.runningHint')} checked={active} onChange={setActive} />
       {save.error && <ErrorBox error={save.error} />}
       <div className="row" style={{ justifyContent: 'flex-end' }}>
         <button type="button" className="btn" onClick={onClose}>{t('common.close')}</button>

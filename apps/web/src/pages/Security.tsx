@@ -80,8 +80,7 @@ function Language() {
   const { locale, setLocale } = useLocale();
   return (
     <section className="card stack" aria-labelledby="acct-lang">
-      <h2 id="acct-lang">{t('account.language.title')}</h2>
-      <p className="set-hint">{t('account.language.hint')}</p>
+      <h2 id="acct-lang" title={t('account.language.hint')}>{t('account.language.title')}</h2>
       <div className="acct-lang" role="radiogroup" aria-labelledby="acct-lang">
         {LOCALES.map((l) => (
           <label key={l.value} lang={l.value}>
@@ -90,7 +89,7 @@ function Language() {
           </label>
         ))}
       </div>
-      <p className="set-hint">{t('account.language.note')}</p>
+      <p className="set-hint acct-invites-note">{t('account.language.note')}</p>
     </section>
   );
 }
@@ -108,10 +107,7 @@ function Authenticator() {
   return (
     <section className="card stack acct-full" aria-labelledby="acct-2fa">
       <div className="set-card-head">
-        <div>
-          <h2 id="acct-2fa">{t('account.twofa.title')}</h2>
-          <p className="set-hint">{t('account.twofa.hint')}</p>
-        </div>
+        <h2 id="acct-2fa" title={t('account.twofa.hint')}>{t('account.twofa.title')}</h2>
         {data.enrolled ? <Chip state="approved" label={t('account.twofa.on')} /> : <Chip state="draft" label={t('account.twofa.off')} />}
       </div>
       {data.required && data.requiredByRole && <div className="notice notice-info" style={{ margin: 0 }}>{t('account.twofa.required')}</div>}
@@ -156,13 +152,9 @@ function Invitations({ items }: { items: MyInvitation[] }) {
     onError: (e) => toast(errorMessage(e), 'error'),
   });
   return (
-    <section className="card stack acct-full acct-invites" aria-labelledby="acct-invites">
-      <div className="acct-invites-head">
-        <span className="acct-invites-icon"><Icon name="mail" /></span>
-        <div>
-          <h2 id="acct-invites">{t('account.invitations.title', { count: items.length })}</h2>
-          <p className="set-hint">{t('account.invitations.hint')}</p>
-        </div>
+    <section className="card acct-full" aria-labelledby="acct-invites">
+      <div className="set-card-top">
+        <h2 id="acct-invites" title={t('account.invitations.hint')}>{t('account.invitations.title', { count: items.length })}</h2>
       </div>
       <ul className="ent-list">
         {items.map((i) => (
@@ -172,7 +164,7 @@ function Invitations({ items }: { items: MyInvitation[] }) {
               <div className="ent-title">{i.brand}<span className="muted acct-ws">· {i.workspace}</span></div>
               <div className="ent-sub">
                 {t('account.invitations.as', { role: ROLE_LABEL[i.role] ?? i.role })}
-                {i.invited_by && <> · {t('account.invitations.by', { who: i.invited_by })}</>}
+                {i.invited_by && <> · <span title={i.invited_by}>{t('account.invitations.by', { who: displayName(null, i.invited_by) })}</span></>}
                 {' · '}{fmtShort(i.created_at)} · {t('account.invitations.expires', { date: fmtDay(i.expires_at) })}
               </div>
             </div>
@@ -195,7 +187,6 @@ export function SecurityPage() {
   return (
     <>
       <PageBar crumbs={[{ label: t('account.title') }]} />
-      <p className="set-lead acct-lead">{t('account.subtitle')}</p>
       <div className="acct">
         {invitations.length > 0 && <Invitations items={invitations} />}
         <Profile />

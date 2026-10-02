@@ -6,7 +6,7 @@ import { api, type Account, type BrandInvitation, type BrandSettings, type Integ
 import { Avatar, displayName } from '../components/Avatar';
 import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
-import { Chip, CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, MenuButton, NetMark, Skeleton, Spinner, useConfirm, useToast } from '../components/ui';
+import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, MenuButton, NetMark, Skeleton, Spinner, Switch, useConfirm, useToast } from '../components/ui';
 import { t, tMaybe, type Key } from '../i18n';
 import { fmtDateTime, fmtDay, fmtShort, NETWORK_LABEL, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -70,7 +70,7 @@ function General({ brandId }: { brandId: string }) {
               <input type="text" required value={f.name} onChange={(e) => setForm({ ...f, name: e.target.value })} />
             </Field>
             <div className="set-fields">
-              <Field label={t('settings.general.timezone')} hint={t('settings.general.timezoneHint')}>
+              <Field label={t('settings.general.timezone')}>
                 <input type="text" list="zones" required value={f.timezone} onChange={(e) => setForm({ ...f, timezone: e.target.value })} />
                 <datalist id="zones">{zones.map((z) => <option key={z} value={z} />)}</datalist>
               </Field>
@@ -81,19 +81,11 @@ function General({ brandId }: { brandId: string }) {
           </section>
 
           <section className="card stack">
-            <div className="set-card-head">
-              <div>
-                <h3>{t('settings.general.rules')}</h3>
-                <p className="set-hint">{t('settings.general.rulesHint')}</p>
-              </div>
-            </div>
-            <Field label={t('settings.general.required')} hint={t('settings.general.requiredHint')}>
+            <h3>{t('settings.general.rules')}</h3>
+            <Field label={t('settings.general.required')} hint={t('settings.general.rulesHint')}>
               <input className="set-num-input" type="number" min={1} max={5} value={f.required} onChange={(e) => setForm({ ...f, required: Number(e.target.value) })} />
             </Field>
-            <label className="check">
-              <input type="checkbox" checked={f.reapprove} onChange={(e) => setForm({ ...f, reapprove: e.target.checked })} />
-              <span>{t('settings.general.reapprove')}<br /><span className="muted small">{t('settings.general.reapproveHint')}</span></span>
-            </label>
+            <Switch label={t('settings.general.reapprove')} hint={t('settings.general.reapproveHint')} checked={f.reapprove} onChange={(v) => setForm({ ...f, reapprove: v })} />
             <Field label={t('settings.general.checklist')} hint={t('settings.general.checklistHint')}>
               <textarea value={f.checklist} onChange={(e) => setForm({ ...f, checklist: e.target.value })} placeholder={t('settings.general.checklistPlaceholder')} />
             </Field>
@@ -216,7 +208,7 @@ function Members({ brandId }: { brandId: string }) {
                 <li key={m.id} className="ent ent-person">
                   <Avatar name={m.name || m.email} size={32} />
                   <div className="ent-main">
-                    <div className="ent-title">{who}{isMe && <span className="set-you">{t('settings.members.you')}</span>}</div>
+                    <div className="ent-title">{who}{isMe && <span className="set-you">({t('settings.members.you')})</span>}</div>
                     <div className="ent-sub">{m.email}</div>
                   </div>
                   <div className="ent-side">
@@ -259,7 +251,6 @@ function Members({ brandId }: { brandId: string }) {
             <h3 id="set-invitations">{t('settings.members.pending')}</h3>
             <span className="set-count">{pending.length}</span>
           </header>
-          <p className="set-hint set-card-lead">{t('settings.members.pendingHint')}</p>
           <ul className="ent-list">
             {pending.map((i) => (
               <li key={i.id} className="ent ent-person">
@@ -290,13 +281,9 @@ function Members({ brandId }: { brandId: string }) {
         </section>
       )}
 
-      <form className="card set-card stack" onSubmit={(e) => { e.preventDefault(); add.mutate(); }} aria-labelledby="set-add-member">
+      <form className="card set-card" onSubmit={(e) => { e.preventDefault(); add.mutate(); }} aria-labelledby="set-add-member">
         <header className="set-card-top">
-          <span className="set-card-icon"><Icon name="userPlus" /></span>
-          <div>
-            <h3 id="set-add-member">{t('settings.members.addTitle')}</h3>
-            <p className="set-hint">{t('settings.members.addHint')}</p>
-          </div>
+          <h3 id="set-add-member" title={t('settings.members.addHint')}>{t('settings.members.addTitle')}</h3>
         </header>
         <div className="set-invite">
           <Field label={t('settings.members.email')}><input type="email" required placeholder={t('settings.members.emailPlaceholder')} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
@@ -429,17 +416,6 @@ const META_NETWORKS = ['instagram', 'facebook'];
 /** Where the repository explains how to give this server each network's app (its credentials). */
 const SETUP_DOCS = 'https://github.com/illodev/marketing/blob/HEAD/docs/phase-2.md#setting-up-the-networks';
 
-/** A switch: a checkbox drawn as Frame.io's toggles. */
-function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: ReactNode; disabled?: boolean }) {
-  return (
-    <label className="set-toggle">
-      <span className="set-toggle-label">{label}</span>
-      <input type="checkbox" role="switch" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
-      <span className="set-switch" aria-hidden="true" />
-    </label>
-  );
-}
-
 function AccountState({ a }: { a: Account }) {
   if (a.status === 'reconnect_required') return <Chip state="failed" label={t('settings.accounts.state.reconnect')} />;
   if (a.status === 'manual' || !a.connected) return <Chip state="draft" label={t('settings.accounts.state.manual')} />;
@@ -536,12 +512,13 @@ function Accounts({ brandId }: { brandId: string }) {
     const controls: ReactNode[] = [];
     if (APPROVAL_NETWORKS.includes(a.network)) {
       controls.push(
-        <Toggle
+        <Switch
           key="aud"
           checked={!!a.details.audited}
           disabled={settle.isPending}
           onChange={(v) => settle.mutate({ id: a.id, body: { audited: v } })}
-          label={<>{t(`settings.accounts.approval.${a.network}` as Key)}{!a.details.audited && <span className="set-toggle-hint">{t(`settings.accounts.approvalUntil.${a.network}` as Key)}</span>}</>}
+          label={t(`settings.accounts.approval.${a.network}` as Key)}
+          hint={a.details.audited ? undefined : t(`settings.accounts.approvalUntil.${a.network}` as Key)}
         />,
       );
     }
@@ -552,7 +529,7 @@ function Accounts({ brandId }: { brandId: string }) {
         <div className="ent-main">
           <div className="ent-title">{a.display_name}</div>
           <div className="ent-sub">
-            {network} · <span className="mono">{handleOf(a)}</span>
+            {network} · {handleOf(a)}
             {a.last_health_at && a.status === 'active' && a.connected && <> · {t('settings.accounts.checked', { when: fmtShort(a.last_health_at) })}</>}
           </div>
         </div>
@@ -596,7 +573,7 @@ function Accounts({ brandId }: { brandId: string }) {
         <NetMark network={a.network} size="lg" />
         <div className="ent-main">
           <div className="ent-title">{a.display_name}</div>
-          <div className="ent-sub">{network} · <span className="mono">{handleOf(a)}</span></div>
+          <div className="ent-sub">{network} · {handleOf(a)}</div>
         </div>
         <div className="ent-side">
           {provider?.configured && <button className="btn btn-small" onClick={() => start(provider, a)}><Icon name="link" /><span>{t('settings.accounts.connect')}</span></button>}
@@ -625,13 +602,7 @@ function Accounts({ brandId }: { brandId: string }) {
       )}
       {error && <ErrorBox error={error} />}
       {!data && !error && <section className="card set-card"><ListSkeleton square /></section>}
-      {data?.length === 0 && (
-        <div className="set-empty">
-          <span className="set-empty-icon"><Icon name="globe" /></span>
-          <strong>{t('settings.accounts.empty')}</strong>
-          <p>{t('settings.accounts.emptyHint')}</p>
-        </div>
-      )}
+      {data?.length === 0 && <p className="set-empty">{t('settings.accounts.empty')}</p>}
 
       {data && connected.length > 0 && (
         <section className="card set-card" aria-labelledby="set-acc-connected">
@@ -640,7 +611,6 @@ function Accounts({ brandId }: { brandId: string }) {
             <span className="set-count">{connected.length}</span>
             {needs > 0 && <Chip state="failed" label={t('settings.accounts.needsCount', { count: needs })} />}
           </header>
-          <p className="set-hint set-card-lead">{t('settings.accounts.groupConnectedHint')}</p>
           <ul className="ent-list">{connected.map(connectedRow)}</ul>
         </section>
       )}
@@ -656,17 +626,13 @@ function Accounts({ brandId }: { brandId: string }) {
         </section>
       )}
 
-      <section className="card set-card stack" aria-labelledby="set-acc-connect">
+      <section className="card set-card" aria-labelledby="set-acc-connect">
         <header className="set-card-top">
-          <span className="set-card-icon"><Icon name="link" /></span>
-          <div className="grow">
-            <h3 id="set-acc-connect">{t('settings.accounts.connectTitle')}</h3>
-            <p className="set-hint">{t('settings.accounts.connectHint')}</p>
-          </div>
+          <h3 id="set-acc-connect" className="grow">{t('settings.accounts.connectTitle')}</h3>
           <button className="btn btn-small btn-ghost" onClick={() => setChecking('server')}>{t('settings.accounts.serverReady')}</button>
         </header>
         {integ && configured.length === 0 && (
-          <div className="set-callout">
+          <div className="set-callout" style={{ marginTop: 12 }}>
             <Icon name="settings" />
             <div>
               <strong>{t('settings.accounts.noneConfigured')}</strong>
@@ -685,20 +651,16 @@ function Accounts({ brandId }: { brandId: string }) {
           </div>
         )}
         {configured.length > 0 && unconfigured.length > 0 && (
-          <p className="set-hint">
+          <p className="set-hint" style={{ marginTop: 10 }}>
             {t('settings.accounts.someUnconfigured', { names: unconfigured.map(providerLabel).join(', ') })}{' '}
             <a href={SETUP_DOCS} target="_blank" rel="noreferrer">{t('settings.accounts.setupDocs')}<Icon name="external" /></a>
           </p>
         )}
       </section>
 
-      <form className="card set-card stack" onSubmit={(e) => { e.preventDefault(); add.mutate(); }} aria-labelledby="set-acc-manual-add">
+      <form className="card set-card" onSubmit={(e) => { e.preventDefault(); add.mutate(); }} aria-labelledby="set-acc-manual-add">
         <header className="set-card-top">
-          <span className="set-card-icon"><Icon name="plus" /></span>
-          <div>
-            <h3 id="set-acc-manual-add">{t('settings.accounts.manualTitle')}</h3>
-            <p className="set-hint">{t('settings.accounts.manualHint')}</p>
-          </div>
+          <h3 id="set-acc-manual-add" title={t('settings.accounts.manualHint')}>{t('settings.accounts.manualTitle')}</h3>
         </header>
         <div className="set-invite">
           <Field label={t('settings.accounts.network')}>
@@ -723,10 +685,10 @@ function Accounts({ brandId }: { brandId: string }) {
 function KidsDefault({ a, disabled, onChange }: { a: Account; disabled?: boolean; onChange: (v: boolean | null) => void }) {
   const value = a.details.madeForKids === undefined ? 'ask' : a.details.madeForKids ? 'yes' : 'no';
   return (
-    <label className="set-toggle">
-      <span className="set-toggle-label">
-        {t('settings.accounts.kids')}
-        <span className="set-toggle-hint">{t('settings.accounts.kidsHint')}</span>
+    <label className="set-control-row">
+      <span className="switch-text">
+        <span className="switch-label">{t('settings.accounts.kids')}</span>
+        <span className="switch-hint">{t('settings.accounts.kidsHint')}</span>
       </span>
       <select className="set-inline-select" value={value} disabled={disabled} onChange={(e) => onChange(e.target.value === 'ask' ? null : e.target.value === 'yes')}>
         <option value="ask">{t('settings.accounts.kidsAsk')}</option>
@@ -770,23 +732,19 @@ function Schedule({ brandId }: { brandId: string }) {
     <>
       <section className="card set-card" aria-labelledby="set-grid">
         <header className="set-card-top">
-          <span className="set-card-icon"><Icon name="calendar" /></span>
-          <div className="grow">
-            <h3 id="set-grid">{t('settings.schedule.slots')}</h3>
-            <p className="set-hint">{t('settings.schedule.slotsHint')}</p>
-          </div>
-          {sorted.length > 0 && <span className="set-count">{t('settings.schedule.slotCount', { count: sorted.length })}</span>}
+          <h3 id="set-grid">{t('settings.schedule.slots')}</h3>
+          {sorted.length > 0 && <span className="set-count">{sorted.length}</span>}
         </header>
+        <p className="set-hint set-card-lead">{t('settings.schedule.slotsHint')}</p>
         {error && <ErrorBox error={error} />}
         {slots?.length === 0 && (
           <div className="set-example">
             <p className="set-example-label">{t('settings.schedule.example')}</p>
             <div className="set-slot set-slot-example" aria-hidden="true">
-              <span className="set-slot-time">19:00</span>
+              <span className="set-slot-time">{weekdayName(2)} 19:00</span>
               {exampleAccount ? <NetMark network={exampleAccount.network} size="xs" /> : <NetMark network="instagram" size="xs" />}
               <span className="set-slot-label">{t('settings.schedule.labelPlaceholder')}</span>
             </div>
-            <p className="set-hint">{t('settings.schedule.noSlotsHint')}</p>
           </div>
         )}
         {sorted.length > 0 && (
@@ -821,15 +779,11 @@ function Schedule({ brandId }: { brandId: string }) {
         <p className="set-hint set-zone"><Icon name="clock" />{t('settings.schedule.zone', { zone: brand.timezone })}</p>
       </section>
 
-      <form className="card set-card stack" onSubmit={(e) => { e.preventDefault(); add.mutate(); }} aria-labelledby="set-add-slot">
+      <form className="card set-card" onSubmit={(e) => { e.preventDefault(); add.mutate(); }} aria-labelledby="set-add-slot">
         <header className="set-card-top">
-          <span className="set-card-icon"><Icon name="plus" /></span>
-          <div>
-            <h3 id="set-add-slot">{t('settings.schedule.addTitle')}</h3>
-            <p className="set-hint">{t('settings.schedule.addHint')}</p>
-          </div>
+          <h3 id="set-add-slot">{t('settings.schedule.addTitle')}</h3>
         </header>
-        {accounts?.length === 0 && <div className="notice notice-warn" style={{ margin: 0 }}>{t('settings.schedule.needAccount')}</div>}
+        {accounts?.length === 0 && <div className="notice notice-warn" style={{ margin: '10px 0 0' }}>{t('settings.schedule.needAccount')}</div>}
         <div className="set-invite set-invite-slot">
           <Field label={t('settings.schedule.day')}>
             <select value={form.weekday} onChange={(e) => setForm({ ...form, weekday: Number(e.target.value) })}>
@@ -845,19 +799,16 @@ function Schedule({ brandId }: { brandId: string }) {
           <Field label={t('settings.schedule.label')}><input type="text" placeholder={t('settings.schedule.labelPlaceholder')} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} /></Field>
           <button className="btn btn-primary" disabled={add.isPending || !accounts?.length}>{t('settings.schedule.add')}</button>
         </div>
-        <p className="set-hint">{t('settings.schedule.labelHint')}</p>
+        <p className="set-hint" style={{ marginTop: 8 }}>{t('settings.schedule.labelHint')}</p>
         {add.error && <ErrorBox error={add.error} />}
       </form>
 
       <section className="card set-card" aria-labelledby="set-blocked">
         <header className="set-card-top">
-          <span className="set-card-icon"><Icon name="ban" /></span>
-          <div>
-            <h3 id="set-blocked">{t('settings.schedule.blocked')}</h3>
-            <p className="set-hint">{t('settings.schedule.blockedHint')}</p>
-          </div>
+          <h3 id="set-blocked" title={t('settings.schedule.blockedHint')}>{t('settings.schedule.blocked')}</h3>
+          {blocked && blocked.length > 0 && <span className="set-count">{blocked.length}</span>}
         </header>
-        {blocked?.length === 0 && <p className="set-hint set-card-lead">{t('settings.schedule.noBlocked')}</p>}
+        {blocked?.length === 0 && <p className="set-empty">{t('settings.schedule.noBlocked')}</p>}
         {blocked && blocked.length > 0 && (
           <ul className="ent-list">
             {blocked.map((b) => (
@@ -900,13 +851,7 @@ function Tokens({ brandId }: { brandId: string }) {
         </header>
         {error && <ErrorBox error={error} />}
         {!data && !error && <ListSkeleton square />}
-        {data?.length === 0 && (
-          <div className="set-empty set-empty-flat">
-            <span className="set-empty-icon"><Icon name="key" /></span>
-            <strong>{t('settings.tokens.empty')}</strong>
-            <p>{t('settings.tokens.emptyHint')}</p>
-          </div>
-        )}
+        {data?.length === 0 && <p className="set-empty">{t('settings.tokens.empty')}</p>}
         {data && data.length > 0 && (
           <ul className="ent-list">
             {data.map((tk) => {
@@ -950,13 +895,9 @@ function Tokens({ brandId }: { brandId: string }) {
           </ul>
         )}
       </section>
-      <form className="card set-card stack" onSubmit={(e) => { e.preventDefault(); create.mutate(); }} aria-labelledby="set-new-token">
+      <form className="card set-card" onSubmit={(e) => { e.preventDefault(); create.mutate(); }} aria-labelledby="set-new-token">
         <header className="set-card-top">
-          <span className="set-card-icon"><Icon name="plus" /></span>
-          <div>
-            <h3 id="set-new-token">{t('settings.tokens.newTitle')}</h3>
-            <p className="set-hint">{t('settings.tokens.newHint')}</p>
-          </div>
+          <h3 id="set-new-token" title={t('settings.tokens.newHint')}>{t('settings.tokens.newTitle')}</h3>
         </header>
         <div className="set-invite set-invite-token">
           <Field label={t('settings.tokens.name')}><input type="text" required placeholder={t('settings.tokens.namePlaceholder')} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
@@ -987,7 +928,7 @@ function Audit({ brandId, zone }: { brandId: string; zone: string }) {
       </div>
       {error && <ErrorBox error={error} />}
       {!data && !error && <Spinner />}
-      {data?.length === 0 && <Empty title={t('settings.audit.empty')} />}
+      {data?.length === 0 && <p className="set-empty">{t('settings.audit.empty')}</p>}
       {data && data.length > 0 && (
         <div className="table-wrap">
           <table className="set-table">
@@ -996,7 +937,9 @@ function Audit({ brandId, zone }: { brandId: string; zone: string }) {
               {data.map((e) => (
                 <tr key={e.id}>
                   <td className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(e.at, zone)}</td>
-                  <td data-label={t('settings.audit.who')}>{e.actor ?? <span className="muted">{t('settings.audit.system')}</span>}</td>
+                  <td data-label={t('settings.audit.who')}>
+                    {e.actor ? <span className="set-by" title={e.actor}><Avatar name={e.actor} size={18} />{e.actor.includes('@') ? displayName(null, e.actor) : e.actor}</span> : <span className="muted">{t('settings.audit.system')}</span>}
+                  </td>
                   <td data-label={t('settings.audit.what')}><span className="tag">{e.action}</span></td>
                   <td data-label={t('settings.audit.detail')} className="muted mono"><div className="clip" title={e.after ? JSON.stringify(e.after) : undefined}>{e.after ? JSON.stringify(e.after) : ''}</div></td>
                 </tr>
@@ -1060,7 +1003,7 @@ export function SettingsPage() {
             return [
               <div key={g.label} className="set-nav-group" aria-hidden="true">{t(g.label)}</div>,
               ...items.map(([k]) => (
-                <button key={k} id={`tab-${k}`} role="tab" aria-selected={current === k} aria-controls="settings-panel" className="set-nav-item" onClick={() => open(k)}>
+                <button key={k} id={`tab-${k}`} role="tab" aria-selected={current === k} aria-controls="settings-panel" className="set-nav-item" title={t(`settings.tabDesc.${k}` as Key)} onClick={() => open(k)}>
                   <span>{t(`settings.tab.${k}` as Key)}</span>
                   {attention[k] && (
                     <>
@@ -1074,7 +1017,6 @@ export function SettingsPage() {
           })}
         </nav>
         <div className="set-main" role="tabpanel" id="settings-panel" aria-labelledby={`tab-${current}`}>
-          <p className="set-lead">{t(`settings.tabDesc.${current}` as Key)}</p>
           {current === 'general' && <General brandId={brand.id} />}
           {current === 'members' && <Members brandId={brand.id} />}
           {current === 'accounts' && <Accounts brandId={brand.id} />}
