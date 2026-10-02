@@ -37,6 +37,7 @@ export const piece = define({
     'piece.hero.page': 'Página {n}',
     'piece.hero.morePages': { one: 'Y {count} página más: ábrela en la revisión', other: 'Y {count} páginas más: ábrelas en la revisión' },
     'piece.hero.pdf': 'PDF',
+    'piece.hero.pdfPages': { one: 'PDF · {count} pág.', other: 'PDF · {count} págs.' },
     'piece.hero.videoOf': 'Vídeo de la v{n}',
     'piece.hero.noVersion': 'Todavía no hay ninguna versión de esta variante',
     'piece.hero.openReview': 'Revisar la v{n} a pantalla completa (R)',
@@ -57,7 +58,7 @@ export const piece = define({
     'piece.fields.addSource': 'Añadir origen',
     'piece.fields.noSource': 'Sin origen',
     'piece.fields.variants': 'Variantes',
-    'piece.fields.variantsValue': '{variants} · {versions} versiones',
+    'piece.fields.versionCount': { one: '{count} versión', other: '{count} versiones' },
     'piece.inline.edit': 'Cambiar {what}',
 
     'piece.brief': 'Brief',
@@ -298,6 +299,7 @@ export const piece = define({
     'piece.hero.page': 'Page {n}',
     'piece.hero.morePages': { one: 'And {count} more page: open it in review', other: 'And {count} more pages: open them in review' },
     'piece.hero.pdf': 'PDF',
+    'piece.hero.pdfPages': { one: 'PDF · {count} page', other: 'PDF · {count} pages' },
     'piece.hero.videoOf': 'Video of v{n}',
     'piece.hero.noVersion': 'This variant has no versions yet',
     'piece.hero.openReview': 'Review v{n} full screen (R)',
@@ -318,7 +320,7 @@ export const piece = define({
     'piece.fields.addSource': 'Add source',
     'piece.fields.noSource': 'No source',
     'piece.fields.variants': 'Variants',
-    'piece.fields.variantsValue': '{variants} · {versions} versions',
+    'piece.fields.versionCount': { one: '{count} version', other: '{count} versions' },
     'piece.inline.edit': 'Change {what}',
 
     'piece.brief': 'Brief',

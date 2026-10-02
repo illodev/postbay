@@ -8,7 +8,7 @@ import { MoreMenu, type MenuEntry } from '../components/MoreMenu';
 import { PageBar } from '../components/PageBar';
 import { PieceActivity } from '../components/PieceActivity';
 import { PieceAgentCard } from '../components/PieceAgentCard';
-import { ago, authorName, formatHint, formatName, PieceHero, variantName } from '../components/PieceHero';
+import { ago, authorName, formatHint, formatName, PieceFacts, PieceStage, variantName } from '../components/PieceHero';
 import { PublicationList } from '../components/publications';
 import { UploadDialog } from '../components/UploadDialog';
 import { Chip, Dialog, Empty, ErrorBox, Field, Skeleton, SkeletonText, useToast } from '../components/ui';
@@ -405,15 +405,19 @@ function PieceSkeleton() {
   return (
     <div aria-busy="true" aria-label={t('common.loading')}>
       <div className="page-top"><Skeleton width={260} height={16} /></div>
-      <div className="pc-hero">
-        <div className="pc-hero-media">
-          <Skeleton className="pc-stage" height="auto" radius={12} />
-          <div className="pc-film">{[0, 1, 2].map((i) => <Skeleton key={i} width={60} height={60} radius={8} />)}</div>
+      <div className="pc-grid">
+        <div className="pc-col-main">
+          <div className="pc-hero-media">
+            <Skeleton className="pc-stage" height="auto" radius={12} />
+            <div className="pc-film">{[0, 1, 2].map((i) => <Skeleton key={i} width={60} height={60} radius={8} />)}</div>
+          </div>
         </div>
-        <div className="pc-info">
-          <Skeleton width={90} height={20} radius={99} />
-          <Skeleton width="80%" height={22} />
-          <SkeletonText lines={4} />
+        <div className="pc-col-side">
+          <div className="pc-info">
+            <Skeleton width={90} height={20} radius={99} />
+            <Skeleton width="80%" height={22} />
+            <SkeletonText lines={4} />
+          </div>
         </div>
       </div>
     </div>
@@ -496,6 +500,22 @@ export function PiecePage() {
   const uploading = piece.variants.find((v) => v.id === uploadFor);
   const openOnVariant = (variant?.versions ?? []).filter((v) => v.review_state !== 'discarded').reduce((n, v) => n + v.open_comments, 0);
 
+  const heroProps = variant
+    ? {
+        piece,
+        variants: piece.variants,
+        variantId: variant.id,
+        onVariant: (id: string) => { setHeroVariant(id); setHeroVersion(null); },
+        versionId: version?.id ?? null,
+        onVersion: setHeroVersion,
+        detail,
+        openComments: openOnVariant,
+        campaigns,
+        canEdit,
+        zone,
+      }
+    : null;
+
   const menu: MenuEntry[] = canEdit
     ? [
         { label: t('piece.menu.edit'), icon: 'pen', hint: t('piece.menu.editHint'), onSelect: () => setEditing(true) },
@@ -538,33 +558,20 @@ export function PiecePage() {
         </div>
       )}
 
-      {variant ? (
-        <PieceHero
-          piece={piece}
-          variants={piece.variants}
-          variantId={variant.id}
-          onVariant={(id) => { setHeroVariant(id); setHeroVersion(null); }}
-          versionId={version?.id ?? null}
-          onVersion={setHeroVersion}
-          detail={detail}
-          openComments={openOnVariant}
-          campaigns={campaigns}
-          canEdit={canEdit}
-          zone={zone}
-        />
-      ) : (
-        <div className="pc-hero-empty">
-          <Empty title={t('piece.noVariants')}>
-            {canUpload ? t('piece.noVariantsUpload') : t('piece.noVariantsWait')}
-          </Empty>
-          {canUpload && <button className="btn btn-primary" onClick={() => setAdding(true)}><Icon name="plus" />{t('piece.addVariant.button')}</button>}
-        </div>
-      )}
-
-      <div className="pc-layout">
-        <div className="pc-main">
+      <div className="pc-grid">
+        <div className="pc-col-main">
+          {heroProps ? (
+            <PieceStage {...heroProps} />
+          ) : (
+            <div className="pc-hero-empty">
+              <Empty title={t('piece.noVariants')}>
+                {canUpload ? t('piece.noVariantsUpload') : t('piece.noVariantsWait')}
+              </Empty>
+              {canUpload && <button className="btn btn-primary" onClick={() => setAdding(true)}><Icon name="plus" />{t('piece.addVariant.button')}</button>}
+            </div>
+          )}
           {piece.variants.length > 0 && (
-            <section className="pc-section" aria-labelledby="pc-variants-h">
+            <section className="pc-section pc-o-variants" aria-labelledby="pc-variants-h">
               <header className="pc-section-head">
                 <h2 id="pc-variants-h">{t('piece.variants')}</h2>
                 <span className="pc-count">{piece.variants.length}</span>
@@ -593,7 +600,7 @@ export function PiecePage() {
             </section>
           )}
           {piece.publications.length > 0 && (
-            <section className="pc-section" aria-labelledby="pc-pubs-h">
+            <section className="pc-section pc-o-pubs" aria-labelledby="pc-pubs-h">
               <header className="pc-section-head">
                 <h2 id="pc-pubs-h">{t('piece.pubs')}</h2>
                 <span className="pc-count">{piece.publications.length}</span>
@@ -609,12 +616,13 @@ export function PiecePage() {
               />
             </section>
           )}
-          <Brief text={piece.brief} canEdit={canEdit} onEdit={() => setEditing(true)} />
+          <Brief text={piece.brief} canEdit={canEdit} onEdit={() => setEditing(true)} className="pc-o-brief" />
         </div>
-        <aside className="pc-side">
-          <PieceAgentCard pieceId={piece.id} zone={zone} />
-          <PieceActivity piece={piece} zone={zone} />
-        </aside>
+        <div className="pc-col-side">
+          {heroProps && <PieceFacts {...heroProps} />}
+          <PieceAgentCard pieceId={piece.id} zone={zone} className="pc-o-agent" />
+          <PieceActivity piece={piece} zone={zone} className="pc-o-activity" />
+        </div>
       </div>
 
       {adding && <AddVariant pieceId={piece.id} kind={piece.kind} onClose={() => setAdding(false)} />}
