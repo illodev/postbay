@@ -285,7 +285,7 @@ See [`.env.example`](.env.example). The ones that matter:
 ## Tests
 
 ```sh
-npm test                 # 869 API tests and 101 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
+npm test                 # 899 API tests and 105 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
 npm run typecheck
 ```
 
