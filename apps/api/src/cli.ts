@@ -32,7 +32,8 @@ const USAGE = `Usage:
       --capture writes every call made to the networks, with secrets removed, so a mismatch can be reported.
       --publish makes ONE REAL POST on each account, and needs --yes. The app cannot delete it: you do.
   npm run reset-2fa -w @estudio/api -- --email you@example.com
-      Removes a person's authenticator and recovery codes, for an admin who lost both. They set one up again at their next sign-in.`;
+      Removes a person's authenticator and recovery codes, for an admin who lost both. It also signs them out everywhere and voids
+      any sign-in link not used yet; they set a new authenticator up at their next sign-in.`;
 
 const config = loadConfig();
 const db = createDb(config.DATABASE_URL);
@@ -63,7 +64,7 @@ try {
     await migrate(db);
     const done = await resetByEmail(createContext(config, db, consoleLogger()), f.email);
     if (!done) throw new Error(`There is no account for ${f.email}`);
-    console.log(`The authenticator and recovery codes of ${f.email} are gone, and their sessions have to do the second step again.`);
+    console.log(`The authenticator and recovery codes of ${f.email} are gone, every session of theirs has ended and any sign-in link not used yet no longer works. They set up a new authenticator the next time they sign in; an email tells them about the reset.`);
   } else if (command === 'check') {
     const f = flags(rest);
     if (!f.brand || f.brand === 'true') throw new Error(`Missing --brand\n${USAGE}`);
