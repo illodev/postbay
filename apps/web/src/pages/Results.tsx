@@ -2,117 +2,155 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type BrandMetrics, type CommonMetrics, type MetricAge, type MetricSnapshot, type MetricsRow } from '../api';
-import { Dialog, Empty, ErrorBox, Field, Spinner } from '../components/ui';
+import { Chip, Dialog, Empty, ErrorBox, Field, Spinner } from '../components/ui';
+import { getLocale, t, type Key } from '../i18n';
 import { fmtDateTime, NETWORK_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
+import { netShort } from './Calendar';
+import '../styles/ops.css';
 
-const AGE_LABEL: Record<MetricAge, string> = { '1h': '1 hour', '6h': '6 hours', '22h': '22 hours', '1d': '1 day', '7d': '7 days', '28d': '28 days' };
-const STATUS_LABEL: Record<MetricSnapshot['status'], string> = { pending: 'Waiting', ok: 'Read', unavailable: 'Not available', failed: 'Failed', expired: 'Missed' };
-const STATUS_CLASS: Record<MetricSnapshot['status'], string> = { pending: 'chip-scheduled', ok: 'chip-approved', unavailable: '', failed: 'chip-failed', expired: 'chip-on_hold' };
+const METRICS: (keyof CommonMetrics)[] = ['views', 'reach', 'likes', 'comments', 'shares', 'saves', 'avgWatchSeconds', 'watchMinutes'];
+/** Each reading's state as one of the app's state colours. */
+const STATUS_CHIP: Record<MetricSnapshot['status'], string> = { pending: 'scheduled', ok: 'approved', unavailable: 'draft', failed: 'failed', expired: 'on_hold' };
 
-const COLUMNS: { key: keyof CommonMetrics; label: string }[] = [
-  { key: 'views', label: 'Views' },
-  { key: 'reach', label: 'Reach' },
-  { key: 'likes', label: 'Likes' },
-  { key: 'comments', label: 'Comments' },
-  { key: 'shares', label: 'Shares' },
-  { key: 'saves', label: 'Saves' },
-  { key: 'avgWatchSeconds', label: 'Avg watch' },
-  { key: 'watchMinutes', label: 'Watch time (min)' },
-];
+const metricLabel = (k: keyof CommonMetrics) => t(`results.metric.${k}` as Key);
+const ageLabel = (a: MetricAge) => t(`results.age.${a}` as Key);
+const ageShort = (a: MetricAge) => t(`results.ageShort.${a}` as Key);
+const statusLabel = (s: MetricSnapshot['status']) => t(`results.status.${s}` as Key);
 
-const cell = (key: keyof CommonMetrics, v: number | undefined) =>
-  v === undefined ? '—' : key === 'avgWatchSeconds' ? `${v.toFixed(1)} s` : v.toLocaleString();
+function fmtMetric(key: keyof CommonMetrics, v: number | undefined): string {
+  if (v === undefined) return '—';
+  if (key === 'avgWatchSeconds') return t('results.seconds', { n: new Intl.NumberFormat(getLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(v) });
+  return new Intl.NumberFormat(getLocale()).format(v);
+}
 
+/** The ages at which a post is read, each a small mark in the colour of how that reading went. */
 function Readings({ snapshots }: { snapshots: MetricSnapshot[] }) {
   return (
-    <div className="row" style={{ gap: '.25rem' }}>
+    <span className="rs-reads">
       {snapshots.map((s) => (
-        <span key={s.age} className={`chip ${STATUS_CLASS[s.status]}`} title={`${AGE_LABEL[s.age]}: ${STATUS_LABEL[s.status]}${s.note ? ` · ${s.note}` : ''}`}>{s.age}</span>
+        <span key={s.age} className={`rs-read ${s.status}`} title={`${t('results.readingTitle', { age: ageLabel(s.age), status: statusLabel(s.status) })}${s.note ? ` · ${s.note}` : ''}`}>
+          {ageShort(s.age)}
+        </span>
       ))}
-    </div>
+    </span>
   );
 }
 
 function Detail({ row, zone, onClose }: { row: MetricsRow; zone: string; onClose: () => void }) {
-  const shown = COLUMNS.filter((c) => row.snapshots.some((s) => s.metrics[c.key] !== undefined));
+  const shown = METRICS.filter((k) => row.snapshots.some((s) => s.metrics[k] !== undefined));
+  const pub = row.publication;
   return (
-    <Dialog title={row.publication.piece} onClose={onClose} wide>
+    <Dialog title={pub.piece} onClose={onClose} wide>
       <div className="stack">
         <p className="muted" style={{ margin: 0 }}>
-          {NETWORK_LABEL[row.publication.network] ?? row.publication.network} · {row.publication.account} · published {fmtDateTime(row.publication.published_at, zone)}
-          {row.publication.url && <> · <a href={row.publication.url} target="_blank" rel="noreferrer">Open post</a></>}
+          {NETWORK_LABEL[pub.network] ?? pub.network} · {pub.account} · {t('results.published', { date: fmtDateTime(pub.published_at, zone) })}
+          {pub.url && <> · <a href={pub.url} target="_blank" rel="noreferrer">{t('results.openPost')}</a></>}
         </p>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>After</th><th>State</th>{shown.map((c) => <th key={c.key} className="num">{c.label}</th>)}</tr></thead>
+            <thead>
+              <tr>
+                <th>{t('results.col.after')}</th>
+                <th>{t('results.col.state')}</th>
+                {shown.map((k) => <th key={k} className="num">{metricLabel(k)}</th>)}
+              </tr>
+            </thead>
             <tbody>
               {row.snapshots.map((s) => (
                 <tr key={s.age}>
-                  <td>{AGE_LABEL[s.age]}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{ageLabel(s.age)}</td>
                   <td>
-                    <span className={`chip ${STATUS_CLASS[s.status]}`}>{STATUS_LABEL[s.status]}</span>
-                    <div className="muted small">{s.status === 'ok' && s.taken_at ? `Read ${fmtDateTime(s.taken_at, zone)}` : s.status === 'pending' ? `Due ${fmtDateTime(s.due_at, zone)}` : ''}</div>
+                    <Chip state={STATUS_CHIP[s.status]} label={statusLabel(s.status)} />
+                    {s.status === 'ok' && s.taken_at && <div className="muted small">{t('results.readAt', { date: fmtDateTime(s.taken_at, zone) })}</div>}
+                    {s.status === 'pending' && <div className="muted small">{t('results.dueAt', { date: fmtDateTime(s.due_at, zone) })}</div>}
                     {s.note && <div className="muted small">{s.note}</div>}
                   </td>
-                  {shown.map((c) => <td key={c.key} className="num">{s.status === 'ok' ? cell(c.key, s.metrics[c.key]) : '—'}</td>)}
+                  {shown.map((k) => <td key={k} className="num">{s.status === 'ok' ? fmtMetric(k, s.metrics[k]) : '—'}</td>)}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <p className="muted small">Each network counts things its own way, and some numbers are not offered for some kinds of post. A dash means the network gave no number.</p>
+        <p className="muted small" style={{ margin: 0 }}>{t('results.detailNote')}</p>
       </div>
     </Dialog>
   );
 }
 
-function NetworkSection({ network, summary, rows, zone, onOpen }: {
-  network: string;
+function NetworkSection({ summary, rows, zone, onOpen }: {
   summary: BrandMetrics['networks'][number];
   rows: MetricsRow[];
   zone: string;
   onOpen: (r: MetricsRow) => void;
 }) {
-  // Only the columns this network gave a number for, so a network without saves does not show a column of dashes.
-  const shown = COLUMNS.filter((c) => rows.some((r) => r.latest?.metrics[c.key] !== undefined));
+  const name = NETWORK_LABEL[summary.network] ?? summary.network;
+  // Only the numbers this network gave, so a network without saves does not show a column of dashes.
+  const shown = METRICS.filter((k) => rows.some((r) => r.latest?.metrics[k] !== undefined));
+  // The longest bar in each column is the best post of this network on that number; one post alone gets no bars.
+  const max = Object.fromEntries(shown.map((k) => [k, Math.max(0, ...rows.map((r) => r.latest?.metrics[k] ?? 0))])) as Record<string, number>;
+  const bars = rows.length > 1;
+  // Six numbers or more make a table that needs the whole width: it turns into blocks sooner (see ops.css).
+  const headId = `rs-${summary.network}`;
   return (
-    <section className="card" aria-label={NETWORK_LABEL[network] ?? network}>
-      <div className="card-head">
-        <h2>{NETWORK_LABEL[network] ?? network}</h2>
-        <span className="muted small">{summary.posts} post{summary.posts === 1 ? '' : 's'} · {summary.read} with a reading</span>
-      </div>
-      {shown.length > 0 && (
-        <div className="row" style={{ gap: '1.25rem', marginBottom: '.75rem' }} aria-label="Totals">
-          {shown.filter((c) => c.key !== 'avgWatchSeconds').map((c) => (
-            <div key={c.key}>
-              <div className="muted small">{c.label}</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 650 }}>{cell(c.key, summary.totals[c.key] ?? 0)}</div>
-            </div>
-          ))}
+    <section className="rs-net" aria-labelledby={headId}>
+      <header className="rs-net-head">
+        <h2 id={headId}><span className="tag">{netShort(summary.network)}</span>{name}</h2>
+        <span className="muted small">{t('results.posts', { count: summary.posts })} · {t('results.read', { count: summary.read })}</span>
+      </header>
+      {shown.some((k) => k !== 'avgWatchSeconds') && (
+        <div className="rs-kpis" role="group" aria-label={t('results.totals', { network: name })}>
+          {shown
+            .filter((k) => k !== 'avgWatchSeconds')
+            .map((k) => (
+              <div key={k} className="rs-kpi">
+                <div className="rs-kpi-label">{metricLabel(k)}</div>
+                <div className="rs-kpi-value">{fmtMetric(k, summary.totals[k] ?? 0)}</div>
+              </div>
+            ))}
         </div>
       )}
       <div className="table-wrap">
-        <table>
+        <table className={`rs-table ${shown.length >= 6 ? 'rs-wide' : ''}`}>
           <thead>
-            <tr><th>Post</th><th>Reading</th>{shown.map((c) => <th key={c.key} className="num">{c.label}</th>)}<th /></tr>
+            <tr>
+              <th>{t('results.col.post')}</th>
+              <th>{t('results.col.reading')}</th>
+              {shown.map((k) => <th key={k} className="num">{metricLabel(k)}</th>)}
+              <th><span className="sr-only">{t('results.readings')}</span></th>
+            </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.publication.id}>
-                <td>
-                  <Link to={`/pieces/${r.publication.piece_id}`}>{r.publication.piece}</Link>
-                  <div className="muted small">{r.publication.account}{r.publication.placement ? ` · ${r.publication.placement}` : ''} · {fmtDateTime(r.publication.published_at, zone)}</div>
-                  {r.publication.visibility === 'private' && <div className="small" style={{ color: 'var(--warn)' }}>Private: numbers are for a post only the account can see</div>}
-                </td>
-                <td>
-                  {r.latest ? <span className="chip chip-approved">After {AGE_LABEL[r.latest.age]}</span> : <span className="muted small">Not read yet</span>}
-                  <div style={{ marginTop: 4 }}><Readings snapshots={r.snapshots} /></div>
-                </td>
-                {shown.map((c) => <td key={c.key} className="num">{cell(c.key, r.latest?.metrics[c.key])}</td>)}
-                <td><button className="btn btn-small" onClick={() => onOpen(r)}>Readings</button></td>
-              </tr>
-            ))}
+            {rows.map((r) => {
+              const pub = r.publication;
+              return (
+                <tr key={pub.id}>
+                  <td className="rs-post">
+                    <Link to={`/pieces/${pub.piece_id}`}>{pub.piece}</Link>
+                    <div className="muted small">{[pub.account, pub.placement, fmtDateTime(pub.published_at, zone)].filter(Boolean).join(' · ')}</div>
+                    {pub.visibility === 'private' && <div className="rs-private">{t('results.private')}</div>}
+                  </td>
+                  <td className="rs-reading">
+                    {r.latest ? <span className="rs-latest">{t('results.after', { age: ageLabel(r.latest.age) })}</span> : <span className="muted small">{t('results.notRead')}</span>}
+                    <Readings snapshots={r.snapshots} />
+                  </td>
+                  {shown.map((k) => {
+                    const v = r.latest?.metrics[k];
+                    return (
+                      <td key={k} className="num" data-label={metricLabel(k)}>
+                        <span className="rs-cell">
+                          {fmtMetric(k, v)}
+                          {bars && v !== undefined && max[k]! > 0 && <span className="rs-bar" aria-hidden="true"><i style={{ width: `${Math.max(2, (v / max[k]!) * 100)}%` }} /></span>}
+                        </span>
+                      </td>
+                    );
+                  })}
+                  <td className="rs-actions">
+                    <button className="btn btn-small" onClick={() => onOpen(r)} aria-label={t('results.readingsOf', { title: pub.piece })}>{t('results.readings')}</button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -135,32 +173,39 @@ export function ResultsPage() {
     placeholderData: keepPreviousData,
     queryFn: () => api.get<BrandMetrics>(`/api/brands/${brand.id}/metrics?${query.toString()}`),
   });
-  const networks = data ? data.networks.map((n) => n.network) : [];
   return (
-    <>
-      <div className="page-head"><div><h1>Results</h1><p className="muted">How the posts the app published did, as each network reports it. Last 90 days unless you pick dates.</p></div></div>
-      <div className="row card" style={{ alignItems: 'flex-start' }}>
-        <div><Field label="Network"><select value={network} onChange={(e) => setNetwork(e.target.value)}><option value="">All networks</option>{Object.entries(NETWORK_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field></div>
-        <div><Field label="From"><input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} /></Field></div>
-        <div><Field label="To"><input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} /></Field></div>
-        {(network || from || to) && <button className="btn" onClick={() => { setNetwork(''); setFrom(''); setTo(''); }}>Clear</button>}
+    <div className="ops">
+      <div className="page-head">
+        <div>
+          <h1>{t('results.title')}</h1>
+          <p className="muted">{t('results.subtitle')}</p>
+        </div>
+      </div>
+      <div className="rs-filters" role="group" aria-label={t('results.filters')}>
+        <Field label={t('results.network')}>
+          <select value={network} onChange={(e) => setNetwork(e.target.value)}>
+            <option value="">{t('results.allNetworks')}</option>
+            {Object.keys(NETWORK_LABEL).map((k) => <option key={k} value={k}>{NETWORK_LABEL[k]}</option>)}
+          </select>
+        </Field>
+        <Field label={t('results.from')}><input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} /></Field>
+        <Field label={t('results.to')}><input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} /></Field>
+        {(network || from || to) && <button className="btn btn-ghost" onClick={() => { setNetwork(''); setFrom(''); setTo(''); }}>{t('results.clear')}</button>}
       </div>
       {error && <ErrorBox error={error} />}
       {!data && !error && <Spinner />}
-      {data && networks.length === 0 && (
-        <Empty title="Nothing to show for this period">
-          Readings are taken 1 hour, 1 day, 7 days and 28 days after the app publishes a post (stories sooner, because their numbers disappear after a day). Posts published by hand have none.
-        </Empty>
-      )}
-      {data && networks.length > 0 && (
-        <div className="stack">
-          <p className="muted small" style={{ margin: 0 }}>Totals are per network, from the latest reading of each post. Networks are never added together: a “view” does not mean the same on each.</p>
-          {data.networks.map((n) => (
-            <NetworkSection key={n.network} network={n.network} summary={n} rows={data.rows.filter((r) => r.publication.network === n.network)} zone={brand.timezone} onOpen={setOpen} />
-          ))}
-        </div>
+      {data && data.networks.length === 0 && <Empty title={t('results.empty')}>{t('results.emptyHint')}</Empty>}
+      {data && data.networks.length > 0 && (
+        <>
+          <p className="rs-note">{t('results.note')}</p>
+          <div className="rs-nets">
+            {data.networks.map((n) => (
+              <NetworkSection key={n.network} summary={n} rows={data.rows.filter((r) => r.publication.network === n.network)} zone={brand.timezone} onOpen={setOpen} />
+            ))}
+          </div>
+        </>
       )}
       {open && <Detail row={open} zone={brand.timezone} onClose={() => setOpen(null)} />}
-    </>
+    </div>
   );
 }
