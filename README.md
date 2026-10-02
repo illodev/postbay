@@ -231,7 +231,7 @@ See [`.env.example`](.env.example). The ones that matter:
 ## Tests
 
 ```sh
-npm test                 # 507 API tests and 51 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
+npm test                 # 717 API tests and 53 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
 npm run typecheck
 ```
 
@@ -240,12 +240,15 @@ The API tests create a throwaway database per file, so they need a PostgreSQL th
 database guarantees (by trying to break them), permissions, isolation between brands, sign-in, and the calendar across
 clock changes, for phase 2 the connectors against fake Meta and Google servers and the whole publishing state machine on a
 controlled clock, for phase 3 signed delivery with every retry wait, the agent's limits, and the runner against a scripted
-agent (the runner's tests also need ffmpeg), and for phase 4 every connector against its stand-in (including a post whose answer was lost),
-the readings, and prizes with Meta's own rules.
+agent (the runner's tests also need ffmpeg), for phase 4 every connector against its stand-in (including a post whose answer was lost),
+the readings, and prizes with Meta's own rules, and for phase 5 the checker, single sign-on against a stand-in provider that misbehaves on request,
+the second factor (against the standards' test vectors), Slack and push (the encryption against the standard's own worked example),
+subtitles, resumable uploads (interrupted, repeated, concurrent) and YouTube watch time.
 
 The end-to-end tests drive the real app in a real browser, with real ffmpeg: phase 1's whole flow, phase 2's connecting and
 publishing against fake networks, phase 3's comment-to-new-version loop (with a scripted agent, or real Claude Code, which
-costs money), and phase 4's eight networks, results and prize flow. See [e2e/README.md](e2e/README.md).
+costs money), phase 4's eight networks, results and prize flow, and phase 5's second factor, single sign-on, Slack, push, subtitles, interrupted
+uploads and readiness checks. See [e2e/README.md](e2e/README.md).
 
 ## Deploying
 

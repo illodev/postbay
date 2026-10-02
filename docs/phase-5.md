@@ -199,7 +199,7 @@ API makes the reading wait and try again, like the Data API would.
 
 ## What was verified, and how
 
-All of it with real PostgreSQL, real ffmpeg and stand-ins. For each piece of security-sensitive code (the OpenID verifier and sign-in
+All of it with real PostgreSQL, real ffmpeg and stand-ins. At the end of this phase: 717 API tests and 53 runner tests pass, the type checks are clean, and the browser runs of phases 1 to 5 all pass (phase 5's takes about four minutes, one of them a deliberate wait for the second factor's rate limit). For each piece of security-sensitive code (the OpenID verifier and sign-in
 flow, TOTP and the second factor, Slack and push delivery, the service worker, resumable uploads, the subtitle parser and the comment
 anchor rules, YouTube watch time) I also ran **mutation checks**: break the code in a plausible way (drop a check, flip a comparison, remove
 a limit) and confirm a test fails. Survivors were either covered with a new test or shown to be equivalent (dead code, which was then removed).
