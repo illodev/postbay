@@ -1,37 +1,38 @@
 import { useMutation } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { api, type Enrollment } from '../api';
+import { t } from '../i18n';
 import { CopyButton, ErrorBox, Field } from './ui';
 
 /** The secret to type into an authenticator app, in groups of four so it can be read out and checked. */
 const grouped = (s: string) => s.replace(/(.{4})/g, '$1 ').trim();
 
 /** Ten one-time codes for a lost phone, shown once: the person is asked to keep them before going on. */
-export function RecoveryCodes({ codes, onDone, doneLabel = 'I have saved them' }: { codes: string[]; onDone: () => void; doneLabel?: string }) {
+export function RecoveryCodes({ codes, onDone, doneLabel }: { codes: string[]; onDone: () => void; doneLabel?: string }) {
   const [saved, setSaved] = useState(false);
   const text = codes.join('\n');
   const download = () => {
-    const url = URL.createObjectURL(new Blob([`Content Studio recovery codes\nEach works once.\n\n${text}\n`], { type: 'text/plain' }));
+    const url = URL.createObjectURL(new Blob([`${t('account.recovery.fileTitle')}\n${t('account.recovery.fileNote')}\n\n${text}\n`], { type: 'text/plain' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'content-studio-recovery-codes.txt';
+    a.download = t('account.recovery.fileName');
     a.click();
     URL.revokeObjectURL(url);
   };
   return (
     <div className="stack" data-testid="recovery-codes">
-      <h2>Keep these recovery codes</h2>
-      <p className="muted" style={{ margin: 0 }}>If you lose your phone, each of these lets you sign in once. They are shown now and never again.</p>
-      <pre className="card mono" style={{ columns: 2, margin: 0 }}>{text}</pre>
+      <h2>{t('account.recovery.title')}</h2>
+      <p className="muted" style={{ margin: 0 }}>{t('account.recovery.hint')}</p>
+      <pre className="acct-codes">{text}</pre>
       <div className="row">
-        <CopyButton text={text} label="Copy all" />
-        <button type="button" className="btn btn-small" onClick={download}>Download</button>
+        <CopyButton text={text} label={t('account.recovery.copyAll')} />
+        <button type="button" className="btn btn-small" onClick={download}>{t('common.download')}</button>
       </div>
       <label className="check">
         <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
-        <span>I have put them somewhere safe</span>
+        <span>{t('account.recovery.saved')}</span>
       </label>
-      <div><button className="btn btn-primary" disabled={!saved} onClick={onDone}>{doneLabel}</button></div>
+      <div><button className="btn btn-primary" disabled={!saved} onClick={onDone}>{doneLabel ?? t('account.recovery.done')}</button></div>
     </div>
   );
 }
@@ -46,32 +47,32 @@ export function EnrollFlow({ onDone, intro }: { onDone: () => void; intro?: stri
     mutationFn: () => api.post<{ recoveryCodes: string[] }>('/api/auth/2fa/enroll/confirm', { code }),
     onSuccess: (r) => setCodes(r.recoveryCodes),
   });
-  if (codes) return <RecoveryCodes codes={codes} onDone={onDone} doneLabel="Continue" />;
+  if (codes) return <RecoveryCodes codes={codes} onDone={onDone} doneLabel={t('account.enroll.continue')} />;
   if (!e) {
     return (
       <div className="stack">
-        <p className="muted" style={{ margin: 0 }}>{intro ?? 'An authenticator app (Google Authenticator, Microsoft Authenticator, 1Password, Authy…) gives you a new six-digit code every 30 seconds.'}</p>
+        <p className="muted" style={{ margin: 0 }}>{intro ?? t('account.enroll.intro')}</p>
         {start.error && <ErrorBox error={start.error} />}
-        <div><button className="btn btn-primary" onClick={() => start.mutate()} disabled={start.isPending}>Set up an authenticator</button></div>
+        <div><button className="btn btn-primary" onClick={() => start.mutate()} disabled={start.isPending}>{t('account.enroll.start')}</button></div>
       </div>
     );
   }
   const submit = (ev: FormEvent) => { ev.preventDefault(); confirm.mutate(); };
   return (
     <form className="stack" onSubmit={submit}>
-      <ol className="stack" style={{ margin: 0, paddingLeft: '1.2rem' }}>
+      <ol className="acct-steps">
         <li>
-          In your authenticator app, add an account and choose <em>enter a setup key</em>, then type this key (spaces do not matter):
-          <div className="card mono" style={{ margin: '.4rem 0', fontSize: '1.05rem', letterSpacing: '.05em' }} data-testid="secret">{grouped(e.secret)}</div>
-          <div className="row"><CopyButton text={e.secret} label="Copy key" /><a className="btn btn-small" href={e.otpauthUrl}>Open in an app on this device</a></div>
+          {t('account.enroll.step1')}
+          <div className="acct-key" data-testid="secret">{grouped(e.secret)}</div>
+          <div className="row"><CopyButton text={e.secret} label={t('account.enroll.copyKey')} /><a className="btn btn-small" href={e.otpauthUrl}>{t('account.enroll.openApp')}</a></div>
         </li>
-        <li>Type the six-digit code the app shows now.</li>
+        <li>{t('account.enroll.step2')}</li>
       </ol>
-      <Field label="Code from the app">
-        <input type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]*" maxLength={8} required autoFocus value={code} onChange={(ev) => setCode(ev.target.value.replace(/\s/g, ''))} style={{ maxWidth: 160, letterSpacing: '.2em' }} />
+      <Field label={t('account.enroll.codeLabel')}>
+        <input className="acct-code-input" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]*" maxLength={8} required autoFocus value={code} onChange={(ev) => setCode(ev.target.value.replace(/\s/g, ''))} />
       </Field>
       {confirm.error && <ErrorBox error={confirm.error} />}
-      <div><button className="btn btn-primary" disabled={confirm.isPending || code.length !== 6}>Check the code</button></div>
+      <div><button className="btn btn-primary" disabled={confirm.isPending || code.length !== 6}>{t('account.enroll.check')}</button></div>
     </form>
   );
 }
@@ -83,16 +84,17 @@ export function VerifyForm({ onDone }: { onDone: () => void }) {
   const verify = useMutation({ mutationFn: () => api.post('/api/auth/2fa/verify', { code }), onSuccess: onDone });
   return (
     <form className="stack" onSubmit={(ev) => { ev.preventDefault(); verify.mutate(); }}>
-      <Field label={recovery ? 'Recovery code' : 'Code from your authenticator app'} hint={recovery ? 'One of the ten you were given. Each works once.' : undefined}>
+      <Field label={recovery ? t('account.verify.recoveryLabel') : t('account.verify.codeLabel')} hint={recovery ? t('account.verify.recoveryHint') : undefined}>
         <input
+          className="acct-code-input" style={{ maxWidth: 'none' }}
           type="text" required autoFocus autoComplete="one-time-code" value={code} onChange={(ev) => setCode(ev.target.value)}
-          inputMode={recovery ? 'text' : 'numeric'} maxLength={recovery ? 16 : 8} style={{ letterSpacing: '.15em' }}
+          inputMode={recovery ? 'text' : 'numeric'} maxLength={recovery ? 16 : 8}
         />
       </Field>
       {verify.error && <ErrorBox error={verify.error} />}
-      <button className="btn btn-primary" disabled={verify.isPending || !code}>Continue</button>
-      <button type="button" className="btn btn-small" onClick={() => { setRecovery(!recovery); setCode(''); }}>
-        {recovery ? 'Use the app instead' : 'I lost my phone: use a recovery code'}
+      <button className="btn btn-primary" disabled={verify.isPending || !code}>{t('account.verify.continue')}</button>
+      <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRecovery(!recovery); setCode(''); }}>
+        {recovery ? t('account.verify.useApp') : t('account.verify.useRecovery')}
       </button>
     </form>
   );
