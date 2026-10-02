@@ -640,3 +640,118 @@ export interface SubtitleTrack {
   truncated: boolean;
   problem?: string;
 }
+
+
+// ───────────────────────────── "for you" ─────────────────────────────
+
+/** Approve: the versions waiting for this person's decision. Comment: they cannot approve, so the ones in review to comment on. View: to look at. */
+export type AwaitingMode = 'approve' | 'comment' | 'view';
+
+export interface AwaitingItem {
+  version_id: string;
+  version_number: number;
+  variant_id: string;
+  variant_format: string;
+  piece_id: string;
+  piece_title: string;
+  piece_kind: string;
+  created_at: string;
+  by_agent: boolean;
+  author: string | null;
+  /** Open threads across the variant: what has to be settled before approving. */
+  open_comments: number;
+  /** Earlier threads this version resolves, out of `earlier_comments`. */
+  resolves: number;
+  earlier_comments: number;
+  thumb: string;
+}
+
+export interface TodayItem {
+  id: string;
+  scheduled_at: string;
+  /** HH:mm in the brand's zone. */
+  time: string;
+  status: PublicationStatus;
+  manual: boolean;
+  /** By hand, and its hour has come. */
+  due: boolean;
+  placement: string | null;
+  url: string | null;
+  network: string;
+  account_name: string;
+  piece_id: string;
+  piece_title: string;
+  piece_kind: string;
+  version_id: string;
+  version_number: number;
+  thumb: string;
+}
+
+export type AttentionKind =
+  | 'publication_failed'
+  | 'publication_on_hold'
+  | 'publication_awaiting_confirmation'
+  | 'account_reconnect'
+  | 'webhook_failing'
+  | 'agent_needs_person';
+
+export type AttentionAction =
+  | { type: 'retry'; publication_id: string }
+  | { type: 'confirm'; publication_id: string }
+  | { type: 'review'; to: string }
+  | { type: 'open'; to: string }
+  | { type: 'reconnect'; to: string }
+  | { type: 'webhooks'; to: string };
+
+export interface AttentionItem {
+  kind: AttentionKind;
+  id: string;
+  at: string;
+  /** A code to word: an error class, a block reason, why a publication is held. */
+  reason: string | null;
+  /** What the server or the network said, as it said it. */
+  detail: string | null;
+  piece_id: string | null;
+  /** The piece, or the address of a webhook. */
+  piece_title: string | null;
+  version_id: string | null;
+  network: string | null;
+  account_name: string | null;
+  scheduled_at: string | null;
+  thumb: string | null;
+  /** Null when this person cannot do anything about it here. */
+  action: AttentionAction | null;
+}
+
+export type ActivityKind = 'comment' | 'version' | 'approved' | 'rejected' | 'changes_requested' | 'published' | 'agent_handed';
+
+export interface ActivityItem {
+  kind: ActivityKind;
+  id: string;
+  at: string;
+  /** A person, the agent's token name, or null for the studio itself. */
+  actor: string | null;
+  by_agent: boolean;
+  piece_id: string | null;
+  piece_title: string | null;
+  version_id: string | null;
+  version_number: number | null;
+  text: string | null;
+  t: number | null;
+  t_end: number | null;
+  page: number | null;
+  networks: string[];
+  account_name: string | null;
+  resolves: number | null;
+}
+
+export interface Overview {
+  role: Role;
+  timezone: string;
+  now: string;
+  awaiting_mode: AwaitingMode;
+  awaiting: AwaitingItem[];
+  today: TodayItem[];
+  attention: AttentionItem[];
+  activity: ActivityItem[];
+}
