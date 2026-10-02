@@ -233,23 +233,42 @@ function ScheduleFromList({ pieceId, brandId, onClose }: { pieceId: string; bran
   return <ScheduleDialog version={version.data} brandId={brandId} zone={version.data.brand.timezone} onClose={onClose} />;
 }
 
-/** Starts a download of every file of each piece's latest version (not its cover), one after the other. */
+/** Files up to this size are fetched and saved under their own name; bigger ones open in a tab, where the browser saves them. */
+const BLOB_LIMIT = 300 * 1024 * 1024;
+
+/** Saves one file. A link's download name only works from the app's own address, so the bytes are fetched first when they can be. */
+async function saveFile(f: { url: string; name: string; bytes: number }) {
+  const a = document.createElement('a');
+  a.rel = 'noopener';
+  let blobUrl: string | null = null;
+  if (f.bytes <= BLOB_LIMIT) {
+    try {
+      const res = await fetch(f.url, { mode: 'cors' });
+      if (res.ok) blobUrl = URL.createObjectURL(await res.blob());
+    } catch {
+      // Another address that does not share its files with this page: the tab below.
+    }
+  }
+  a.href = blobUrl ?? f.url;
+  a.download = f.name;
+  // Without the bytes, the file opens in a tab rather than replacing this page.
+  if (!blobUrl) a.target = '_blank';
+  document.body.append(a);
+  a.click();
+  a.remove();
+  if (blobUrl) setTimeout(() => URL.revokeObjectURL(blobUrl!), 60_000);
+}
+
+/** Saves every file of each piece's latest version (not its cover), one after the other. */
 async function downloadLatest(pieces: PieceSummary[]): Promise<number> {
   const versions = await Promise.all(pieces.filter((p) => p.latest_version).map((p) => api.get<VersionDetail>(`/api/versions/${p.latest_version!.id}`)));
   const files = versions.flatMap((v) => v.assets.filter((a) => a.kind !== 'cover'));
-  files.forEach((f, i) => {
-    setTimeout(() => {
-      const a = document.createElement('a');
-      a.href = f.url;
-      a.download = f.name;
-      // If the browser ignores the name (files served from another address), the file opens in a tab: this page stays.
-      a.target = '_blank';
-      a.rel = 'noopener';
-      document.body.append(a);
-      a.click();
-      a.remove();
-    }, i * 450);
-  });
+  void (async () => {
+    for (const f of files) {
+      await saveFile(f);
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  })();
   return files.length;
 }
 
