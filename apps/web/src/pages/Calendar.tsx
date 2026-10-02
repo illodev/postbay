@@ -505,7 +505,6 @@ export function CalendarPage() {
           return (
             <section key={day} className={`oc-aday ${day === today ? 'today' : ''} ${isBlocked ? 'blocked' : ''} ${dropDay === day ? 'drop' : ''}`} aria-label={longDay(d)} {...dropProps(day, isBlocked)}>
               <header className="oc-aday-head">
-                <span className="oc-aday-num">{d.toFormat('d')}</span>
                 <h3>{cap(longDay(d))}</h3>
                 {day === today && <span className="oc-today-tag">{t('calendar.today')}</span>}
                 {isBlocked && blockedNote(day)}
@@ -521,7 +520,6 @@ export function CalendarPage() {
                           <span className="ops-row-title">{e.slot.label || t('calendar.slot')}</span>
                           <span className="ops-row-sub"><NetMark network={e.slot.network} size="xs" />{NETWORK_LABEL[e.slot.network] ?? e.slot.network} · {e.slot.account_name}</span>
                         </div>
-                        <div className="ops-row-side"><span className="ops-slot-chip">{t('calendar.legend.slot')}</span></div>
                       </li>
                     ) : (
                       <li

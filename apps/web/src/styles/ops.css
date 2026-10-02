@@ -167,11 +167,9 @@ a.ops-row-title:hover { color: var(--text); text-decoration: underline; text-dec
 .ops .oc-aday.drop { box-shadow: 0 0 0 2px var(--accent); border-radius: 8px; }
 .ops .oc-aday-head { display: flex; align-items: center; gap: 10px; height: 28px; min-width: 0; }
 .ops .oc-aday.blocked .oc-aday-head { padding: 0 8px; border-radius: 6px; background: repeating-linear-gradient(135deg, var(--surface) 0 7px, var(--panel) 7px 14px); }
-.ops .oc-aday-num { font-size: .8125rem; line-height: 1; font-weight: 500; color: var(--faint); flex: none; width: 3.2rem; font-variant-numeric: tabular-nums; }
-.ops .oc-aday.today .oc-aday-num { color: var(--accent-hover); }
 .ops .oc-aday-head h3 { font-size: .8125rem; line-height: 1; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ops .oc-today-tag { font-size: .75rem; line-height: 1; font-weight: 500; color: var(--accent-hover); flex: none; }
-.ops .oc-aday-empty { margin: 0; padding: 4px 0 0 calc(3.2rem + 10px); font-size: .75rem; color: var(--faint); }
+.ops .oc-aday-empty { margin: 0; padding: 4px 0 0; font-size: .75rem; color: var(--faint); }
 
 /* ───────────────────────────── publish today ───────────────────────────── */
 .ops .pt-list .ops-row { grid-template-columns: 5.5rem 32px minmax(0, 1fr) auto; }
