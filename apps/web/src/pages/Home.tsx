@@ -7,7 +7,7 @@ import { Avatar, displayName } from '../components/Avatar';
 import { Icon, type IconName } from '../components/icons';
 import { PageBar } from '../components/PageBar';
 import { RetryDialog } from '../components/publications';
-import { Chip, ErrorBox, errorMessage, NetMark, Skeleton, useToast } from '../components/ui';
+import { Chip, ErrorBox, errorMessage, NetMark, Skeleton, Tip, Tipped, useToast } from '../components/ui';
 import { getLocale, t, type Key } from '../i18n';
 import { BLOCK_REASON_LABEL, ERROR_CLASS_LABEL, NETWORK_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -94,10 +94,12 @@ const Empty = ({ text }: { text: string }) => <p className="home-empty">{text}</
 /** Who did something, in a meta line: their mark and name, or the agent's. */
 function By({ agent, name }: { agent: boolean; name: string | null }) {
   return (
-    <span className="home-by" title={name ?? undefined}>
-      {agent ? <Avatar agent size={16} title={name ?? undefined} /> : <Avatar name={name} size={16} />}
-      <span className="home-by-name">{agent ? t('common.agent') : who(name)}</span>
-    </span>
+    <Tipped label={name ?? undefined}>
+      <span className="home-by">
+        {agent ? <Avatar agent size={16} title={name ?? undefined} /> : <Avatar name={name} size={16} />}
+        <span className="home-by-name">{agent ? t('common.agent') : who(name)}</span>
+      </span>
+    </Tipped>
   );
 }
 
@@ -121,27 +123,29 @@ function AwaitingCard({ a, more, mode }: { a: AwaitingItem; more: number; mode: 
     <article className="hw-card">
       <Link to={to} className="hw-thumb" tabIndex={-1} aria-hidden="true">
         <Thumb src={`/api/versions/${a.version_id}/thumb?w=480`} className="hw-img" />
-        <span className="hw-ov hw-ov-tr" title={t('home.awaiting.version', { n: a.version_number })}>V{a.version_number}</span>
+        <Tip label={t('home.awaiting.version', { n: a.version_number })}><span className="hw-ov hw-ov-tr">V{a.version_number}</span></Tip>
         {a.open_comments > 0 && (
-          <span className="hw-ov hw-ov-bl" title={t('home.awaiting.open', { count: a.open_comments })}><Icon name="bubble" />{a.open_comments}</span>
+          <Tip label={t('home.awaiting.open', { count: a.open_comments })}><span className="hw-ov hw-ov-bl"><Icon name="bubble" />{a.open_comments}</span></Tip>
         )}
         {more > 0 && (
-          <span className="hw-ov hw-ov-br" title={t('home.awaiting.moreVariants', { count: more })}><Icon name="layers" />{more + 1}</span>
+          <Tip label={t('home.awaiting.moreVariants', { count: more })}><span className="hw-ov hw-ov-br"><Icon name="layers" />{more + 1}</span></Tip>
         )}
       </Link>
       <div className="hw-body">
-        <h3 className="hw-title"><Link to={to} title={a.piece_title}>{a.piece_title}</Link></h3>
+        <h3 className="hw-title"><Tipped label={a.piece_title}><Link to={to}>{a.piece_title}</Link></Tipped></h3>
         <p className="home-meta">
           <By agent={a.by_agent} name={a.author} />
-          <time className="home-meta-when" dateTime={a.created_at} title={fullDate(a.created_at)}>{ago(a.created_at)}</time>
+          <Tipped label={fullDate(a.created_at)}><time className="home-meta-when" dateTime={a.created_at}>{ago(a.created_at)}</time></Tipped>
         </p>
         {resolving && (
-          <div className="hw-progress" title={t('home.awaiting.resolves', { n: a.resolves, count: a.earlier_comments })}>
-            <span className="home-meta"><Icon name="check" />{t('home.awaiting.resolvesShort', { n: a.resolves, count: a.earlier_comments })}</span>
-            <span className="hw-bar" role="progressbar" aria-label={t('home.awaiting.resolves', { n: a.resolves, count: a.earlier_comments })} aria-valuemin={0} aria-valuemax={a.earlier_comments} aria-valuenow={a.resolves}>
-              <i style={{ width: `${Math.round((a.resolves / a.earlier_comments) * 100)}%` }} />
-            </span>
-          </div>
+          <Tip label={t('home.awaiting.resolves', { n: a.resolves, count: a.earlier_comments })}>
+            <div className="hw-progress">
+              <span className="home-meta"><Icon name="check" />{t('home.awaiting.resolvesShort', { n: a.resolves, count: a.earlier_comments })}</span>
+              <span className="hw-bar" role="progressbar" aria-label={t('home.awaiting.resolves', { n: a.resolves, count: a.earlier_comments })} aria-valuemin={0} aria-valuemax={a.earlier_comments} aria-valuenow={a.resolves}>
+                <i style={{ width: `${Math.round((a.resolves / a.earlier_comments) * 100)}%` }} />
+              </span>
+            </div>
+          </Tip>
         )}
         <Link to={to} data-nav className="btn btn-small hw-cta">{t(`home.awaiting.cta.${mode}` as Key)}</Link>
       </div>
@@ -172,11 +176,11 @@ function TodayRow({ p, canPrepare }: { p: TodayItem; canPrepare: boolean }) {
   const prepare = p.manual && p.status === 'scheduled' && canPrepare;
   return (
     <li className="hl-row">
-      <span className="hl-time" title={fullDate(p.scheduled_at)}>{p.time}</span>
+      <Tipped label={fullDate(p.scheduled_at)}><span className="hl-time">{p.time}</span></Tipped>
       <span className="hl-mark"><NetMark network={p.network} size="sm" labelled /></span>
       <Thumb src={p.thumb} className="hl-thumb" />
       <div className="hl-text">
-        <Link to={`/pieces/${p.piece_id}`} className="hl-title" data-nav title={p.piece_title}>{p.piece_title}</Link>
+        <Tipped label={p.piece_title}><Link to={`/pieces/${p.piece_id}`} className="hl-title" data-nav>{p.piece_title}</Link></Tipped>
         <span className="home-meta">
           {p.account_name}
           <span className="dot" aria-hidden="true">·</span>
@@ -185,9 +189,11 @@ function TodayRow({ p, canPrepare }: { p: TodayItem; canPrepare: boolean }) {
       </div>
       <div className="hl-end">
         {p.url && (
-          <a className="hl-icon-link" href={p.url} target="_blank" rel="noreferrer" title={t('home.today.openPost', { network: netName(p.network) })} aria-label={t('home.today.openPost', { network: netName(p.network) })}>
-            <Icon name="external" />
-          </a>
+          <Tip label={t('home.today.openPost', { network: netName(p.network) })}>
+            <a className="hl-icon-link" href={p.url} target="_blank" rel="noreferrer" aria-label={t('home.today.openPost', { network: netName(p.network) })}>
+              <Icon name="external" />
+            </a>
+          </Tip>
         )}
         {prepare ? <Link to="/today" className={`btn btn-small ${p.due ? 'btn-primary' : ''}`}>{t('home.today.prepare')}</Link> : <Chip state={p.status} />}
       </div>
@@ -263,44 +269,46 @@ function AttentionRow({ a, onRetry }: { a: AttentionItem; onRetry: (a: Attention
   const reconnectToo = a.kind === 'publication_failed' && a.reason === 'auth' && can('manage');
   const quote = a.kind === 'agent_needs_person' && a.reason === 'agent_declined' && a.detail ? a.detail.split('\n')[0] : null;
   return (
-    <li className="hl-row ha-row" title={a.detail && !quote ? a.detail : undefined}>
-      <span className="hl-time hl-when" title={fullDate(a.at)}>{ago(a.at)}</span>
-      {/* Where (the network) and what (the piece, or the kind of thing when there is no piece), in the same columns as "today". */}
-      <span className="hl-mark">{a.network && <NetMark network={a.network} size="sm" labelled />}</span>
-      {a.thumb ? (
-        <Thumb src={a.thumb} className="hl-thumb" />
-      ) : (
-        <span className={`hl-thumb ha-tile ${a.kind === 'agent_needs_person' ? 'ha-tile-agent' : ''}`} aria-hidden="true"><Icon name={ATTENTION_ICON[a.kind]} /></span>
-      )}
-      <div className="hl-text">
-        {a.piece_id ? (
-          <Link to={`/pieces/${a.piece_id}`} className="hl-title" data-nav title={text.title}>{text.title}</Link>
+    <Tipped label={a.detail && !quote ? a.detail : undefined}>
+      <li className="hl-row ha-row">
+        <Tipped label={fullDate(a.at)}><span className="hl-time hl-when">{ago(a.at)}</span></Tipped>
+        {/* Where (the network) and what (the piece, or the kind of thing when there is no piece), in the same columns as "today". */}
+        <span className="hl-mark">{a.network && <NetMark network={a.network} size="sm" labelled />}</span>
+        {a.thumb ? (
+          <Thumb src={a.thumb} className="hl-thumb" />
         ) : (
-          <span className="hl-title" title={text.title}>{text.title}</span>
+          <span className={`hl-thumb ha-tile ${a.kind === 'agent_needs_person' ? 'ha-tile-agent' : ''}`} aria-hidden="true"><Icon name={ATTENTION_ICON[a.kind]} /></span>
         )}
-        <span className="home-meta">
-          {text.state && <Chip state={text.state.code} label={text.state.label} />}
-          {/* each part carries its dot, so a wrapped line never ends on one */}
-          {text.meta.filter(Boolean).map((m, i) => (
-            <span key={i} className="home-meta-part"><span className="dot" aria-hidden="true">·</span><span className="home-meta-cut">{m}</span></span>
-          ))}
-        </span>
-        {quote && <q className="ha-quote">{quote}</q>}
-      </div>
-      {act && (
-        <div className="hl-end ha-actions">
-          {reconnectToo && <Link to="/settings?tab=accounts" className="btn btn-small">{t('home.action.reconnect')}</Link>}
-          {act.type === 'retry' && <button type="button" className="btn btn-small btn-primary" onClick={() => onRetry(a)}>{t('common.retry')}</button>}
-          {act.type === 'confirm' && (
-            <button type="button" className="btn btn-small btn-primary" disabled={confirm.isPending} onClick={() => confirm.mutate(act.publication_id)}>{t('common.confirm')}</button>
+        <div className="hl-text">
+          {a.piece_id ? (
+            <Tipped label={text.title}><Link to={`/pieces/${a.piece_id}`} className="hl-title" data-nav>{text.title}</Link></Tipped>
+          ) : (
+            <Tipped label={text.title}><span className="hl-title">{text.title}</span></Tipped>
           )}
-          {act.type === 'review' && <Link to={act.to} className="btn btn-small btn-primary">{t('home.action.review')}</Link>}
-          {act.type === 'open' && <Link to={act.to} className="btn btn-small">{t('common.open')}</Link>}
-          {act.type === 'reconnect' && <Link to={act.to} className="btn btn-small btn-primary">{t('home.action.reconnect')}</Link>}
-          {act.type === 'webhooks' && <Link to={act.to} className="btn btn-small">{t('home.action.webhooks')}</Link>}
+          <span className="home-meta">
+            {text.state && <Chip state={text.state.code} label={text.state.label} />}
+            {/* each part carries its dot, so a wrapped line never ends on one */}
+            {text.meta.filter(Boolean).map((m, i) => (
+              <span key={i} className="home-meta-part"><span className="dot" aria-hidden="true">·</span><span className="home-meta-cut">{m}</span></span>
+            ))}
+          </span>
+          {quote && <q className="ha-quote">{quote}</q>}
         </div>
-      )}
-    </li>
+        {act && (
+          <div className="hl-end ha-actions">
+            {reconnectToo && <Link to="/settings?tab=accounts" className="btn btn-small">{t('home.action.reconnect')}</Link>}
+            {act.type === 'retry' && <button type="button" className="btn btn-small btn-primary" onClick={() => onRetry(a)}>{t('common.retry')}</button>}
+            {act.type === 'confirm' && (
+              <button type="button" className="btn btn-small btn-primary" disabled={confirm.isPending} onClick={() => confirm.mutate(act.publication_id)}>{t('common.confirm')}</button>
+            )}
+            {act.type === 'review' && <Link to={act.to} className="btn btn-small btn-primary">{t('home.action.review')}</Link>}
+            {act.type === 'open' && <Link to={act.to} className="btn btn-small">{t('common.open')}</Link>}
+            {act.type === 'reconnect' && <Link to={act.to} className="btn btn-small btn-primary">{t('home.action.reconnect')}</Link>}
+            {act.type === 'webhooks' && <Link to={act.to} className="btn btn-small">{t('home.action.webhooks')}</Link>}
+          </div>
+        )}
+      </li>
+    </Tipped>
   );
 }
 
@@ -340,9 +348,9 @@ function ActorMark({ e }: { e: ActivityItem }) {
 }
 
 function ActivityEvent({ e }: { e: ActivityItem }) {
-  const name = <b title={e.actor ?? undefined}>{e.by_agent ? t('home.activity.agent') : who(e.actor)}</b>;
+  const name = <Tipped label={e.actor ?? undefined}><b>{e.by_agent ? t('home.activity.agent') : who(e.actor)}</b></Tipped>;
   const pieceTo = e.version_id && (e.kind === 'comment' || e.kind === 'version' || e.kind === 'changes_requested') ? `/review/${e.version_id}` : `/pieces/${e.piece_id}`;
-  const piece = e.piece_id ? <Link to={pieceTo} className="hf-piece" title={e.piece_title ?? undefined}>{clip(e.piece_title)}</Link> : <b>{clip(e.piece_title)}</b>;
+  const piece = e.piece_id ? <Tipped label={e.piece_title ?? undefined}><Link to={pieceTo} className="hf-piece">{clip(e.piece_title)}</Link></Tipped> : <b>{clip(e.piece_title)}</b>;
   const networks = list(e.networks.map((n) => netName(n)));
   const parts = { who: name, piece };
   let line: ReactNode;
@@ -363,7 +371,7 @@ function ActivityEvent({ e }: { e: ActivityItem }) {
       <div className="hf-body">
         <p className="hf-line">
           {line}
-          <time className="hf-when" dateTime={e.at} title={fullDate(e.at)}>{ago(e.at)}</time>
+          <Tipped label={fullDate(e.at)}><time className="hf-when" dateTime={e.at}>{ago(e.at)}</time></Tipped>
         </p>
         {quoted && (
           <p className={`hf-quote ${e.kind === 'agent_handed' ? 'hf-quote-agent' : ''}`}>

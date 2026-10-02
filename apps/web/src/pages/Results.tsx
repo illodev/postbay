@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { api, type BrandMetrics, type CommonMetrics, type MetricAge, type MetricSnapshot, type MetricsRow } from '../api';
 import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
-import { Chip, Dialog, ErrorBox, NetMark, Select, Skeleton } from '../components/ui';
+import { Chip, Dialog, ErrorBox, NetMark, Select, Skeleton, Tip, Tipped } from '../components/ui';
 import { getLocale, t, type Key } from '../i18n';
 import { fmtDateTime, NETWORK_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -31,9 +31,11 @@ function Readings({ snapshots }: { snapshots: MetricSnapshot[] }) {
   return (
     <span className="rs-reads">
       {snapshots.map((s) => (
-        <span key={s.age} className={`rs-read ${s.status}`} title={`${t('results.readingTitle', { age: ageLabel(s.age), status: statusLabel(s.status) })}${s.note ? ` · ${s.note}` : ''}`}>
-          {ageShort(s.age)}
-        </span>
+        <Tipped key={s.age} label={`${t('results.readingTitle', { age: ageLabel(s.age), status: statusLabel(s.status) })}${s.note ? ` · ${s.note}` : ''}`}>
+          <span className={`rs-read ${s.status}`}>
+            {ageShort(s.age)}
+          </span>
+        </Tipped>
       ))}
     </span>
   );
@@ -227,7 +229,7 @@ export function ResultsPage() {
           ))}
         </div>
       )}
-      {data && data.networks.length === 0 && <p className="rs-empty" title={t('results.emptyHint')}>{t('results.empty')}</p>}
+      {data && data.networks.length === 0 && <Tip label={t('results.emptyHint')}><p className="rs-empty">{t('results.empty')}</p></Tip>}
       {data && data.networks.length > 0 && (
         <>
           <div className="rs-nets">

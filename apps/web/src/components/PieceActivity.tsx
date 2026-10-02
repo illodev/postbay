@@ -6,7 +6,7 @@ import { t, type Key } from '../i18n';
 import { fmtDateTime, NETWORK_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
 import { Avatar, displayName } from './Avatar';
-import { NetMark, SkeletonText } from './ui';
+import { NetMark, SkeletonText, Tipped } from './ui';
 import { ago, variantName } from './PieceHero';
 import '../styles/piece.css';
 
@@ -180,7 +180,7 @@ export function PieceActivity({ piece, zone, className }: { piece: ActivityPiece
               </span>
               <div className="pc-tl-body">
                 <p className="pc-tl-line">
-                  {e.who && <strong className={e.who.agent ? 'pc-agent-name' : undefined} title={e.who.agent ? (e.who.name ?? undefined) : undefined}>{e.who.agent ? t('common.agent') : short(e.who.name)}</strong>}{' '}
+                  {e.who && <Tipped label={e.who.agent ? (e.who.name ?? undefined) : undefined}><strong className={e.who.agent ? 'pc-agent-name' : undefined}>{e.who.agent ? t('common.agent') : short(e.who.name)}</strong></Tipped>}{' '}
                   <Sentence e={e} />
                 </p>
                 {(e.mark || (e.text && e.kind !== 'published' && e.kind !== 'failed')) && (
@@ -189,7 +189,7 @@ export function PieceActivity({ piece, zone, className }: { piece: ActivityPiece
                     {e.text && <span>{e.text}</span>}
                   </p>
                 )}
-                <time className="pc-tl-time" dateTime={e.at} title={fmtDateTime(e.at, zone)}>{ago(e.at)}</time>
+                <Tipped label={fmtDateTime(e.at, zone)}><time className="pc-tl-time" dateTime={e.at}>{ago(e.at)}</time></Tipped>
               </div>
             </li>
           ))}

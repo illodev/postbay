@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { api, type NotificationPreferences } from '../api';
 import { t, tMaybe } from '../i18n';
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../lib/push';
-import { Chip, ErrorBox, errorMessage, Spinner, useToast } from './ui';
+import { Chip, ErrorBox, errorMessage, Spinner, Tip, useToast } from './ui';
 
 /** What each person is told, and where: by email, and by push in the browsers they have turned it on in. */
 export function NotificationPrefs() {
@@ -42,7 +42,7 @@ export function NotificationPrefs() {
   return (
     <section className="card stack acct-full" aria-label={t('account.notify.title')}>
       <div className="set-card-head">
-        <h2 title={t('account.notify.hint')}>{t('account.notify.title')}</h2>
+        <Tip label={t('account.notify.hint')}><h2>{t('account.notify.title')}</h2></Tip>
       </div>
 
       <div className="acct-push" data-testid="push-here">

@@ -6,7 +6,7 @@ import { api, type CalendarData, type PieceDetail } from '../api';
 import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
 import { AttemptsDialog, PublicationBadges, PublicationNote, RetryDialog } from '../components/publications';
-import { Chip, CopyButton, ErrorBox, errorMessage, NetMark, Skeleton, SkeletonText, useConfirm, useToast } from '../components/ui';
+import { Chip, CopyButton, ErrorBox, errorMessage, NetMark, Skeleton, SkeletonText, Tipped, useConfirm, useToast } from '../components/ui';
 import { t, tMaybe } from '../i18n';
 import { fmtBytes, NETWORK_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -141,7 +141,7 @@ function DueCard({ due, zone, canMark }: { due: Due; zone: string; canMark: bool
               {pack.data.files.map((f) => (
                 <li key={`${f.kind}-${f.position}`} className="pt-file">
                   <span className="pt-file-kind">{fileLabel(f.kind, f.position)}</span>
-                  <span className="pt-file-name" title={f.name}>{f.name}</span>
+                  <Tipped label={f.name}><span className="pt-file-name">{f.name}</span></Tipped>
                   <span className="pt-file-size">{fmtBytes(f.bytes)}</span>
                   <a className="btn btn-small" href={f.url} download={f.name} aria-label={t('publish.downloadFile', { name: f.name })}>
                     <Icon name="download" />
@@ -175,10 +175,12 @@ function DueCard({ due, zone, canMark }: { due: Due; zone: string; canMark: bool
 
 function SectionHead({ id, title, count, hint }: { id: string; title: string; count?: number; hint?: string }) {
   return (
-    <div className="ops-section-head" title={hint}>
-      <h2 id={id}>{title}</h2>
-      {count !== undefined && count > 0 && <span className="ops-count">{count}</span>}
-    </div>
+    <Tipped label={hint}>
+      <div className="ops-section-head">
+        <h2 id={id}>{title}</h2>
+        {count !== undefined && count > 0 && <span className="ops-count">{count}</span>}
+      </div>
+    </Tipped>
   );
 }
 

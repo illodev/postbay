@@ -759,7 +759,7 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
             playsInline
             preload="metadata"
             onClick={toggle}
-            title={playing ? t('review.video.pause') : t('review.video.play')}
+            aria-label={playing ? t('review.video.pause') : t('review.video.play')}
           />
           <SafeZoneOverlay zone={safeZone} />
           {draw && <DrawLayer tool={tool} colour={draw.colour} sketch={draw.sketch} onShape={onShape} shown={shown} />}

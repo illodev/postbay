@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { api, type SlackSettings } from '../api';
 import { t, tMaybe } from '../i18n';
 import { fmtShort } from '../lib/format';
-import { Chip, ErrorBox, errorMessage, Field, Spinner, Switch, useConfirm, useToast } from './ui';
+import { Chip, ErrorBox, errorMessage, Field, Spinner, Switch, Tip, useConfirm, useToast } from './ui';
 
 /** Posts chosen events to a Slack channel, through that channel's incoming webhook. The address is a secret: it is never shown again. */
 export function SlackSettingsCard({ brandId }: { brandId: string }) {
@@ -38,7 +38,7 @@ export function SlackSettingsCard({ brandId }: { brandId: string }) {
     <>
       <form className="card stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }} aria-label={t('settings.slack.title')}>
         <div className="set-card-head">
-          <h3 title={t('settings.slack.hint')}>{t('settings.slack.channel')}</h3>
+          <Tip label={t('settings.slack.hint')}><h3>{t('settings.slack.channel')}</h3></Tip>
           {data.configured && !data.disabledReason && <Chip state="approved" label={data.hint ? t('settings.slack.onHint', { hint: data.hint }) : t('settings.slack.on')} />}
           {data.disabledReason && <Chip state="failed" label={t('settings.slack.stopped')} />}
           {!data.configured && !data.disabledReason && <Chip state="draft" label={t('settings.slack.off')} />}

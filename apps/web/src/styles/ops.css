@@ -56,6 +56,9 @@ a.ops-row-title:hover { color: var(--text); text-decoration: underline; text-dec
 .ops .oc-period { font-size: 1rem; line-height: 32px; font-weight: 600; white-space: nowrap; margin-left: 8px; }
 .ops .oc-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 .ops .oc-meta { font-size: .75rem; line-height: 32px; color: var(--faint); white-space: nowrap; margin-right: 4px; font-variant-numeric: tabular-nums; }
+.ops .oc-zone { margin-left: 6px; font-size: .75rem; line-height: 32px; color: var(--faint); white-space: nowrap; }
+/* where the toolbar would take two lines (and the weeks the height of one), the counts give way: the screen reader still hears them */
+@media (min-width: 641px) and (max-width: 1360px) { .ops .oc-meta { display: none; } }
 .ops .oc-tray-toggle[aria-pressed='true'] { color: var(--text); background: var(--control-hover); }
 .ops .oc-tray-toggle .ops-count { color: var(--accent-hover); }
 
@@ -117,12 +120,39 @@ a.ops-row-title:hover { color: var(--text); text-decoration: underline; text-dec
 .ops .oc-unblock svg { width: 10px; height: 10px; }
 .ops .oc-unblock:hover { color: var(--text); background: var(--control-hover); }
 
-.ops .oc-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 12px; font-size: .75rem; line-height: 16px; color: var(--muted); }
-.ops .oc-key { display: inline-flex; align-items: center; gap: 6px; }
-.ops .oc-key::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--st); flex: none; }
-.ops .oc-key-slot::before { width: 10px; height: 10px; border-radius: 3px; background: rgb(255 255 255 / 8%); }
-.ops .oc-key-blocked::before { width: 10px; height: 10px; border-radius: 3px; background: repeating-linear-gradient(135deg, var(--surface-3) 0 2px, var(--panel) 2px 4px); }
-.ops .oc-hint { margin-left: auto; color: var(--faint); }
+.float.oc-legend-pop { width: 248px; padding: 12px 14px; }
+.oc-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; font-size: .75rem; line-height: 16px; color: var(--muted); }
+/* the legend lives in a popover (a portal, outside .ops): its state colours are set here */
+.oc-legend .st-scheduled { --st: var(--info); }
+.oc-legend .st-published { --st: var(--live); }
+.oc-legend .st-on_hold { --st: var(--warn); }
+.oc-legend .st-failed { --st: var(--bad); }
+.oc-key { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.oc-key::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--st); flex: none; }
+.oc-key-slot::before { width: 10px; height: 10px; border-radius: 3px; background: rgb(255 255 255 / 8%); }
+.oc-key-blocked::before { width: 10px; height: 10px; border-radius: 3px; background: repeating-linear-gradient(135deg, var(--surface-3) 0 2px, var(--panel) 2px 4px); }
+.oc-legend-pop .oc-hint { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--line); font-size: .75rem; line-height: 1.45; color: var(--muted); }
+
+/* a day's whole list, when the cell could not show it all (a portal too: what an item needs is restated here) */
+.float.oc-day-pop { padding: 8px; }
+.oc-day-pop-head { padding: 2px 4px 8px; font-size: .8125rem; font-weight: 600; }
+.oc-day-pop .oc-items { display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow-y: auto; }
+.oc-day-pop .oc-item { display: flex; align-items: center; gap: 6px; min-width: 0; border-radius: 6px; color: var(--text); text-decoration: none; }
+.oc-day-pop .oc-pub { padding: 3px 6px 3px 3px; background: rgb(255 255 255 / 5%); }
+.oc-day-pop a.oc-pub:hover { text-decoration: none; background: rgb(255 255 255 / 9%); }
+.oc-day-pop .ops-thumb { position: relative; display: grid; place-items: center; flex: none; width: 24px; height: 30px; border-radius: 4px; overflow: hidden; background: #07080c; color: var(--faint); }
+.oc-day-pop .ops-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.oc-day-pop .oc-item-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.oc-day-pop .oc-item-top { display: flex; align-items: center; gap: 5px; height: 16px; }
+.oc-day-pop .oc-time { font: 500 .6875rem/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+.oc-day-pop .st-scheduled .oc-time, .oc-day-pop .st-preparing .oc-time, .oc-day-pop .st-ready .oc-time, .oc-day-pop .st-publishing .oc-time { color: var(--info); }
+.oc-day-pop .st-published .oc-time { color: var(--live); }
+.oc-day-pop .st-on_hold .oc-time, .oc-day-pop .st-awaiting_reapproval .oc-time, .oc-day-pop .st-attention .oc-time { color: var(--warn); }
+.oc-day-pop .st-failed .oc-time { color: var(--bad); }
+.oc-day-pop .oc-name { min-width: 0; font-size: .75rem; line-height: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oc-day-pop .oc-slot { height: 24px; gap: 5px; padding: 0 6px; background: rgb(255 255 255 / 2.5%); color: var(--faint); font-size: .6875rem; }
+.oc-day-pop .oc-slot .oc-time { color: var(--faint); }
+.oc-day-pop .oc-slot .net { background: none; opacity: .5; filter: grayscale(1); }
 
 /* the tray: approved, with no date */
 .ops .oc-tray { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 6px; padding: 10px 8px 8px; background: var(--surface); border-radius: var(--radius); max-height: calc(100dvh - 32px); overflow-y: auto; min-width: 0; }
@@ -289,6 +319,43 @@ a.ops-row-title:hover { color: var(--text); text-decoration: underline; text-dec
 }
 @container (max-width: 560px) {
   .ops .rs-table tr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+
+/* ───────────────────────────── the calendar fills the page, which never scrolls ─────────────────────────────
+ * The page panel is as tall as the window; the calendar takes what is left under its bar and toolbar. The month's weeks
+ * share that height (a day shows what fits and "+N" for the rest), the week's days and the agenda scroll inside, and so
+ * does the tray. A phone keeps its own scroll: the agenda is a long list there.
+ */
+@media (min-width: 641px) {
+  .content:has(.oc-page) { height: calc(100dvh - 16px); min-height: 0; }
+  .page:has(> .oc-page) { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-bottom: 16px; }
+  .ops.oc-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .ops.oc-page > .page-top, .ops.oc-page > .oc-toolbar { flex: none; }
+  .ops.oc-page .oc-body { flex: 1; min-height: 0; }
+  .ops .oc-layout { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; }
+  .ops .oc-layout.with-tray { grid-template-columns: minmax(0, 1fr) 232px; align-items: stretch; }
+  .ops .oc-main { display: flex; flex-direction: column; min-height: 0; }
+  .ops .oc-main > .oc-grid { flex: 1; min-height: 0; }
+  .ops .oc-main > .oc-agenda { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+  .ops .oc-main > .ops-quiet { flex: none; }
+  .ops .oc-tray { position: static; height: 100%; max-height: none; }
+  .ops .oc-grid.month { display: grid; grid-template-rows: auto repeat(var(--weeks, 5), minmax(0, 1fr)); }
+  .ops .oc-grid.week { display: grid; grid-template-rows: minmax(0, 1fr); }
+  .ops .oc-grid .oc-week { min-height: 0; }
+  .ops .oc-grid .oc-day { min-height: 0; overflow: hidden; }
+  .ops .oc-grid.week .oc-day { min-height: 0; overflow-y: auto; }
+  .ops .oc-grid .oc-items { flex: none; }
+}
+@media (min-width: 641px) and (max-width: 860px) {
+  .content:has(.oc-page) { height: 100dvh; }
+}
+@container (max-width: 1040px) {
+  .ops .oc-layout.with-tray { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .ops .oc-tray { height: auto; padding: 6px 8px; }
+  /* the strip is one line of small cards, to leave the weeks their height */
+  .ops .oc-tray .oc-ready { padding: 4px 6px 4px 4px; grid-template-columns: 28px minmax(0, 1fr) 16px; gap: 8px; }
+  .ops .oc-tray .oc-ready-thumb { width: 28px; height: 34px; }
+  .ops .oc-tray .oc-ready-title { -webkit-line-clamp: 1; }
 }
 
 /* ───────────────────────────── small screens ───────────────────────────── */

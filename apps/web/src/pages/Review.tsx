@@ -8,7 +8,7 @@ import type { Tool } from '../components/Drawing';
 import { Icon } from '../components/icons';
 import { approvedAccountIds, ScheduleDialog } from '../components/publications';
 import { SubtitlePanel } from '../components/Subtitles';
-import { Chip, ConfirmDialog, CopyButton, Dialog, ErrorBox, Field, Menu, MenuItem, MenuLabel, MenuSeparator, NetMark, Select, Skeleton, Tip, useToast } from '../components/ui';
+import { Chip, ConfirmDialog, CopyButton, Dialog, ErrorBox, Field, Menu, MenuItem, MenuLabel, MenuSeparator, NetMark, Select, Skeleton, Tip, Tipped, useToast } from '../components/ui';
 import { CompareStage, liveVideo, shortName, Stage, timecode, type DrawProps, type Jump, type SafeZone } from '../components/viewer';
 import { t, tMaybe } from '../i18n';
 import { fmtBytes, fmtDateTime, NETWORK_LABEL, STATE_LABEL } from '../lib/format';
@@ -209,7 +209,7 @@ function StateLine({ v, openCount }: { v: VersionDetail; openCount: number }) {
   return (
     <span className="rv-state">
       <Chip state={v.review_state} label={d.stateLabel} />
-      {d.approvals && <span className="rv-meta-n" title={t('review.decision.approvalsOf', d.approvals)}><Icon name="check" size={13} />{d.approvals.done}/{d.approvals.count}</span>}
+      {d.approvals && <Tip label={t('review.decision.approvalsOf', d.approvals)}><span className="rv-meta-n"><Icon name="check" size={13} />{d.approvals.done}/{d.approvals.count}</span></Tip>}
     </span>
   );
 }
@@ -374,11 +374,13 @@ function Participants({ v, threads }: { v: VersionDetail; threads: CommentThread
   if (!names.length && !agent) return null;
   const all = [...names, ...(agent ? [t('review.left.agent')] : [])].join(', ');
   return (
-    <span className="avatars rv-people" title={all} role="group" aria-label={`${t('review.people.label')}: ${all}`}>
-      {shown.map((n) => <Avatar key={n} name={n} size={26} title="" />)}
-      {agent && <Avatar agent size={26} title="" />}
-      {more > 0 && <span className="avatar rv-people-more">+{more}</span>}
-    </span>
+    <Tipped label={all}>
+      <span className="avatars rv-people" role="group" aria-label={`${t('review.people.label')}: ${all}`}>
+        {shown.map((n) => <Avatar key={n} name={n} size={26} title="" />)}
+        {agent && <Avatar agent size={26} title="" />}
+        {more > 0 && <span className="avatar rv-people-more">+{more}</span>}
+      </span>
+    </Tipped>
   );
 }
 
@@ -405,14 +407,16 @@ function Notes({ text }: { text: string }) {
 function Uploader({ v, full }: { v: VersionDetail; full?: boolean }) {
   const up = uploaderOf(v);
   return (
-    <p className="rv-up" title={up.title}>
-      {up.agent ? <Avatar agent size={18} /> : <Avatar name={up.who} size={18} />}
-      <span>
-        <b className={up.agent ? 'agent' : ''}>{up.who}</b>
-        {up.via && <> · {up.via}</>}
-        {' · '}<time dateTime={v.created_at} title={fmtDateTime(v.created_at, v.brand.timezone)}>{full ? fmtDateTime(v.created_at, v.brand.timezone) : agoPhrase(v.created_at)}</time>
-      </span>
-    </p>
+    <Tipped label={up.title}>
+      <p className="rv-up">
+        {up.agent ? <Avatar agent size={18} /> : <Avatar name={up.who} size={18} />}
+        <span>
+          <b className={up.agent ? 'agent' : ''}>{up.who}</b>
+          {up.via && <> · {up.via}</>}
+          {' · '}<Tipped label={fmtDateTime(v.created_at, v.brand.timezone)}><time dateTime={v.created_at}>{full ? fmtDateTime(v.created_at, v.brand.timezone) : agoPhrase(v.created_at)}</time></Tipped>
+        </span>
+      </p>
+    </Tipped>
   );
 }
 
@@ -444,10 +448,10 @@ function LeftPane({ v, piece, threads, onShowResolved }: { v: VersionDetail; pie
                 <>
                   <VariantThumb versionId={latest?.id} />
                   <span className="rv-vtext">
-                    <b title={variantName(x)}>{variantName(x)}</b>
+                    <Tipped label={variantName(x)}><b>{variantName(x)}</b></Tipped>
                     <span>
                       {latest ? `V${latest.number}` : t('review.left.noVersion')}
-                      {open > 0 && <span className="rv-meta-n" title={t('review.left.openCount', { count: open })}><Icon name="bubble" size={12} />{open}</span>}
+                      {open > 0 && <Tip label={t('review.left.openCount', { count: open })}><span className="rv-meta-n"><Icon name="bubble" size={12} />{open}</span></Tip>}
                       {latest && latest.review_state !== 'in_review' && <Chip state={latest.review_state} />}
                     </span>
                   </span>
@@ -477,7 +481,7 @@ function LeftPane({ v, piece, threads, onShowResolved }: { v: VersionDetail; pie
             return here ? (
               <div key={s.id} className="rv-vr on" aria-current="page">{row}</div>
             ) : (
-              <Link key={s.id} className="rv-vr" to={`/review/${s.id}`} title={s.review_state ? STATE_LABEL[s.review_state] : undefined}>{row}</Link>
+              <Tipped key={s.id} label={s.review_state ? STATE_LABEL[s.review_state] : undefined}><Link className="rv-vr" to={`/review/${s.id}`}>{row}</Link></Tipped>
             );
           })}
         </nav>
@@ -486,9 +490,11 @@ function LeftPane({ v, piece, threads, onShowResolved }: { v: VersionDetail; pie
         <div className="rv-changes-box">
           {v.notes ? <Notes text={v.notes} /> : <p className="rv-notes muted">{t('review.left.noNotes')}</p>}
           {carried.length > 0 && (
-            <button type="button" className="rv-resolves" onClick={onShowResolved} title={t('review.left.resolvesHint')}>
-              <Icon name="check" size={13} />{t('review.left.resolves', { done: fixedHere, count: carried.length })}
-            </button>
+            <Tip label={t('review.left.resolvesHint')}>
+              <button type="button" className="rv-resolves" onClick={onShowResolved}>
+                <Icon name="check" size={13} />{t('review.left.resolves', { done: fixedHere, count: carried.length })}
+              </button>
+            </Tip>
           )}
           <Uploader v={v} />
         </div>
@@ -539,14 +545,14 @@ function Details({ v }: { v: VersionDetail }) {
       </section>
       <section className="rv-block">
         <div className="row-between"><h3>{t('review.details.fingerprint')}</h3><CopyButton text={v.fingerprint} /></div>
-        <span className="mono rv-hash" title={t('review.details.fingerprintHint')}>{v.fingerprint}</span>
+        <Tip label={t('review.details.fingerprintHint')}><span className="mono rv-hash">{v.fingerprint}</span></Tip>
       </section>
       <section className="rv-block">
         <h3>{t('review.details.files')}</h3>
         {v.assets.map((a) => (
           <div key={a.id} className="rv-file">
             <div className="rv-file-main">
-              <span className="rv-file-name" title={a.name}>{a.name}</span>
+              <Tipped label={a.name}><span className="rv-file-name">{a.name}</span></Tipped>
               <span className="muted small">
                 {ASSET_KIND[a.kind]?.() ?? a.kind} · <span className="mono">{fmtBytes(a.bytes)}</span>
                 {a.width && a.height ? <> · <span className="mono">{a.width}×{a.height}</span></> : null}
@@ -747,7 +753,7 @@ function Review({ versionId }: { versionId: string }) {
         <nav className="rv-crumbs" aria-label={t('review.crumbs.label')}>
           {campaign ? <Link to={`/pieces?campaign=${campaign.id}`} className="rv-crumb">{campaign.name}</Link> : <Link to="/pieces" className="rv-crumb">{t('review.crumbs.pieces')}</Link>}
           <span className="rv-crumb-sep" aria-hidden="true">/</span>
-          <h1 className="rv-title" title={v.piece.title}><Link to={`/pieces/${v.piece.id}`}>{v.piece.title}</Link></h1>
+          <Tipped label={v.piece.title}><h1 className="rv-title"><Link to={`/pieces/${v.piece.id}`}>{v.piece.title}</Link></h1></Tipped>
         </nav>
         <VersionMenu v={v} versions={variantVersions} />
         <CompareControl v={v} compareId={compareId} onCompare={setCompareId} />

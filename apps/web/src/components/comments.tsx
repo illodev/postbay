@@ -7,7 +7,7 @@ import { playhead } from '../lib/playhead';
 import { Avatar } from './Avatar';
 import type { Tool } from './Drawing';
 import { Icon } from './icons';
-import { Dialog, ErrorBox, errorMessage, Popover, Select, Tip, useToast } from './ui';
+import { Dialog, ErrorBox, errorMessage, Popover, Select, Tip, Tipped, useToast } from './ui';
 import { agentInThread, liveVideo, round2, shortName, shortTimecode, threadAt, timecode } from './viewer';
 
 export function anchorLabel(a: Anchor | null, drawn = false): string {
@@ -136,8 +136,8 @@ function Thread({ c, n, focus, playing, canReply, canResolve, canReopen, onJump,
     >
       <header className="rv-th-h">
         <Avatar name={shortName(c.author)} size={24} />
-        <strong className="rv-th-name" title={c.author}>{shortName(c.author)}</strong>
-        <time className="rv-th-when" dateTime={c.created_at} title={fullDate(c.created_at)}>{ago(c.created_at)}</time>
+        <Tipped label={c.author}><strong className="rv-th-name">{shortName(c.author)}</strong></Tipped>
+        <Tipped label={fullDate(c.created_at)}><time className="rv-th-when" dateTime={c.created_at}>{ago(c.created_at)}</time></Tipped>
         <span className="grow" />
         {canMark && (
           <Tip label={`${peopleLabel}. ${t('review.thread.peopleOnlyHint')}`}>
@@ -167,18 +167,20 @@ function Thread({ c, n, focus, playing, canReply, canResolve, canReopen, onJump,
       </header>
       <p className="rv-th-body">
         {c.anchor ? (
-          <button type="button" className="tc rv-th-tc" onClick={(e) => { e.stopPropagation(); onJump(c); }} title={t('review.thread.goTo')}>
-            {anchorLabel(c.anchor)}
-          </button>
+          <Tip label={t('review.thread.goTo')}>
+            <button type="button" className="tc rv-th-tc" onClick={(e) => { e.stopPropagation(); onJump(c); }}>
+              {anchorLabel(c.anchor)}
+            </button>
+          </Tip>
         ) : null}
-        {drawn && <span className="rv-th-ink" title={t('review.thread.drawn')} aria-label={t('review.thread.drawn')}><Icon name="pen" size={11} /></span>}
+        {drawn && <Tip label={t('review.thread.drawn')}><span className="rv-th-ink" aria-label={t('review.thread.drawn')}><Icon name="pen" size={11} /></span></Tip>}
         {c.body}
       </p>
       <CueQuote anchor={c.anchor} />
       {(c.people_only || (c.carried && open) || !open) && (
         <div className="rv-flags">
-          {c.people_only && <span className="chip chip-on_hold" title={t('review.thread.peopleOnlyHint')}>{t('review.thread.peopleOnly')}</span>}
-          {c.carried && open && <span className="chip chip-changes_requested" title={t('review.thread.carriedHint')}>{t('review.thread.carried', { n: c.version_number })}</span>}
+          {c.people_only && <Tip label={t('review.thread.peopleOnlyHint')}><span className="chip chip-on_hold">{t('review.thread.peopleOnly')}</span></Tip>}
+          {c.carried && open && <Tip label={t('review.thread.carriedHint')}><span className="chip chip-changes_requested">{t('review.thread.carried', { n: c.version_number })}</span></Tip>}
           {!open && (
             <span className="chip chip-approved">
               {c.resolved_in_number ? t('review.thread.resolvedIn', { n: c.resolved_in_number }) : c.resolved_by ? t('review.thread.resolvedBy', { name: shortName(c.resolved_by) }) : t('review.thread.resolved')}
@@ -187,16 +189,18 @@ function Thread({ c, n, focus, playing, canReply, canResolve, canReopen, onJump,
         </div>
       )}
       {c.carried && open && c.frame_url && (
-        <button type="button" className="rv-th-frame" onClick={(e) => { e.stopPropagation(); setZoom(true); }} title={t('review.thread.frameZoom')}>
-          <img className="frame-thumb" src={c.frame_url} alt={t('review.thread.frameAlt')} loading="lazy" />
-          <span>{t('review.thread.frameOf', { n: c.version_number })}</span>
-        </button>
+        <Tip label={t('review.thread.frameZoom')}>
+          <button type="button" className="rv-th-frame" onClick={(e) => { e.stopPropagation(); setZoom(true); }}>
+            <img className="frame-thumb" src={c.frame_url} alt={t('review.thread.frameAlt')} loading="lazy" />
+            <span>{t('review.thread.frameOf', { n: c.version_number })}</span>
+          </button>
+        </Tip>
       )}
       {c.replies.map((r) => (
         <div key={r.id} className={`reply rv-reply ${r.by_agent ? 'agent' : ''}`}>
           <div className="rv-reply-h">
             {r.by_agent ? <Avatar agent size={18} /> : <Avatar name={shortName(r.author)} size={18} />}
-            <span className="who" title={`${r.author} · ${fullDate(r.created_at)}`}>{r.by_agent ? t('review.thread.agent') : shortName(r.author)}</span>
+            <Tipped label={`${r.author} · ${fullDate(r.created_at)}`}><span className="who">{r.by_agent ? t('review.thread.agent') : shortName(r.author)}</span></Tipped>
             <time className="rv-th-when" dateTime={r.created_at}>{ago(r.created_at)}</time>
             {r.reply_kind && <span className={`chip ${r.reply_kind === 'fixed' ? 'chip-approved' : 'chip-changes_requested'}`}>{replyKindLabel(r.reply_kind)}</span>}
           </div>
@@ -500,13 +504,17 @@ export function CommentsPanel({ versionId, threads, numbers, me, draft, onDraft,
         <FilterMenu filter={filter} onFilter={onFilter} threads={threads} isMine={isMine} count={count} />
         <span className="grow" />
         {filtered && (
-          <button type="button" className="rv-ic rv-ic-sm" onClick={() => { onFilter({ ...NO_FILTER, status: filter.status }); setSearching(false); }} aria-label={t('review.filter.clear')} title={t('review.filter.clear')}>
-            <Icon name="x" size={15} />
-          </button>
+          <Tip label={t('review.filter.clear')}>
+            <button type="button" className="rv-ic rv-ic-sm" onClick={() => { onFilter({ ...NO_FILTER, status: filter.status }); setSearching(false); }} aria-label={t('review.filter.clear')}>
+              <Icon name="x" size={15} />
+            </button>
+          </Tip>
         )}
-        <button type="button" className={`rv-ic rv-ic-sm ${searching ? 'on' : ''}`} aria-pressed={searching} onClick={() => { if (searching) onFilter({ ...filter, q: '' }); setSearching((s) => !s); }} aria-label={t('review.filter.search')} title={t('review.filter.search')}>
-          <Icon name="search" size={15} />
-        </button>
+        <Tip label={t('review.filter.search')}>
+          <button type="button" className={`rv-ic rv-ic-sm ${searching ? 'on' : ''}`} aria-pressed={searching} onClick={() => { if (searching) onFilter({ ...filter, q: '' }); setSearching((s) => !s); }} aria-label={t('review.filter.search')}>
+            <Icon name="search" size={15} />
+          </button>
+        </Tip>
       </div>
       {searching && (
         <div className="rv-search">
@@ -545,15 +553,17 @@ export function CommentsPanel({ versionId, threads, numbers, me, draft, onDraft,
             {draft ? (
               <span className="rv-anchor">
                 <span className="tc">{anchorLabel(draft, sketch.length > 0)}</span>
-                <button type="button" className="rv-x" onClick={onClearDraft} aria-label={t('review.compose.removeAnchor')} title={t('review.compose.removeAnchor')}><Icon name="x" size={12} /></button>
+                <Tip label={t('review.compose.removeAnchor')}><button type="button" className="rv-x" onClick={onClearDraft} aria-label={t('review.compose.removeAnchor')}><Icon name="x" size={12} /></button></Tip>
               </span>
             ) : atMoment ? (
-              <button type="button" className="tc rv-tc-live" onClick={() => setAnchorMode('general')} title={t('review.compose.momentHint')}>{timecode(now, false)}</button>
+              <Tip label={t('review.compose.momentHint')}><button type="button" className="tc rv-tc-live" onClick={() => setAnchorMode('general')}>{timecode(now, false)}</button></Tip>
             ) : null}
             {sketch.length > 0 && (
-              <span className="rv-anchor rv-ink-chip" title={t('review.compose.drawingHint')}>
-                <Icon name="pen" size={11} />{t('review.compose.drawing', { count: sketch.length })}
-              </span>
+              <Tip label={t('review.compose.drawingHint')}>
+                <span className="rv-anchor rv-ink-chip">
+                  <Icon name="pen" size={11} />{t('review.compose.drawing', { count: sketch.length })}
+                </span>
+              </Tip>
             )}
             <textarea
               ref={box}

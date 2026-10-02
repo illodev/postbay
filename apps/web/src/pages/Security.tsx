@@ -7,7 +7,7 @@ import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
 import { EnrollFlow, RecoveryCodes } from '../components/SecondFactor';
 import { NotificationPrefs } from '../components/NotificationPrefs';
-import { Chip, ErrorBox, errorMessage, Field, Skeleton, useToast } from '../components/ui';
+import { Chip, ErrorBox, errorMessage, Field, Skeleton, Tip, Tipped, useToast } from '../components/ui';
 import { LOCALES, t, useLocale, type Locale } from '../i18n';
 import { fmtDay, fmtShort, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -80,7 +80,7 @@ function Language() {
   const { locale, setLocale } = useLocale();
   return (
     <section className="card stack" aria-labelledby="acct-lang">
-      <h2 id="acct-lang" title={t('account.language.hint')}>{t('account.language.title')}</h2>
+      <Tip label={t('account.language.hint')}><h2 id="acct-lang">{t('account.language.title')}</h2></Tip>
       <div className="acct-lang" role="radiogroup" aria-labelledby="acct-lang">
         {LOCALES.map((l) => (
           <label key={l.value} lang={l.value}>
@@ -107,7 +107,7 @@ function Authenticator() {
   return (
     <section className="card stack acct-full" aria-labelledby="acct-2fa">
       <div className="set-card-head">
-        <h2 id="acct-2fa" title={t('account.twofa.hint')}>{t('account.twofa.title')}</h2>
+        <Tip label={t('account.twofa.hint')}><h2 id="acct-2fa">{t('account.twofa.title')}</h2></Tip>
         {data.enrolled ? <Chip state="approved" label={t('account.twofa.on')} /> : <Chip state="draft" label={t('account.twofa.off')} />}
       </div>
       {data.required && data.requiredByRole && <div className="notice notice-info" style={{ margin: 0 }}>{t('account.twofa.required')}</div>}
@@ -154,7 +154,7 @@ function Invitations({ items }: { items: MyInvitation[] }) {
   return (
     <section className="card acct-full" aria-labelledby="acct-invites">
       <div className="set-card-top">
-        <h2 id="acct-invites" title={t('account.invitations.hint')}>{t('account.invitations.title', { count: items.length })}</h2>
+        <Tip label={t('account.invitations.hint')}><h2 id="acct-invites">{t('account.invitations.title', { count: items.length })}</h2></Tip>
       </div>
       <ul className="ent-list">
         {items.map((i) => (
@@ -164,7 +164,7 @@ function Invitations({ items }: { items: MyInvitation[] }) {
               <div className="ent-title">{i.brand}<span className="muted acct-ws">· {i.workspace}</span></div>
               <div className="ent-sub">
                 {t('account.invitations.as', { role: ROLE_LABEL[i.role] ?? i.role })}
-                {i.invited_by && <> · <span title={i.invited_by}>{t('account.invitations.by', { who: displayName(null, i.invited_by) })}</span></>}
+                {i.invited_by && <> · <Tipped label={i.invited_by}><span>{t('account.invitations.by', { who: displayName(null, i.invited_by) })}</span></Tipped></>}
                 {' · '}{fmtShort(i.created_at)} · {t('account.invitations.expires', { date: fmtDay(i.expires_at) })}
               </div>
             </div>

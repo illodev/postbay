@@ -10,7 +10,7 @@ import { PieceAgentCard } from '../components/PieceAgentCard';
 import { ago, authorName, formatHint, formatName, PieceFacts, PieceStage, variantName } from '../components/PieceHero';
 import { PublicationList } from '../components/publications';
 import { UploadDialog } from '../components/UploadDialog';
-import { Chip, Dialog, Empty, ErrorBox, errorMessage, Field, Menu, MenuItem, MenuSeparator, Select, Skeleton, SkeletonText, Switch, Tip, useConfirm, useToast } from '../components/ui';
+import { Chip, Dialog, Empty, ErrorBox, errorMessage, Field, Menu, MenuItem, MenuSeparator, Select, Skeleton, SkeletonText, Switch, Tip, Tipped, useConfirm, useToast } from '../components/ui';
 import { t, type Key } from '../i18n';
 import { fmtDateTime, fmtShort, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -353,12 +353,14 @@ function VariantRow({ variant, current, canUpload, onUpload, onShow }: {
   const name = variantName(variant);
   return (
     <li className={`pc-vrow ${current ? 'is-current' : ''}`}>
-      <button type="button" className="pc-vthumb" onClick={onShow} title={t('piece.variant.show', { variant: name })} aria-label={t('piece.variant.show', { variant: name })} aria-pressed={current}>
-        <VariantThumb key={latest?.id ?? 'none'} version={latest} format={variant.format} />
-        {latest?.by_agent && <span className="pc-vthumb-agent" aria-hidden="true"><Icon name="bot" /></span>}
-      </button>
+      <Tip label={t('piece.variant.show', { variant: name })}>
+        <button type="button" className="pc-vthumb" onClick={onShow} aria-label={t('piece.variant.show', { variant: name })} aria-pressed={current}>
+          <VariantThumb key={latest?.id ?? 'none'} version={latest} format={variant.format} />
+          {latest?.by_agent && <span className="pc-vthumb-agent" aria-hidden="true"><Icon name="bot" /></span>}
+        </button>
+      </Tip>
       <div className="pc-vrow-name">
-        <span className="pc-vrow-style" title={name}>{variant.style || formatHint(variant.format)}</span>
+        <Tipped label={name}><span className="pc-vrow-style">{variant.style || formatHint(variant.format)}</span></Tipped>
         <span className="pc-vrow-meta">
           <span>{formatName(variant.format)}</span>
           {latest ? (
@@ -369,7 +371,7 @@ function VariantRow({ variant, current, canUpload, onUpload, onShow }: {
               {latest.by_agent ? <Avatar agent size={16} /> : <Avatar name={authorName(latest)} size={16} />}
               <span className={`pc-vrow-who ${latest.by_agent ? 'pc-agent-name' : ''}`}>{authorName(latest)}</span>
               <span className="pc-dot-sep" aria-hidden="true">·</span>
-              <time dateTime={latest.created_at} title={fmtShort(latest.created_at)}>{ago(latest.created_at)}</time>
+              <Tipped label={fmtShort(latest.created_at)}><time dateTime={latest.created_at}>{ago(latest.created_at)}</time></Tipped>
             </>
           ) : (
             <>
@@ -383,11 +385,13 @@ function VariantRow({ variant, current, canUpload, onUpload, onShow }: {
         <span className="pc-vrow-state">{latest && <Chip state={latest.review_state} />}</span>
         <span className="pc-vrow-comments">
           {open > 0 && latest ? (
-            <Link to={`/review/${latest.id}`} className="pc-ccount" title={t('piece.openComments', { count: open })} aria-label={t('piece.openComments', { count: open })}>
-              <Icon name="bubble" />{open}
-            </Link>
+            <Tip label={t('piece.openComments', { count: open })}>
+              <Link to={`/review/${latest.id}`} className="pc-ccount" aria-label={t('piece.openComments', { count: open })}>
+                <Icon name="bubble" />{open}
+              </Link>
+            </Tip>
           ) : (
-            <span className="pc-ccount is-zero" title={t('piece.noOpenComments')} aria-label={t('piece.noOpenComments')}><Icon name="bubble" />0</span>
+            <Tip label={t('piece.noOpenComments')}><span className="pc-ccount is-zero" aria-label={t('piece.noOpenComments')}><Icon name="bubble" />0</span></Tip>
           )}
         </span>
       </span>

@@ -42,3 +42,7 @@
 .menu-trigger { appearance: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; flex: none; }
 .menu-trigger:hover, .menu-trigger[data-state='open'] { background: var(--control-hover); color: var(--text); }
 .menu-trigger svg { width: 16px; height: 16px; stroke-width: 3; }
+
+/* a wrapper that holds a tooltip for something that takes no pointer (a disabled button) */
+.tip-host { display: inline-flex; }
+.tip-host > :disabled { pointer-events: none; }

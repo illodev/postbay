@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { api, type Anchor, type CommentThread, type SubtitleCue, type SubtitleTrack } from '../api';
 import { t } from '../i18n';
 import { playhead } from '../lib/playhead';
-import { ErrorBox, Select } from './ui';
+import { ErrorBox, Select, Tip } from './ui';
 import { timecode } from './viewer';
 
 /** The line on screen at a moment: the last that has started and not ended, as the server's cueAt does. */
@@ -82,18 +82,19 @@ export function SubtitlePanel({ versionId, threads, canAnnotate, firstVideoPosit
             const open = threadsHere.filter((x) => x.status === 'open').length;
             return (
               <div key={c.index} role="listitem" data-cue={c.index} className={`cue ${now === c.index ? 'now' : ''}`}>
-                <button type="button" className="cue-time" onClick={() => onSeek(c.start, firstVideoPosition)} title={t('review.subs.goTo')}>{timecode(c.start)}</button>
+                <Tip label={t('review.subs.goTo')}><button type="button" className="cue-time" onClick={() => onSeek(c.start, firstVideoPosition)}>{timecode(c.start)}</button></Tip>
                 <span className="cue-text">{c.text || <span className="muted">{t('review.subs.noWords')}</span>}</span>
                 {threadsHere.length > 0 && (
-                  <button
-                    type="button"
-                    className={`rv-cue-count ${open ? 'open' : ''}`}
-                    onClick={() => onFocus(threadsHere[0]!.id)}
-                    title={t('review.subs.commentsOnLine', { count: threadsHere.length })}
-                    aria-label={t('review.subs.commentsOnLine', { count: threadsHere.length })}
-                  >
-                    {threadsHere.length}
-                  </button>
+                  <Tip label={t('review.subs.commentsOnLine', { count: threadsHere.length })}>
+                    <button
+                      type="button"
+                      className={`rv-cue-count ${open ? 'open' : ''}`}
+                      onClick={() => onFocus(threadsHere[0]!.id)}
+                      aria-label={t('review.subs.commentsOnLine', { count: threadsHere.length })}
+                    >
+                      {threadsHere.length}
+                    </button>
+                  </Tip>
                 )}
                 {canAnnotate && (
                   <button

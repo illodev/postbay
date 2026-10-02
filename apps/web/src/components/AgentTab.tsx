@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { api, type AgentRun, type AgentSettings, type BrandAgent } from '../api';
 import { t } from '../i18n';
 import { BLOCK_REASON_LABEL, fmtMoney, fmtShort, OUTCOME_LABEL, TRIGGER_LABEL } from '../lib/format';
-import { ErrorBox, Field, Spinner, useToast } from './ui';
+import { ErrorBox, Field, Spinner, Tip, useToast } from './ui';
 
 const OUTCOME_CHIP: Record<string, string> = {
   uploaded: 'chip-approved', needs_people: 'chip-changes_requested', failed: 'chip-failed', checks_failed: 'chip-failed',
@@ -91,7 +91,7 @@ export function AgentTab({ brandId }: { brandId: string }) {
 
       <form className="card stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
         <div className="set-card-head">
-          <h3 title={t('settings.agent.limitsHint')}>{t('settings.agent.limits')}</h3>
+          <Tip label={t('settings.agent.limitsHint')}><h3>{t('settings.agent.limits')}</h3></Tip>
         </div>
         <div className="set-fields">
           <Field label={t('settings.agent.rounds')} hint={t('settings.agent.roundsHint')}><input type="number" min={1} max={10} required value={form.rounds} onChange={set('rounds')} /></Field>

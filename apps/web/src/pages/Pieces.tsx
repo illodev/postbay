@@ -6,7 +6,7 @@ import type { Campaign } from '../components/Layout';
 import { Icon, type IconName } from '../components/icons';
 import { PageBar } from '../components/PageBar';
 import { ScheduleDialog } from '../components/publications';
-import { ConfirmDialog, Dialog, ErrorBox, Field, Menu, MenuItem, MenuSeparator, NetMark, Popover, Segmented, Select, Skeleton, Switch, Tip, errorMessage, useToast } from '../components/ui';
+import { ConfirmDialog, Dialog, ErrorBox, errorMessage, Field, Menu, MenuItem, MenuSeparator, NetMark, Popover, Segmented, Select, Skeleton, Switch, Tip, useToast } from '../components/ui';
 import { t, type Key } from '../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -295,9 +295,11 @@ function SelectionBar({ pieces, actions, onClear, onDownload, downloading }: {
         <button type="button" className="pz-selbar-x" onClick={onClear} aria-label={t('pieces.sel.clear')}><Icon name="x" /></button>
       </Tip>
       <span className="pz-selbar-count">{t('pieces.sel.count', { count: pieces.length })}</span>
-      <button type="button" className="btn" onClick={onDownload} disabled={downloading || !pieces.some((p) => p.latest_version)} title={t('pieces.sel.downloadHint')}>
-        <Icon name="download" /><span className="pz-sbtn-label">{t('pieces.sel.download')}</span>
-      </button>
+      <Tip label={t('pieces.sel.downloadHint')}>
+        <button type="button" className="btn" onClick={onDownload} disabled={downloading || !pieces.some((p) => p.latest_version)}>
+          <Icon name="download" /><span className="pz-sbtn-label">{t('pieces.sel.download')}</span>
+        </button>
+      </Tip>
       {actions.canEdit && live.length > 0 && (
         <>
           <button type="button" className="btn" onClick={() => actions.onMove(live.map((p) => p.id))}><Icon name="folder" /><span className="pz-sbtn-label">{t('pieces.sel.move')}</span></button>
