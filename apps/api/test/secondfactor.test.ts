@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { base32Decode, hotp, stepAt } from '../src/auth/totp.js';
 import { loadConfig } from '../src/config.js';
-import { startSession } from '../src/services/auth.js';
+import { magicLinksSettled, startSession } from '../src/services/auth.js';
 import { createEnv, type Env } from './helpers.js';
 
 let env: Env;
@@ -329,6 +329,7 @@ describe('the sign-in itself', () => {
     await forgetUsedCodes(await userId('admin@example.com'));
     env.mails.length = 0;
     expect((await req(null, 'POST', '/api/auth/magic-link', { email: 'admin@example.com' })).status).toBe(202);
+    await magicLinksSettled(env.ctx);
     const token = /token=([\w-]+)/.exec(env.mails.at(-1)!.text)![1]!;
     const verified = await env.app.inject({ method: 'POST', url: '/api/auth/verify', payload: { token }, headers: { 'x-forwarded-for': nextIp() } });
     expect(verified.statusCode).toBe(200);
@@ -341,10 +342,12 @@ describe('the sign-in itself', () => {
   it('can be switched off for everyone who signs in with single sign-on: no link is sent, and an old one does nothing', async () => {
     env.mails.length = 0;
     await req(null, 'POST', '/api/auth/magic-link', { email: 'reader@example.com' });
+    await magicLinksSettled(env.ctx);
     const token = /token=([\w-]+)/.exec(env.mails.at(-1)!.text)![1]!;
     (env.ctx.config as { emailLinkLogin: boolean }).emailLinkLogin = false;
     env.mails.length = 0;
     expect((await req(null, 'POST', '/api/auth/magic-link', { email: 'reader@example.com' })).status).toBe(202); // answers the same
+    await magicLinksSettled(env.ctx);
     expect(env.mails).toHaveLength(0);
     const v = await env.app.inject({ method: 'POST', url: '/api/auth/verify', payload: { token }, headers: { 'x-forwarded-for': nextIp() } });
     expect(v.statusCode).toBe(401);
@@ -359,7 +362,7 @@ describe('the sign-in itself', () => {
 });
 
 describe('what the deployment has to say about it', () => {
-  const base = { NODE_ENV: 'test', SECRET: 'x'.repeat(40) };
+  const base = { NODE_ENV: 'test', SECRET: 'x'.repeat(40), SMTP_URL: 'smtp://mail.example.com' };
   it('requires the second factor in production unless told otherwise, and not in development', () => {
     expect(loadConfig({ ...base, NODE_ENV: 'production' }).secondFactorRequired).toBe(true);
     expect(loadConfig({ ...base, NODE_ENV: 'production', SECOND_FACTOR_REQUIRED: 'false' }).secondFactorRequired).toBe(false);

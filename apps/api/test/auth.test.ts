@@ -1,6 +1,8 @@
 import { Writable } from 'node:stream';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp, redactUrl } from '../src/app.js';
+import { createMailer } from '../src/mailer.js';
+import { magicLinksSettled } from '../src/services/auth.js';
 import { createEnv, fakeMedia, type Env } from './helpers.js';
 
 let env: Env;
@@ -14,6 +16,7 @@ describe('email sign-in link', () => {
     const { app, mails } = env;
     const ask = await app.inject({ method: 'POST', url: '/api/auth/magic-link', payload: { email: 'Approver@Example.com' } });
     expect(ask.statusCode).toBe(202);
+    await magicLinksSettled(env.ctx); // the link is sent after the answer
     expect(mails).toHaveLength(1);
     expect(mails[0]!.to).toBe('approver@example.com');
     expect(mails[0]!.text).toContain('http://app.test/auth/callback?token=');
@@ -40,12 +43,14 @@ describe('email sign-in link', () => {
     const r = await app.inject({ method: 'POST', url: '/api/auth/magic-link', payload: { email: 'stranger@nowhere.test' } });
     expect(r.statusCode).toBe(202);
     expect(r.json()).toEqual({ ok: true });
+    await magicLinksSettled(env.ctx);
     expect(mails).toHaveLength(before);
   });
 
   it('expires links', async () => {
     const { app, mails, db } = env;
     await app.inject({ method: 'POST', url: '/api/auth/magic-link', payload: { email: 'admin@example.com' } });
+    await magicLinksSettled(env.ctx);
     const token = tokenFrom(mails.at(-1)!.text);
     await db.query(`update login_token set expires_at = now() - interval '1 second'`);
     expect((await app.inject({ method: 'POST', url: '/api/auth/verify', payload: { token } })).statusCode).toBe(401);
@@ -54,9 +59,53 @@ describe('email sign-in link', () => {
   it('stores only a hash of the link token and of the session', async () => {
     const { app, mails, db } = env;
     await app.inject({ method: 'POST', url: '/api/auth/magic-link', payload: { email: 'reviewer@example.com' } });
+    await magicLinksSettled(env.ctx);
     const token = tokenFrom(mails.at(-1)!.text);
     const rows = await db.query('select token_hash from login_token');
     expect(rows.every((r) => r.token_hash !== token && /^[0-9a-f]{64}$/.test(r.token_hash))).toBe(true);
+  });
+
+  it('answers at once and the same way when the mail server is slow or refuses, so timing and errors say nothing about who exists', async () => {
+    const { app } = env;
+    const original = env.ctx.mailer;
+    const ask = (email: string, ip: string) => app.inject({ method: 'POST', url: '/api/auth/magic-link', payload: { email }, headers: { 'x-forwarded-for': ip } });
+    const within = <T>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<'too slow'>((r) => setTimeout(() => r('too slow'), ms))]);
+    try {
+      // A mail server that takes its time: the person who exists gets the same answer, as soon, as the one who does not.
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      env.ctx.mailer = { async send() { await held; } };
+      const slow = await within(ask('admin@example.com', '10.77.0.1'), 2000);
+      expect(slow === 'too slow' ? slow : slow.statusCode).toBe(202);
+      release();
+      // One that refuses: still 202 with the same body, and the failure goes to the server's log, not to the asker.
+      env.ctx.mailer = { async send() { throw new Error('554 relay refused'); } };
+      const refused = await ask('admin@example.com', '10.77.0.2');
+      expect(refused.statusCode).toBe(202);
+      expect(refused.json()).toEqual((await ask('stranger@nowhere.test', '10.77.0.3')).json());
+      await magicLinksSettled(env.ctx);
+    } finally {
+      env.ctx.mailer = original;
+    }
+  });
+
+  it('never writes a link to the log in production: it wants a mail server, and without one logs no text', async () => {
+    const { loadConfig } = await import('../src/config.js');
+    const prod = { NODE_ENV: 'production', SECRET: 'x'.repeat(40) };
+    expect(() => loadConfig(prod)).toThrow(/SMTP_URL/);
+    expect(loadConfig({ ...prod, SMTP_URL: 'smtp://mail.example.com:587' }).emailLinkLogin).toBe(true);
+    // Single sign-on only: no link is sent, so no mail server is needed for signing in.
+    const sso = { OIDC_ISSUER: 'https://idp.example.com', OIDC_CLIENT_ID: 'id', OIDC_CLIENT_SECRET: 'secret', OIDC_ALLOWED_DOMAINS: 'example.com' };
+    const ssoOnly = loadConfig({ ...prod, ...sso, EMAIL_LINK_LOGIN: 'false' });
+    const logged: object[] = [];
+    const log = { info: (o: object) => logged.push(o), warn: (o: object) => logged.push(o) };
+    await createMailer(ssoOnly, log).send('a@example.com', 'Your sign-in link', 'http://app.test/auth/callback?token=SECRET-LINK');
+    expect(JSON.stringify(logged)).not.toContain('SECRET-LINK');
+    expect(JSON.stringify(logged)).toContain('a@example.com');
+    // Development keeps the link in the log, where it is the way to sign in without a mail server.
+    logged.length = 0;
+    await createMailer(loadConfig({ SECRET: 'x'.repeat(40) }), log).send('a@example.com', 'Your sign-in link', 'SECRET-LINK');
+    expect(JSON.stringify(logged)).toContain('SECRET-LINK');
   });
 
   it('rate-limits link requests', async () => {
@@ -93,7 +142,7 @@ describe('development sign-in', () => {
       await dev.close();
     }
     const { loadConfig } = await import('../src/config.js');
-    const prod = loadConfig({ NODE_ENV: 'production', SECRET: 'x'.repeat(40), AUTH_DEV_LOGIN: 'true' });
+    const prod = loadConfig({ NODE_ENV: 'production', SECRET: 'x'.repeat(40), SMTP_URL: 'smtp://mail.example.com', AUTH_DEV_LOGIN: 'true' });
     expect(prod.devLogin).toBe(false);
   });
 });

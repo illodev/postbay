@@ -117,6 +117,14 @@ How it behaves, on purpose:
 - `OIDC_TRUST_EMAIL=true` accepts an email the provider does not say is verified. Microsoft Entra does not send the claim; set it only for a single-tenant issuer whose admin controls the addresses.
 - `EMAIL_LINK_LOGIN=false` turns the emailed link off for everyone (the server refuses to start with no way left to sign in).
 
+### The emailed link
+
+- Asking for a link answers `202` at once, the same way for everyone: the lookup, the link and the email happen after the answer, so
+  neither its timing nor an error from the mail server says whether an account exists. A mail server that fails is logged.
+- In production the server refuses to start with email-link sign-in on and no `SMTP_URL`: without a mail server the link would go
+  to the log, and a link signs in whoever has it. Without SMTP, other emails are logged by recipient and subject only.
+- The request log never holds the link: query values and prize links are redacted from every logged URL.
+
 ### The second factor
 
 An **authenticator app** (any TOTP app: 30-second codes of 6 digits) is asked of **admins and approvers**: they are the people whose

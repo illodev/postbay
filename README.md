@@ -113,8 +113,8 @@ npm run dev:api                           # http://localhost:3000, applies migra
 npm run dev:web                           # http://localhost:5173, proxies /api and /media to the API
 ```
 
-Set `AUTH_DEV_LOGIN=true` to sign in with just an email while developing; otherwise sign-in links are emailed (or
-written to the server log when `SMTP_URL` is not set). Dev sign-in is ignored when `NODE_ENV=production`.
+Set `AUTH_DEV_LOGIN=true` to sign in with just an email while developing; otherwise sign-in links are emailed (or, outside
+production, written to the server log when `SMTP_URL` is not set). Dev sign-in is ignored when `NODE_ENV=production`.
 
 For a single-origin run, the way production works:
 
@@ -214,7 +214,7 @@ See [`.env.example`](.env.example). The ones that matter:
 | `SECRET` | At least 32 characters; signs local media URLs |
 | `APP_URL`, `MEDIA_URL` | Public address of the app, and of the media domain (a separate one in production) |
 | `STORAGE_DRIVER` | `local` for development, `s3` for MinIO, S3 or R2 (`S3_*` variables, and `S3_PUBLIC_ENDPOINT` when browsers reach the bucket on a different address than the app does) |
-| `SMTP_URL`, `MAIL_FROM` | Email; without it, messages go to the log |
+| `SMTP_URL`, `MAIL_FROM` | Email; without it, messages go to the log in development. In production it is required while email-link sign-in is on, and without it no email text is logged |
 | `WEB_DIST` | Folder with the built web app, so the API serves it |
 | `TOKEN_KEY` | 32 bytes in base64 (`openssl rand -base64 32`). Seals network tokens and webhook secrets; required once Meta or Google is set, and for any webhook. **Keep a copy: losing it means connecting every account and replacing every webhook secret** |
 | `WEBHOOK_ALLOW_PRIVATE_NETWORKS` | Whether webhooks may point at loopback and private addresses. Default: yes in development, no in production |

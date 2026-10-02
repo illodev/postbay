@@ -43,7 +43,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/api/auth/magic-link', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { email } = z.object({ email: z.string().email().max(200) }).parse(req.body);
-    await authSvc.requestMagicLink(ctx, email);
+    authSvc.requestMagicLink(ctx, email); // not awaited: the answer must not say, by its timing or by an error, who has an account
     return reply.code(202).send({ ok: true });
   });
 

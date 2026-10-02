@@ -10,13 +10,31 @@ const LINK_MINUTES = 15;
 
 export const normalizeEmail = (e: string) => e.trim().toLowerCase();
 
+/** Sign-in links still being sent, per context, so a test (or anything else that must) can wait for them. */
+const sending = new WeakMap<Ctx, Set<Promise<void>>>();
+
 /**
- * Sends a sign-in link to people who exist. It always answers the same way,
- * so the endpoint cannot be used to find out who has an account.
+ * Asks for a sign-in link for an email. Nothing about the answer depends on whether the person exists: it does not wait
+ * for the database or the mail server (only people who exist get a link, and only they would make the answer slower), and
+ * a mail server that refuses or times out is the server's problem, logged here, not an error the asker sees.
  */
-export async function requestMagicLink(ctx: Ctx, rawEmail: string): Promise<void> {
+export function requestMagicLink(ctx: Ctx, rawEmail: string): void {
   if (!ctx.config.emailLinkLogin) return; // everyone signs in with single sign-on: no link is sent, and it answers the same way
-  const email = normalizeEmail(rawEmail);
+  const job = sendMagicLink(ctx, normalizeEmail(rawEmail)).catch((err) => {
+    ctx.log.error({ err: String(err) }, 'could not send a sign-in link');
+  });
+  let set = sending.get(ctx);
+  if (!set) sending.set(ctx, (set = new Set()));
+  set.add(job);
+  void job.finally(() => set!.delete(job));
+}
+
+/** Waits until every sign-in link asked for so far has been sent (or has failed). */
+export async function magicLinksSettled(ctx: Ctx): Promise<void> {
+  await Promise.all([...(sending.get(ctx) ?? [])]);
+}
+
+async function sendMagicLink(ctx: Ctx, email: string): Promise<void> {
   const user = await ctx.db.one('select id from app_user where lower(email) = $1', [email]);
   if (!user) return;
   const token = randomBytes(32).toString('base64url');

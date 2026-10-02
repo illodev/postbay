@@ -193,6 +193,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (!emailLinkLogin && !sso && !c.AUTH_DEV_LOGIN) {
     throw new Error('Invalid configuration: EMAIL_LINK_LOGIN=false leaves no way to sign in unless single sign-on is set up (OIDC_*)');
   }
+  // Without a mail server the link would go to the log, and a link signs in whoever has it: anyone who can read the log.
+  if (isProd && emailLinkLogin && !c.SMTP_URL) {
+    throw new Error(
+      'Invalid configuration: in production, sign-in links have to be emailed. Set SMTP_URL, or EMAIL_LINK_LOGIN=false when everyone signs in with single sign-on (OIDC_*)',
+    );
+  }
   const webhookAllowPrivate = c.WEBHOOK_ALLOW_PRIVATE_NETWORKS ? ['true', '1'].includes(c.WEBHOOK_ALLOW_PRIVATE_NETWORKS) : !isProd;
   return { ...c, isProd, devLogin: c.AUTH_DEV_LOGIN && !isProd, metaEnabled, googleEnabled, enabled, webhookAllowPrivate, secondFactorRequired, emailLinkLogin, sso };
 }
