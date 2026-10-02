@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type DragEvent } from 'react';
-import { api, ApiError, type CommentThread } from '../api';
+import { Avatar, displayName } from './Avatar';
+import { Icon, type IconName } from './icons';
+import { api, ApiError, type Anchor, type CommentThread } from '../api';
 import { t, tMaybe, type Key } from '../i18n';
 import { fmtBytes } from '../lib/format';
 import { createVersion, guessKind, guessMime, type AssetKind, type PendingFile, type Progress } from '../lib/upload';
@@ -90,12 +92,44 @@ export interface UploadVariant {
   id: string;
   format: string;
   style: string;
-  versions?: { id: string; number: number }[];
+  versions?: { id: string; number: number; by_agent?: boolean }[];
 }
+
+const KIND_ICON: Record<AssetKind, IconName> = { video: 'film', image: 'image', pdf: 'file', cover: 'image', subtitles: 'captions' };
+
+/** A look at the file before it goes: the picture, the video's first frame, or the kind of file it is. */
+function FilePreview({ file, kind }: { file: File; kind: AssetKind }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const visual = (kind === 'image' || kind === 'cover' || kind === 'video') && /^(image|video)\//.test(file.type);
+  useEffect(() => {
+    if (!visual) return;
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file, visual]);
+  return (
+    <span className={`pc-file-thumb is-${kind}`} aria-hidden="true">
+      {url && file.type.startsWith('image/') && <img src={url} alt="" />}
+      {url && file.type.startsWith('video/') && <video src={`${url}#t=0.1`} muted preload="metadata" playsInline />}
+      {!url && <Icon name={KIND_ICON[kind]} />}
+      {kind === 'video' && url && <span className="pc-file-thumb-badge"><Icon name="play" /></span>}
+    </span>
+  );
+}
+
+/** Where a comment points, as the review marks say it: 0:12, 0:12–0:15, or a page. */
+function markOf(a: Anchor | null): string | null {
+  if (!a) return null;
+  const tc = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  if (a.type === 'time') return a.t_end !== undefined && a.t_end > a.t ? `${tc(a.t)}–${tc(a.t_end)}` : tc(a.t);
+  return t('piece.upload.pageMark', { n: a.page });
+}
+
+const shortName = (name: string | null | undefined) => (name ? displayName(name.includes('@') ? null : name, name.includes('@') ? name : null) : t('piece.unknownAuthor'));
 
 /**
  * A new version for a variant: choose the variant (when the piece has several), drop or choose the files, say what changed and
- * which comments it fixes. Each file shows its own progress and, if it fails, its own error.
+ * which comments it fixes. Each file shows its own preview, progress and, if it fails, its own error.
  */
 export function UploadDialog({ variant, variants, latestVersionId, onClose }: {
   variant: UploadVariant;
@@ -208,6 +242,15 @@ export function UploadDialog({ variant, variants, latestVersionId, onClose }: {
   const rule = compositionProblem(shape, files);
   const ready = files.length > 0 && !rule && problems.every((p) => p === null);
   const hasFileError = Object.keys(fileErrors).length > 0;
+  const totalBytes = files.reduce((n, f) => n + f.file.size, 0);
+  // How far the whole upload is: bytes sent of the files already gone, plus the share of the one going now.
+  const overall = progress
+    ? progress.step === 'closing'
+      ? 1
+      : progress.step === 'hashing'
+        ? 0
+        : (files.slice(0, progress.file).reduce((n, f) => n + f.file.size, 0) + (files[progress.file]?.file.size ?? 0) * progress.fraction) / Math.max(1, totalBytes)
+    : 0;
 
   const status = progress
     ? progress.step === 'hashing'
@@ -217,59 +260,76 @@ export function UploadDialog({ variant, variants, latestVersionId, onClose }: {
         : t('piece.upload.status.closing')
     : null;
 
-  const variantName = (v: UploadVariant) => `${tMaybe(`piece.formatName.${v.format}`, v.format)}${v.style ? ` · ${v.style}` : ''}`;
-  let step = 0;
+  const variantName = (v: UploadVariant) => `${tMaybe(`piece.formatName.${v.format}`, v.format)} · ${v.style || tMaybe(`piece.formatHint.${v.format}`, v.format)}`;
+  const filesDone = ready;
+  const nFiles = picking ? 2 : 1;
 
   return (
     <Dialog title={t('piece.upload.title')} onClose={() => !busy && onClose()} wide>
       <p className="pc-up-sub">
-        <span className="tag">{tMaybe(`piece.formatName.${chosen.format}`, chosen.format)}</span>
-        {chosen.style && <span>{chosen.style}</span>}
-        {nextNumber !== null && <span className="muted">{t('piece.upload.willBe', { n: nextNumber })}</span>}
+        <span className="pc-ftag">{tMaybe(`piece.formatName.${chosen.format}`, chosen.format)}</span>
+        <span className="pc-up-sub-style">{chosen.style || tMaybe(`piece.formatHint.${chosen.format}`, chosen.format)}</span>
+        {nextNumber !== null && <span className="pc-up-next">{t('piece.upload.willBe', { n: nextNumber })}</span>}
       </p>
       <ol className="pc-steps">
         {picking && (
-          <li className="pc-step">
-            <span className="pc-step-n" aria-hidden="true">{++step}</span>
+          <li className="pc-step is-done">
+            <span className="pc-step-n" aria-hidden="true"><Icon name="check" /></span>
             <div className="pc-step-body">
-              <h3><label htmlFor="pc-up-variant">{t('piece.upload.step.variant')}</label></h3>
-              <select
-                id="pc-up-variant"
-                value={chosen.id}
-                disabled={busy}
-                onChange={(e) => {
-                  setChosenId(e.target.value);
-                  setResolves(new Set());
-                  setFileErrors({});
-                }}
-              >
-                {variants!.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.versions?.length ? t('piece.upload.variantOption', { name: variantName(v), n: v.versions.at(-1)!.number }) : variantName(v)}
-                  </option>
-                ))}
-              </select>
+              <h3 id="pc-up-variant-h">{t('piece.upload.step.variant')}</h3>
+              <div className="pc-up-variants" role="radiogroup" aria-labelledby="pc-up-variant-h">
+                {variants!.map((v) => {
+                  const lv = v.versions?.at(-1);
+                  const on = v.id === chosen.id;
+                  return (
+                    <label key={v.id} className="pc-up-variant" data-on={on || undefined} data-disabled={busy || undefined}>
+                      <input
+                        type="radio"
+                        className="sr-only"
+                        name="pc-up-variant"
+                        checked={on}
+                        disabled={busy}
+                        onChange={() => {
+                          setChosenId(v.id);
+                          setResolves(new Set());
+                          setFileErrors({});
+                        }}
+                      />
+                      <span className="pc-up-variant-thumb" aria-hidden="true">
+                        {lv ? <img src={`/api/versions/${lv.id}/thumb?w=240`} alt="" onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} /> : <Icon name="plus" />}
+                      </span>
+                      <span className="pc-up-variant-text">
+                        <span className="pc-up-variant-name">{variantName(v)}</span>
+                        <span className="pc-up-variant-meta">{lv ? t('piece.upload.variantNow', { n: lv.number, next: lv.number + 1 }) : t('piece.upload.variantFirst')}</span>
+                      </span>
+                      {on && <Icon name="check" className="pc-up-variant-check" />}
+                    </label>
+                  );
+                })}
+              </div>
             </div>
           </li>
         )}
 
-        <li className="pc-step">
-          <span className="pc-step-n" aria-hidden="true">{++step}</span>
+        <li className={`pc-step ${filesDone ? 'is-done' : ''}`}>
+          <span className="pc-step-n" aria-hidden="true">{filesDone ? <Icon name="check" /> : nFiles}</span>
           <div className="pc-step-body">
             <h3>{t('piece.upload.step.files')}</h3>
-            <p className="muted small pc-step-hint">{t(`piece.upload.hint.${shape}` as Key)}</p>
             <div
-              className={`pc-drop ${over ? 'is-over' : ''} ${busy ? 'is-busy' : ''}`}
+              className={`pc-drop ${over ? 'is-over' : ''} ${busy ? 'is-busy' : ''} ${files.length ? 'is-compact' : ''}`}
               onDragOver={(e) => { e.preventDefault(); if (!busy) setOver(true); }}
               onDragLeave={() => setOver(false)}
               onDrop={onDrop}
             >
-              <svg className="pc-drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M12 15V4M7 9l5-5 5 5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
-              </svg>
-              <span className="pc-drop-text">{shape === 'document' ? t('piece.upload.dropOne') : t('piece.upload.drop')}</span>
+              <span className="pc-drop-icon" aria-hidden="true"><Icon name="upload" /></span>
+              <span className="pc-drop-copy">
+                <span className="pc-drop-text">
+                  {files.length ? t('piece.upload.dropMore') : shape === 'document' ? t('piece.upload.dropOne') : t('piece.upload.drop')}
+                </span>
+                <span className="pc-drop-hint">{t(`piece.upload.hint.${shape}` as Key)}</span>
+              </span>
               <button type="button" className="btn btn-small" disabled={busy} onClick={() => input.current?.click()}>
-                {shape === 'document' ? t('piece.upload.chooseOne') : t('piece.upload.choose')}
+                {shape === 'document' ? (files.length ? t('piece.upload.chooseOther') : t('piece.upload.chooseOne')) : t('piece.upload.choose')}
               </button>
               <input
                 ref={input}
@@ -290,32 +350,24 @@ export function UploadDialog({ variant, variants, latestVersionId, onClose }: {
                   const ph = phaseOf(i, progress);
                   const err = fileErrors[i] ?? problems[i];
                   return (
-                    <li key={`${f.file.name}-${f.file.size}-${i}`} className={`pc-file ${err ? 'has-error' : ''}`}>
-                      <span className="pc-file-n mono" aria-hidden="true">{i + 1}</span>
-                      <span className="pc-file-name" title={f.file.name}>
-                        {f.file.name}
-                        <span className="mono muted">{fmtBytes(f.file.size)}</span>
-                      </span>
-                      <select
-                        className="pc-file-role"
-                        aria-label={t('piece.upload.roleOf', { name: f.file.name })}
-                        value={f.kind}
-                        disabled={busy}
-                        onChange={(e) => changeFiles((xs) => xs.map((x, j) => (j === i ? { ...x, kind: e.target.value as AssetKind } : x)))}
-                      >
-                        {ROLES.map((k) => <option key={k} value={k}>{roleLabel(k)}</option>)}
-                      </select>
-                      <span className="pc-file-tools">
-                        {shape !== 'document' && (
-                          <>
-                            <button type="button" className="icon-btn" aria-label={t('piece.upload.moveUp', { name: f.file.name })} title={t('piece.upload.moveUpShort')} disabled={busy || i === 0} onClick={() => move(i, -1)}>↑</button>
-                            <button type="button" className="icon-btn" aria-label={t('piece.upload.moveDown', { name: f.file.name })} title={t('piece.upload.moveDownShort')} disabled={busy || i === files.length - 1} onClick={() => move(i, 1)}>↓</button>
-                          </>
-                        )}
-                        <button type="button" className="icon-btn" aria-label={t('piece.upload.remove', { name: f.file.name })} title={t('piece.upload.removeShort')} disabled={busy} onClick={() => changeFiles((xs) => xs.filter((_, j) => j !== i))}>×</button>
-                      </span>
-                      {ph && (
-                        <span className="pc-file-prog">
+                    <li key={`${f.file.name}-${f.file.size}-${i}`} className={`pc-file ${err ? 'has-error' : ''} ${ph ? `is-${ph.phase}` : ''}`}>
+                      {shape === 'carousel' && <span className="pc-file-pos" aria-hidden="true">{i + 1}</span>}
+                      <FilePreview file={f.file} kind={f.kind} />
+                      <span className="pc-file-main">
+                        <span className="pc-file-name" title={f.file.name}>{f.file.name}</span>
+                        <span className="pc-file-meta">
+                          <span className="mono">{fmtBytes(f.file.size)}</span>
+                          {ph && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className={`pc-file-phase is-${ph.phase}`}>
+                                {t(`piece.upload.phase.${ph.phase}` as Key, { pct: pct(ph.fraction) })}
+                                {ph.phase === 'uploading' && progress?.note && <> · {progress.note}</>}
+                              </span>
+                            </>
+                          )}
+                        </span>
+                        {ph && (
                           <span
                             className={`pc-bar is-${ph.phase}`}
                             role="progressbar"
@@ -326,43 +378,63 @@ export function UploadDialog({ variant, variants, latestVersionId, onClose }: {
                           >
                             <i style={{ width: `${pct(ph.fraction)}%` }} />
                           </span>
-                          <span className="pc-file-phase">
-                            {t(`piece.upload.phase.${ph.phase}` as Key, { pct: pct(ph.fraction) })}
-                            {ph.phase === 'uploading' && progress?.note && <> · {progress.note}</>}
-                          </span>
-                        </span>
-                      )}
-                      {err && !ph && <span className="pc-file-err" role="alert">{err}</span>}
+                        )}
+                        {err && !ph && <span className="pc-file-err" role="alert">{err}</span>}
+                      </span>
+                      <select
+                        className="pc-file-role"
+                        aria-label={t('piece.upload.roleOf', { name: f.file.name })}
+                        title={t('piece.upload.roleHint')}
+                        value={f.kind}
+                        disabled={busy}
+                        onChange={(e) => changeFiles((xs) => xs.map((x, j) => (j === i ? { ...x, kind: e.target.value as AssetKind } : x)))}
+                      >
+                        {ROLES.map((k) => <option key={k} value={k}>{roleLabel(k)}</option>)}
+                      </select>
+                      <span className="pc-file-tools">
+                        {shape !== 'document' && files.length > 1 && (
+                          <>
+                            <button type="button" className="pc-tool" aria-label={t('piece.upload.moveUp', { name: f.file.name })} title={t('piece.upload.moveUpShort')} disabled={busy || i === 0} onClick={() => move(i, -1)}><Icon name="arrowUp" /></button>
+                            <button type="button" className="pc-tool" aria-label={t('piece.upload.moveDown', { name: f.file.name })} title={t('piece.upload.moveDownShort')} disabled={busy || i === files.length - 1} onClick={() => move(i, 1)}><Icon name="arrowDown" /></button>
+                          </>
+                        )}
+                        <button type="button" className="pc-tool is-remove" aria-label={t('piece.upload.remove', { name: f.file.name })} title={t('piece.upload.removeShort')} disabled={busy} onClick={() => changeFiles((xs) => xs.filter((_, j) => j !== i))}><Icon name="x" /></button>
+                      </span>
                     </li>
                   );
                 })}
               </ul>
             )}
-            {rule && <p className="pc-rule" role="status">{rule}</p>}
+            {rule && <p className="pc-rule" role="status"><Icon name="alert" />{rule}</p>}
           </div>
         </li>
 
         <li className="pc-step">
-          <span className="pc-step-n" aria-hidden="true">{++step}</span>
+          <span className="pc-step-n" aria-hidden="true">{nFiles + 1}</span>
           <div className="pc-step-body">
             <h3><label htmlFor="pc-up-notes">{t('piece.upload.step.notes')}</label></h3>
-            <p className="muted small pc-step-hint">{t('piece.upload.notesHint')}</p>
-            <textarea id="pc-up-notes" value={notes} onChange={(e) => setNotes(e.target.value)} disabled={busy} placeholder={t('piece.upload.notesPlaceholder')} />
+            <textarea id="pc-up-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={busy} placeholder={t('piece.upload.notesPlaceholder')} />
             {open && open.length > 0 && (
               <fieldset className="pc-fixes">
                 <legend>{t('piece.upload.fixes', { count: open.length })}</legend>
-                <div className="stack" style={{ gap: '.5rem' }}>
-                  {open.map((c) => (
-                    <label key={c.id} className="check">
-                      <input type="checkbox" checked={resolves.has(c.id)} onChange={() => toggle(c.id)} disabled={busy} />
-                      <span>
-                        {c.body}{' '}
-                        <span className="muted small">{t('piece.upload.fixFrom', { n: c.version_number, who: c.author ?? t('piece.unknownAuthor') })}</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-                <p className="muted small pc-fixes-note">{t('piece.upload.fixesNote')}</p>
+                <ul className="pc-fix-list">
+                  {open.map((c) => {
+                    const mark = markOf(c.anchor);
+                    return (
+                      <li key={c.id}>
+                        <label className="pc-fix" data-on={resolves.has(c.id) || undefined}>
+                          <input type="checkbox" checked={resolves.has(c.id)} onChange={() => toggle(c.id)} disabled={busy} />
+                          <Avatar name={shortName(c.author)} size={20} />
+                          <span className="pc-fix-text">
+                            {mark && <span className="tc">{mark}</span>}
+                            <span className="pc-fix-body">{c.body}</span>
+                          </span>
+                          <span className="pc-fix-from">{t('piece.upload.fixFrom', { n: c.version_number, who: shortName(c.author) })}</span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
               </fieldset>
             )}
           </div>
@@ -371,10 +443,20 @@ export function UploadDialog({ variant, variants, latestVersionId, onClose }: {
 
       {send.error && (hasFileError ? <div className="notice notice-bad" role="alert">{t('piece.upload.failedFile')}</div> : <ErrorBox error={send.error} />)}
       <div className="pc-up-foot">
-        <span className="pc-up-status" role="status">{status ?? (files.length > 0 ? t('piece.upload.summary', { count: files.length, size: fmtBytes(files.reduce((n, f) => n + f.file.size, 0)) }) : '')}</span>
-        <div className="row">
+        <div className="pc-up-status" role="status">
+          {status ? (
+            <>
+              <span className="pc-up-status-text">{status}</span>
+              <span className="pc-bar is-uploading pc-up-overall" aria-hidden="true"><i style={{ width: `${pct(overall)}%` }} /></span>
+            </>
+          ) : files.length > 0 ? (
+            <span className="pc-up-status-text">{t('piece.upload.summary', { count: files.length, size: fmtBytes(totalBytes) })}</span>
+          ) : null}
+        </div>
+        <div className="pc-up-buttons">
           <button type="button" className="btn" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
           <button type="button" className="btn btn-primary" disabled={busy || !ready} onClick={() => send.mutate()}>
+            <Icon name="upload" />
             {busy ? t('piece.upload.sending') : t('piece.upload.submit')}
           </button>
         </div>

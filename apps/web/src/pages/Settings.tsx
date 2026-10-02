@@ -6,7 +6,7 @@ import { api, type Account, type BrandInvitation, type BrandSettings, type Integ
 import { Avatar, displayName } from '../components/Avatar';
 import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
-import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, MenuButton, NetMark, Skeleton, Spinner, Switch, useConfirm, useToast } from '../components/ui';
+import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, MoreMenu, NetMark, Skeleton, Spinner, Switch, useConfirm, useToast } from '../components/ui';
 import { t, tMaybe, type Key } from '../i18n';
 import { fmtDateTime, fmtDay, fmtShort, NETWORK_LABEL, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -219,7 +219,7 @@ function Members({ brandId }: { brandId: string }) {
                     <select className="set-inline-select" aria-label={t('settings.members.roleOf', { email: m.email })} value={m.role} onChange={(e) => change.mutate({ id: m.id, role: e.target.value as Role })}>
                       {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                     </select>
-                    <MenuButton
+                    <MoreMenu
                       label={t('settings.members.actionsOf', { name: who })}
                       items={[
                         canReset && {
@@ -538,7 +538,7 @@ function Accounts({ brandId }: { brandId: string }) {
           {a.status === 'reconnect_required' && provider?.configured && (
             <button className="btn btn-small btn-primary" onClick={() => start(provider, a)}>{t('settings.accounts.reconnect')}</button>
           )}
-          <MenuButton
+          <MoreMenu
             label={t('settings.accounts.actionsOf', { name: a.display_name })}
             items={[
               a.connected && { label: t('settings.accounts.check'), icon: 'check', onSelect: () => setChecking(a) },
@@ -577,7 +577,7 @@ function Accounts({ brandId }: { brandId: string }) {
         </div>
         <div className="ent-side">
           {provider?.configured && <button className="btn btn-small" onClick={() => start(provider, a)}><Icon name="link" /><span>{t('settings.accounts.connect')}</span></button>}
-          <MenuButton
+          <MoreMenu
             label={t('settings.accounts.actionsOf', { name: a.display_name })}
             items={[
               {
@@ -878,7 +878,7 @@ function Tokens({ brandId }: { brandId: string }) {
                   <div className="ent-side">
                     {tk.revoked_at ? <Chip state="failed" label={t('settings.tokens.revoked')} /> : expired(tk.expires_at) ? <Chip state="draft" label={t('settings.tokens.expired')} /> : <Chip state="approved" label={t('settings.tokens.activeUntil', { date: fmtDay(tk.expires_at) })} />}
                     {!gone ? (
-                      <MenuButton
+                      <MoreMenu
                         label={t('settings.tokens.actionsOf', { name: tk.name })}
                         items={[{
                           label: t('settings.tokens.revoke'), icon: 'ban', danger: true,

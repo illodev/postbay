@@ -65,6 +65,14 @@ export interface Requirements {
   approval_checklist: string[];
 }
 
+export interface Calendar {
+  timezone: string;
+  paused: boolean;
+  publications: { id: string; status: string; scheduled_at: string; account_id: string; network: string; account_name: string; piece_id: string; piece_title: string; version_number: number; scheduled_by?: string }[];
+  blocked: { day: string; reason: string }[];
+  slots: { id: string; account_id: string; network: string; account_name: string; label: string; day: string; at: string; filled: boolean; past: boolean; blocked: boolean }[];
+}
+
 export interface RunStart {
   id: string;
   round: number;
@@ -116,7 +124,13 @@ export class Studio {
   piece(id: string) { return this.call<{ id: string; title: string; source?: string | null }>('GET', `/api/pieces/${id}`); }
   comments(versionId: string) { return this.call<Comment[]>('GET', `/api/versions/${versionId}/comments?status=open&carried=true`); }
   requirements(brandId: string) { return this.call<Requirements>('GET', `/api/brands/${brandId}/requirements`); }
-  brandSettings(brandId: string) { return this.call<{ name: string; timezone: string; agent: { currency: string } }>('GET', `/api/brands/${brandId}`); }
+  brandSettings(brandId: string) { return this.call<{ name: string; timezone: string; agent: { currency: string; can_schedule_approved?: boolean } }>('GET', `/api/brands/${brandId}`); }
+  /** The brand's calendar between two days of its own (YYYY-MM-DD): publications, blocked days and the weekly slots, filled or free. */
+  calendar(brandId: string, from: string, to: string) { return this.call<Calendar>('GET', `/api/brands/${brandId}/calendar?from=${from}&to=${to}`); }
+  /** Schedules an approved version on an account: what an agent may do only where the brand allows it, inside a run on the piece. */
+  schedule(versionId: string, body: { accountId: string; scheduledAt: string; text?: string; firstComment?: string }) {
+    return this.call<{ id: string; scheduled_at: string; status: string; manual: boolean; scheduled_by: string }>('POST', `/api/versions/${versionId}/publications`, body);
+  }
 
   startRun(scope: { pieceId: string } | { brandId: string }, body: { trigger: string; eventId?: string }) {
     const url = 'pieceId' in scope ? `/api/pieces/${scope.pieceId}/agent-runs` : `/api/brands/${scope.brandId}/agent-runs`;

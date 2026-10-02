@@ -312,11 +312,56 @@ tbody tr:hover td { background: rgb(255 255 255 / 2.5%); }
 th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-family: var(--mono); font-size: .8125rem; }
 
 /* ───────────────────────────── dialogs and toasts ───────────────────────────── */
+.dialog-overlay { position: fixed; inset: 0; z-index: 80; background: rgb(5 6 8 / 72%); }
 .dialog { border: 0; border-radius: 14px; padding: 0; width: min(540px, calc(100vw - 24px)); background: var(--surface); color: var(--text); box-shadow: 0 24px 80px rgb(0 0 0 / 60%); }
+/* Radix's dialog is a div: it places itself (a browser <dialog> was placed by the browser) */
+div.dialog { position: fixed; z-index: 81; left: 50%; top: 50%; transform: translate(-50%, -50%); max-height: calc(100dvh - 48px); display: flex; flex-direction: column; }
+dialog.dialog::backdrop { background: rgb(5 6 8 / 72%); }
+.dialog:focus { outline: none; }
 .dialog-wide { width: min(880px, calc(100vw - 24px)); }
-.dialog::backdrop { background: rgb(5 6 8 / 70%); backdrop-filter: blur(2px); }
+.dialog-overlay[data-state='open'] { animation: fade-in .14s ease-out; }
+.dialog[data-state='open'] { animation: dialog-in .16s ease-out; }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes dialog-in { from { opacity: 0; transform: translate(-50%, -48%) scale(.98); } }
 .dialog-body { padding: 1.1rem 1.35rem 1.35rem; display: flex; flex-direction: column; gap: 1rem; max-height: calc(100dvh - 48px); overflow-y: auto; }
-.dialog-head { display: flex; justify-content: space-between; align-items: center; }
+.dialog-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.dialog-head .icon-btn { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; }
+.dialog-head .icon-btn svg { width: 16px; height: 16px; }
+
+/* ───────────────────────────── floating (Radix): popovers, menus, selects, tooltips ───────────────────────────── */
+.float {
+  z-index: 90; min-width: 180px; max-width: calc(100vw - 16px); max-height: min(72vh, var(--radix-popper-available-height, 72vh)); overflow-y: auto;
+  background: var(--surface-2); color: var(--text); border-radius: 10px; box-shadow: 0 16px 48px rgb(0 0 0 / 55%); padding: 4px;
+}
+.float:focus { outline: none; }
+.float[data-state='open'] { animation: float-in .12s ease-out; }
+@keyframes float-in { from { opacity: 0; transform: translateY(-2px); } }
+.menu-item[data-highlighted] { background: var(--control); outline: none; }
+.menu-item[data-disabled] { opacity: .45; cursor: default; }
+.menu-item-danger, .menu-item-danger svg { color: var(--bad); }
+.menu-hint { margin-left: auto; padding-left: 1rem; color: var(--faint); font-size: .75rem; }
+.menu-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-who { display: flex; gap: .6rem; align-items: center; padding: .45rem .6rem .55rem; }
+.brand-mark.brand-mark-sm { width: 20px; height: 20px; font-size: .6875rem; border-radius: 5px; }
+.select-trigger {
+  appearance: none; display: inline-flex; align-items: center; justify-content: space-between; gap: .5rem; width: 100%; min-height: 34px; padding: 0 .55rem 0 .7rem;
+  font: inherit; font-size: .875rem; color: var(--text); background: var(--control); border: 0; border-radius: 7px; cursor: pointer; text-align: left; white-space: nowrap;
+}
+.select-trigger:hover:not(:disabled) { background: var(--control-hover); }
+.select-trigger:disabled { opacity: .55; cursor: not-allowed; }
+.select-trigger[data-placeholder] { color: var(--faint); }
+.select-trigger > span:first-child { display: inline-flex; align-items: center; gap: .5rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.select-chevron { display: grid; color: var(--muted); flex: none; }
+.select-chevron svg { width: 14px; height: 14px; }
+.select-list { min-width: var(--radix-select-trigger-width); max-height: min(60vh, var(--radix-select-content-available-height, 60vh)); }
+.select-check { margin-left: auto; display: grid; color: var(--accent); }
+.select-check svg { width: 14px; height: 14px; }
+.tip {
+  z-index: 95; display: inline-flex; align-items: center; gap: .5rem; max-width: 280px; padding: 5px 8px; border-radius: 6px;
+  background: #2f3247; color: var(--text); font-size: .75rem; line-height: 1.35; box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
+}
+.tip .kbd { margin-left: 0; background: rgb(255 255 255 / 9%); }
+@media (prefers-reduced-motion: reduce) { .float, .dialog, .dialog-overlay { animation: none !important; } }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: .5rem; z-index: 100; max-width: calc(100vw - 32px); }
 .toast { padding: .65rem .95rem; border-radius: var(--radius-sm); background: var(--surface-3); color: var(--text); box-shadow: 0 12px 32px rgb(0 0 0 / 50%); font-size: .875rem; }
 .toast-error { background: #3a1517; color: #ffd6d7; }

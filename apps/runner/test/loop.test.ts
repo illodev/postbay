@@ -663,7 +663,7 @@ describe('an empty slot', () => {
     const campaign = await env.call(env.users.admin, 'POST', `/api/brands/${env.brandId}/campaigns`, { name: 'Spring launch', objective: 'Make the new menu famous' });
     // A slot tomorrow at noon, in the brand's own time.
     const tomorrow = DateTime.now().setZone('Europe/Madrid').plus({ days: 1 });
-    await env.call(env.users.admin, 'POST', `/api/brands/${env.brandId}/slots`, { accountId: env.accounts.instagram, weekday: tomorrow.weekday, localTime: '12:00', label: 'Reels' });
+    const slot = await env.call(env.users.admin, 'POST', `/api/brands/${env.brandId}/slots`, { accountId: env.accounts.instagram, weekday: tomorrow.weekday, localTime: '12:00', label: 'Reels' });
     expect(await scanSlotAlerts(env.ctx)).toBe(1);
     await flush();
 
@@ -674,6 +674,9 @@ describe('an empty slot', () => {
     expect(created.author_token_id).not.toBeNull();
     expect(created.campaign_id).toBe(campaign.body.id);
     expect(run.piece_id).toBe(created.id); // the run points at what it made
+    // Made for that slot occurrence: approving it will schedule it there.
+    expect(created.slot_id).toBe(slot.body.id);
+    expect(DateTime.fromJSDate(created.slot_at).setZone('Europe/Madrid').toFormat('yyyy-MM-dd HH:mm')).toBe(`${tomorrow.toISODate()} 12:00`);
     expect(run.version_id).not.toBeNull();
     const slotDir = readdirSync(path.join(r.config.workspaceRoot, 'lumen')).find((d) => d.startsWith('_slots_'))!;
     const runs = path.join(r.config.workspaceRoot, 'lumen', slotDir, 'runs');
@@ -681,5 +684,90 @@ describe('an empty slot', () => {
     expect(instr).toContain('Spring launch: Make the new menu famous');
     expect(instr).toContain('Reels');
     await env.db.query('delete from slot where brand_id = $1', [env.brandId]);
+  });
+});
+
+describe('an approved version, for an agent that schedules', () => {
+  const allow = (on: boolean) => env.call(env.users.admin, 'PATCH', `/api/brands/${env.brandId}`, { agent: { can_schedule_approved: on } });
+  const schedulingRig = (fakeSchedule?: unknown) => rig({
+    mode: 'schedule', webhookEvents: ['version.approved'],
+    templates: { 'version.approved': path.join(here, '../templates/version-approved.md') },
+    agentExtra: { env: { FAKE_AGENT_MODE: 'schedule', ...(fakeSchedule ? { FAKE_SCHEDULE: JSON.stringify(fakeSchedule) } : {}) } },
+  });
+  /** A piece with a version people approved for these accounts; the event goes out to the runner. */
+  async function approvedPiece(accounts: string[]) {
+    const p = await piece();
+    const a = await env.approve(env.users.approver, p.versionId, accounts);
+    expect(a.status, JSON.stringify(a.body)).toBe(201);
+    await flush();
+    return p;
+  }
+  afterEach(async () => {
+    await allow(false);
+    await env.db.query('delete from slot where brand_id = $1', [env.brandId]);
+  });
+
+  it('has the agent pick a free slot of an approved account, and the studio schedules it as the agent\'s', async () => {
+    await allow(true);
+    const r = await schedulingRig();
+    const day = DateTime.now().setZone('Europe/Madrid').plus({ days: 3 });
+    const slot = await env.call(env.users.admin, 'POST', `/api/brands/${env.brandId}/slots`, { accountId: env.accounts.instagram, weekday: day.weekday, localTime: '19:00', label: 'Agent slot' });
+    const { pieceId, versionId } = await approvedPiece([env.accounts.instagram]);
+    const run = await finishedRun(pieceId);
+    expect(run).toMatchObject({ trigger: 'version.approved', outcome: 'scheduled', version_id: versionId });
+    expect(run.notes).toContain('Scheduled 1 post');
+    expect(run.notes).toContain('told the version: true');
+    const pubs = await env.db.query('select * from publication where version_id = $1', [versionId]);
+    expect(pubs).toHaveLength(1);
+    expect(pubs[0]).toMatchObject({ scheduled_by: 'agent', social_account_id: env.accounts.instagram, text: 'Out in the slot Agent slot', created_by: null });
+    expect(pubs[0]!.created_by_token).not.toBeNull();
+    expect(DateTime.fromJSDate(pubs[0]!.scheduled_at).setZone('Europe/Madrid').toFormat('yyyy-MM-dd HH:mm')).toBe(`${day.toISODate()} 19:00`);
+    expect(run.detail.scheduled).toEqual([expect.objectContaining({ accountId: env.accounts.instagram, publicationId: pubs[0]!.id })]);
+    // The agent was shown the calendar of the approved account, with the free slot in it, and made no version.
+    const runDir = runDirOf(r, pieceId)[0]!;
+    const instr = readFileSync(path.join(runDir, 'instructions.md'), 'utf8');
+    expect(slot.status).toBe(201);
+    expect(instr).toContain('### Free slots');
+    expect(instr).toContain('Agent slot');
+    expect(existsSync(path.join(runDir, 'input', 'calendar.json'))).toBe(true);
+    expect((await versions((await env.db.one('select variant_id from version where id = $1', [versionId]))!.variant_id)).length).toBe(1);
+  });
+
+  it('reports what the studio refused (an account the approval does not cover) next to what it scheduled', async () => {
+    await allow(true);
+    const at = DateTime.now().plus({ days: 5 }).set({ hour: 17, minute: 0, second: 0, millisecond: 0 }).toUTC().toISO();
+    await schedulingRig([
+      { versionId: '$VERSION', accountId: env.accounts.youtube, at },
+      { versionId: '$VERSION', accountId: env.accounts.instagram, at, text: 'Here it is' },
+    ]);
+    const { pieceId, versionId } = await approvedPiece([env.accounts.instagram]);
+    const run = await finishedRun(pieceId);
+    expect(run.outcome).toBe('scheduled');
+    expect(run.detail.refused).toEqual([expect.objectContaining({ accountId: env.accounts.youtube, code: 'account_not_approved' })]);
+    expect(run.notes).toContain('the studio refused 1');
+    expect(await env.db.query('select social_account_id from publication where version_id = $1', [versionId])).toEqual([{ social_account_id: env.accounts.instagram }]);
+  });
+
+  it('hands it to a person when the agent schedules nothing, and refusals of everything are a failure', async () => {
+    await allow(true);
+    let r = await schedulingRig([]);
+    const a = await approvedPiece([env.accounts.instagram]);
+    expect((await finishedRun(a.pieceId)).outcome).toBe('needs_people');
+    expect(await env.db.query(`select 1 from notification where kind = 'agent.needs_person' and payload->>'pieceId' = $1`, [a.pieceId])).not.toHaveLength(0);
+    await r.stop();
+    rigs.splice(rigs.indexOf(r), 1);
+    r = await schedulingRig([{ versionId: '$VERSION', accountId: env.accounts.instagram, at: new Date(Date.now() - 3_600_000).toISOString() }]);
+    const b = await approvedPiece([env.accounts.instagram]);
+    const run = await finishedRun(b.pieceId);
+    expect(run.outcome).toBe('failed');
+    expect(run.notes).toContain('past_date');
+  });
+
+  it('does not start a run at all where the brand does not let the agent schedule', async () => {
+    const r = await schedulingRig();
+    const { pieceId } = await approvedPiece([env.accounts.instagram]);
+    await waitFor('the event to be handled', async () => r.queue.list().length === 0);
+    expect(await env.db.query('select 1 from agent_run where piece_id = $1', [pieceId])).toHaveLength(0);
+    expect(await env.db.query('select 1 from publication p join variant v on v.id = p.variant_id where v.piece_id = $1', [pieceId])).toHaveLength(0);
   });
 });

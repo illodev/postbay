@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { api, type Webhook, type WebhookDelivery, type WebhookDeliveryDetail, type WebhookEventType } from '../api';
 import { t, tMaybe } from '../i18n';
 import { EVENT_LABEL, fmtDateTime, fmtShort } from '../lib/format';
-import { Chip, CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, MenuButton, Spinner, useConfirm, useToast } from './ui';
+import { Chip, CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, MoreMenu, Spinner, useConfirm, useToast } from './ui';
 
 interface List {
   items: Webhook[];
@@ -247,7 +247,7 @@ export function Webhooks({ brandId }: { brandId: string }) {
                     <button className="btn btn-small" onClick={() => setEditing(h)}>{t('common.edit')}</button>
                   </div>
                   <div className="ent-actions">
-                    <MenuButton
+                    <MoreMenu
                       label={t('settings.webhooks.actions')}
                       items={[
                         { label: h.active ? t('settings.webhooks.disable') : t('settings.webhooks.enable'), icon: h.active ? 'ban' : 'check', onSelect: () => patch.mutate({ id: h.id, body: { active: !h.active } }) },

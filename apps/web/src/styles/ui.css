@@ -13,9 +13,9 @@
 .confirm-text strong { color: var(--text); font-weight: 500; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .confirm-actions .btn { min-height: 36px; }
-/* styles.css loads after this file: the doubled class wins over its .btn */
-.btn.btn-confirm-danger { background: var(--bad); color: #fff; }
-.btn.btn-confirm-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 88%, #fff); }
+/* .btn.: styles.css loads after this file, and its .btn would win */
+.btn.btn-confirm-danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn.btn-confirm-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 88%, #fff); border-color: color-mix(in srgb, var(--bad) 88%, #fff); }
 @media (max-width: 480px) {
   .confirm-actions { flex-direction: column-reverse; }
   .confirm-actions .btn { width: 100%; }
@@ -38,17 +38,7 @@
 @keyframes skeleton-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 
-/* ───────────────────────────── a row's "⋯" menu ───────────────────────────── */
-.menu-wrap { position: relative; display: inline-flex; flex: none; }
-.menu-trigger { appearance: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; }
-.menu-trigger:hover, .menu-trigger[aria-expanded='true'] { background: var(--control-hover); color: var(--text); }
+/* ───────────────────────────── a row's "⋯" button (its menu is <Menu>) ───────────────────────────── */
+.menu-trigger { appearance: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; flex: none; }
+.menu-trigger:hover, .menu-trigger[data-state='open'] { background: var(--control-hover); color: var(--text); }
 .menu-trigger svg { width: 16px; height: 16px; stroke-width: 3; }
-.menu-pop { position: absolute; top: calc(100% + 4px); z-index: 70; min-width: 196px; max-width: min(300px, 86vw); padding: 4px; background: var(--surface-2); border-radius: 10px; box-shadow: 0 16px 40px rgb(0 0 0 / 55%); display: flex; flex-direction: column; gap: 1px; }
-.menu-pop-right { right: 0; }
-.menu-pop-left { left: 0; }
-.menu-pop .menu-item { height: 32px; padding: 0 10px; gap: 9px; font-size: .8125rem; line-height: 1; border-radius: 6px; white-space: nowrap; }
-.menu-pop .menu-item:hover:not(:disabled), .menu-pop .menu-item:focus-visible { background: var(--control-hover); outline: none; }
-.menu-pop .menu-item:disabled { opacity: .45; cursor: not-allowed; }
-.menu-pop .menu-item span { overflow: hidden; text-overflow: ellipsis; }
-.menu-pop .menu-item-danger { color: var(--bad); }
-.menu-pop .menu-item-danger svg { color: var(--bad); }

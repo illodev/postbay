@@ -20,6 +20,7 @@ import * as brand from '../services/brand.js';
 import * as brands from '../services/brands.js';
 import * as comments from '../services/comments.js';
 import * as connections from '../services/connections.js';
+import * as overview from '../services/overview.js';
 import * as pieces from '../services/pieces.js';
 import * as resumable from '../services/resumable.js';
 import * as pubs from '../services/publications.js';
@@ -198,6 +199,15 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.delete('/api/brands/:brandId/members/:memberId', async (req) => {
     const { brandId, memberId } = params(req, 'brandId', 'memberId');
     return brand.removeMember(ctx, P(req), brandId, memberId);
+  });
+  // Deactivating keeps the person in the brand's history but out of the brand; reactivating lets them back (their tokens stay revoked).
+  app.post('/api/brands/:brandId/members/:memberId/deactivate', async (req) => {
+    const { brandId, memberId } = params(req, 'brandId', 'memberId');
+    return brand.deactivateMember(ctx, P(req), brandId, memberId);
+  });
+  app.post('/api/brands/:brandId/members/:memberId/reactivate', async (req) => {
+    const { brandId, memberId } = params(req, 'brandId', 'memberId');
+    return brand.reactivateMember(ctx, P(req), brandId, memberId);
   });
 
   app.get('/api/brands/:brandId/accounts', async (req) => brand.listAccounts(ctx, P(req), params(req, 'brandId').brandId));
@@ -382,6 +392,8 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ───────────────────────────── pieces and variants ─────────────────────────────
 
+  // "For you": what waits for this person, what goes out today, what needs a hand and what just happened.
+  app.get('/api/brands/:brandId/overview', async (req) => overview.brandOverview(ctx, userOnly(req), params(req, 'brandId').brandId));
   app.get('/api/brands/:brandId/pieces', async (req) => {
     const q = z.object({ state: z.string().optional(), q: z.string().max(200).optional() }).parse(req.query);
     return pieces.listPieces(ctx, P(req), params(req, 'brandId').brandId, q);
@@ -486,7 +498,9 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
       `select n.id, n.kind, n.payload, n.read_at, n.created_at, b.id as brand_id, b.name as brand, pc.title as piece_title
        from notification n join brand b on b.id = n.brand_id
        left join piece pc on pc.id = nullif(n.payload->>'pieceId', '')::uuid
-       where n.user_id = $1 order by n.created_at desc limit 50`,
+       where n.user_id = $1
+         and not exists (select 1 from member m where m.user_id = n.user_id and m.brand_id = n.brand_id and m.deactivated_at is not null)
+       order by n.created_at desc limit 50`,
       [p.userId],
     );
     return { items, unread: items.filter((i) => !i.read_at).length };

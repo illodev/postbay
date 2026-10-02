@@ -105,7 +105,7 @@ export async function sessionState(ctx: Ctx, token: string): Promise<SessionStat
   const row = await ctx.db.one<{ id: string; email: string; via: string; second_factor_at: Date | null; enrolled: boolean; privileged: boolean }>(
     `select u.id, u.email, s.via, s.second_factor_at,
             exists(select 1 from user_totp t where t.user_id = u.id and t.confirmed_at is not null) as enrolled,
-            exists(select 1 from member m where m.user_id = u.id and m.role in ('admin','approver')) as privileged
+            exists(select 1 from member m where m.user_id = u.id and m.role in ('admin','approver') and m.deactivated_at is null) as privileged
      from session s join app_user u on u.id = s.user_id where s.token_hash = $1 and s.expires_at > now()`,
     [sha(token)],
   );
@@ -139,15 +139,15 @@ export async function markSecondFactor(ctx: Ctx, token: string): Promise<void> {
 }
 
 /**
- * A producer token works while it is not revoked or expired, and while whoever made it is still an admin of its brand: someone
- * who leaves the brand, or stops managing it, does not keep a way in through a token they made (their tokens are revoked then too,
- * see services/brand.ts; this holds even for a change made straight in the database).
+ * A producer token works while it is not revoked or expired, and while whoever made it is still an active admin of its brand: someone
+ * who leaves the brand, stops managing it or is deactivated in it does not keep a way in through a token they made (their tokens are
+ * revoked then too, see services/brand.ts; this holds even for a change made straight in the database).
  */
 export async function principalFromApiToken(ctx: Ctx, token: string): Promise<Principal | null> {
   const row = await ctx.db.one<{ id: string; brand_id: string; created_by: string }>(
     `update api_token t set last_used_at = now()
      where t.token_hash = $1 and t.revoked_at is null and t.expires_at > now()
-       and exists (select 1 from member m where m.user_id = t.created_by and m.brand_id = t.brand_id and m.role = 'admin')
+       and exists (select 1 from member m where m.user_id = t.created_by and m.brand_id = t.brand_id and m.role = 'admin' and m.deactivated_at is null)
      returning t.id, t.brand_id, t.created_by`,
     [hashToken(token)],
   );
@@ -159,11 +159,18 @@ export async function me(ctx: Ctx, userId: string) {
   const brands = await ctx.db.query(
     `select b.id, b.name, b.timezone, b.paused, m.role, w.name as workspace
      from member m join brand b on b.id = m.brand_id join workspace w on w.id = b.workspace_id
-     where m.user_id = $1 order by w.name, b.name`,
+     where m.user_id = $1 and m.deactivated_at is null order by w.name, b.name`,
+    [userId],
+  );
+  // Brands this person was deactivated in: they cannot open them, but are told which they are and since when.
+  const deactivatedIn = await ctx.db.query(
+    `select b.id, b.name, w.name as workspace, m.deactivated_at
+     from member m join brand b on b.id = m.brand_id join workspace w on w.id = b.workspace_id
+     where m.user_id = $1 and m.deactivated_at is not null order by w.name, b.name`,
     [userId],
   );
   // Brands of other workspaces that asked this person to join: nothing changes until they accept (POST /api/invitations/:id/accept).
-  return { user, brands, invitations: await myInvitations(ctx, userId) };
+  return { user, brands, deactivated_in: deactivatedIn, invitations: await myInvitations(ctx, userId) };
 }
 
 /** For a producer token: which brand it belongs to, so a script needs nothing but the address and the token. */
