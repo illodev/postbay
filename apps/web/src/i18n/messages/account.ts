@@ -5,7 +5,6 @@ import { define } from './define';
 export const account = define({
   es: {
     'account.title': 'Tu cuenta',
-    'account.subtitle': 'Quién eres aquí, en qué idioma lo ves, cómo demuestras que eres tú y qué te avisamos.',
 
     'account.invitations.title': { one: 'Te han invitado a una marca', other: 'Te han invitado a {count} marcas' },
     'account.invitations.hint': 'No cambia nada hasta que respondas. Si aceptas, entrarás en la marca con el rol que te ofrecen.',
@@ -159,7 +158,6 @@ export const account = define({
   },
   en: {
     'account.title': 'Your account',
-    'account.subtitle': 'Who you are here, the language you see it in, how you prove it is you and what you are told about.',
 
     'account.invitations.title': { one: 'You have been invited to a brand', other: 'You have been invited to {count} brands' },
     'account.invitations.hint': 'Nothing changes until you answer. If you accept, you join the brand with the role they offer.',

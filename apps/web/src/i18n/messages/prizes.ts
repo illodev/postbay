@@ -9,7 +9,6 @@ export const prizes = define({
     'prizes.kind.link': 'Enlace',
 
     'prizes.settings.title': 'Premios por comentar',
-    'prizes.settings.hint': 'Una publicación puede llevar un premio: quien comenta una palabra clave recibe un archivo o un enlace por mensaje privado, enviado por la app. Funciona en Instagram y Facebook; las demás redes tienen una página pública que se enlaza desde un comentario fijado.',
     'prizes.settings.on': 'Activados',
     'prizes.settings.off': 'Desactivados',
     'prizes.settings.enable': 'Usar premios en esta marca',
@@ -163,7 +162,6 @@ export const prizes = define({
     'prizes.kind.link': 'Link',
 
     'prizes.settings.title': 'Prizes for commenting',
-    'prizes.settings.hint': 'A post can carry a prize: whoever comments a keyword gets a file or a link by private message, sent by the app. It works on Instagram and Facebook; the other networks get a public page to link from a pinned comment.',
     'prizes.settings.on': 'On',
     'prizes.settings.off': 'Off',
     'prizes.settings.enable': 'Use prizes in this brand',

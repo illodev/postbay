@@ -610,7 +610,7 @@ export function CalendarPage() {
           <button className="btn btn-ghost ops-iconbtn" onClick={() => step(1)} aria-label={t('calendar.next')} title={t('calendar.next')}><Icon name="chevronRight" /></button>
           <button className="btn" onClick={() => setAnchor(DateTime.now().setZone(zone))}>{t('calendar.today')}</button>
           <h2 className="oc-period" aria-live="polite">{title}</h2>
-          {paused && <Chip state="on_hold" label={t('calendar.paused')} />}
+          {paused && <span title={t('calendar.pausedHint')}><Chip state="on_hold" label={t('calendar.paused')} /></span>}
         </div>
         <div className="oc-tools">
           {data && (
