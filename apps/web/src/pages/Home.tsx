@@ -372,6 +372,7 @@ function ActivityEvent({ e }: { e: ActivityItem }) {
         <p className="hf-line">
           {line}
           <Tipped label={fullDate(e.at)}><time className="hf-when" dateTime={e.at}>{ago(e.at)}</time></Tipped>
+          {e.via && <span className="hf-when">· {t('home.activity.via', { client: e.via })}</span>}
         </p>
         {quoted && (
           <p className={`hf-quote ${e.kind === 'agent_handed' ? 'hf-quote-agent' : ''}`}>

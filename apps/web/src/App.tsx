@@ -1,11 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
-import { lazy, Suspense } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { lazy, Suspense, useEffect } from 'react';
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { ApiError, type PublicConfig } from './api';
 import { Layout } from './components/Layout';
 import { Empty, ErrorBox, Spinner } from './components/ui';
 import { t } from './i18n';
+import { takeNext } from './lib/next';
 import { SessionProvider, useMe } from './lib/session';
+import { ConsentPage } from './pages/Consent';
 import { CalendarPage } from './pages/Calendar';
 import { HomePage } from './pages/Home';
 import { Login, AuthCallback } from './pages/Login';
@@ -23,6 +25,13 @@ const ReviewPage = lazy(() => import('./pages/Review').then((m) => ({ default: m
 
 function Authed() {
   const { data: me, error, isLoading } = useMe();
+  const navigate = useNavigate();
+  // Signed in on the way to connecting an assistant: back to its consent page.
+  useEffect(() => {
+    if (!me) return;
+    const next = takeNext();
+    if (next) navigate(next, { replace: true });
+  }, [me, navigate]);
   if (isLoading) return <Spinner />;
   // A session that has done the first step of signing in but owes the second is sent to give it.
   if (error instanceof ApiError && error.code === 'second_factor_required') return <Navigate to="/second-factor" replace />;
@@ -62,6 +71,7 @@ export function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/second-factor" element={<SecondFactorPage />} />
+      <Route path="/oauth/consent" element={<ConsentPage />} />
       <Route path="/prize/:token" element={<PublicPrizePage />} />
       <Route path="/data-deletion" element={<DataDeletionPage />} />
       <Route path="/*" element={<Authed />} />
