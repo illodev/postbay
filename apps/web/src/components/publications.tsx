@@ -5,7 +5,7 @@ import { api, type Account, type AccountOptionsReply, type Attempt, type Calenda
 import { getLocale, t, type Key } from '../i18n';
 import { countHashtags, countLength, countMentions, truncatePreview } from '../lib/text';
 import { ERROR_CLASS_LABEL, fmtBytes, fmtDateTime, isoToZonedInput, NETWORK_LABEL, STEP_LABEL, VISIBILITY_LABEL, zonedToIso } from '../lib/format';
-import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, useToast } from './ui';
+import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, useConfirm, useToast } from './ui';
 import { MoreMenu, type MenuEntry } from './MoreMenu';
 import { defaultValues, NetMark, NetworkOptions, sendableOptions, type OptionValues } from './NetworkOptions';
 import { PrizeDialog } from './PrizeDialog';
@@ -965,6 +965,7 @@ export function PublicationList({ pubs, variants = [], brandId, zone, brand, can
 }) {
   const invalidate = useInvalidate();
   const toast = useToast();
+  const ask = useConfirm();
   const baseId = useId();
   const [move, setMove] = useState<ListedPublication | null>(null);
   const [resched, setResched] = useState<ListedPublication | null>(null);
@@ -1038,7 +1039,15 @@ export function PublicationList({ pubs, variants = [], brandId, zone, brand, can
       items.push({ label: t('publications.list.recheck'), icon: 'refresh', hint: t('publications.list.recheckHint'), onSelect: () => act.mutate({ id: p.id, action: 'recheck' }) });
     }
     if (canSchedule && !p.manual && (p.status === 'failed' || (p.status === 'scheduled' && !p.native_scheduled))) {
-      items.push({ label: t('publications.list.handOver'), icon: 'hand', hint: t('publications.list.handOverHint'), onSelect: () => confirm(t('publications.list.handOverConfirm')) && act.mutate({ id: p.id, action: 'hand-over' }) });
+      items.push({
+        label: t('publications.list.handOver'),
+        icon: 'hand',
+        hint: t('publications.list.handOverHint'),
+        onSelect: async () => {
+          const ok = await ask({ title: t('publications.list.handOverTitle'), text: t('publications.list.handOverText', { account: p.account_name, network: netName(p.network) }), confirmLabel: t('publications.list.handOverGo') });
+          if (ok) act.mutate({ id: p.id, action: 'hand-over' });
+        },
+      });
     }
     if (brand?.prizes?.enabled && canSchedule && ['scheduled', 'preparing', 'ready', 'publishing', 'published', 'awaiting_reapproval', 'on_hold'].includes(p.status)) {
       items.push({ label: t('publications.list.prize'), icon: 'gift', onSelect: () => setPrize(p) });
@@ -1050,22 +1059,31 @@ export function PublicationList({ pubs, variants = [], brandId, zone, brand, can
         label: t('publications.list.cancel'),
         icon: 'x',
         danger: true,
-        onSelect: () => confirm(p.native_scheduled ? t('publications.list.cancelConfirmNative') : t('publications.list.cancelConfirm')) && act.mutate({ id: p.id, action: 'cancel' }),
+        onSelect: async () => {
+          const ok = await ask({
+            title: t('publications.list.cancelTitle'),
+            text: t(p.native_scheduled ? 'publications.list.cancelTextNative' : 'publications.list.cancelText', { account: p.account_name, network: netName(p.network), when: fmtDateTime(p.scheduled_at, zone) }),
+            confirmLabel: t('publications.list.cancelGo'),
+            danger: true,
+          });
+          if (ok) act.mutate({ id: p.id, action: 'cancel' });
+        },
       });
     }
 
     return (
       <li key={p.id} className="pb-row" data-group={g}>
         <div className="pb-row-main">
-          <span className="pb-row-net"><NetMark network={p.network} /></span>
-          <span className="pb-row-acct" title={`${p.account_name} · ${netName(p.network)}`}>
-            <strong>{p.account_name}</strong>
-            <span className="pb-row-netname">{netName(p.network)}</span>
+          <span className="pb-row-net"><NetMark network={p.network} labelled /></span>
+          <span className="pb-row-who">
+            <strong title={p.account_name}>{p.account_name}</strong>
+            <span className="pb-row-sub">
+              <span>{netName(p.network)}</span>
+              <span aria-hidden="true">·</span>
+              <span className="pb-row-ver" title={t('publications.list.carries', { version: tag.full })}>{tag.short}</span>
+            </span>
           </span>
-          <span className="pb-row-meta">
-            <time className="pb-row-when" dateTime={at} title={fmtDateTime(at, zone)}>{shortWhen(at, zone)}</time>
-            <span className="pb-row-ver" title={t('publications.list.carries', { version: tag.full })}>{tag.short}</span>
-          </span>
+          <time className="pb-row-when" dateTime={at} title={fmtDateTime(at, zone)}>{shortWhen(at, zone)}</time>
           <span className="pb-row-state">
             {isPrivate ? <Chip state="on_hold" label={VISIBILITY_LABEL[p.visibility!] ?? p.visibility!} /> : <Chip state={p.status} />}
             <span className="pb-row-mode" data-mode={p.manual ? 'manual' : 'auto'} title={p.manual ? t('publications.list.manualHint') : t('publications.list.autoHint')} aria-label={p.manual ? t('publications.mode.manual') : t('publications.mode.auto')} role="img">

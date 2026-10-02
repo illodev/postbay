@@ -6,7 +6,7 @@ import { t, type Key } from '../i18n';
 import { fmtDateTime, NETWORK_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
 import { Avatar, displayName } from './Avatar';
-import { NetMark } from './NetworkOptions';
+import { NetMark, SkeletonText } from './ui';
 import { ago, variantName } from './PieceHero';
 import '../styles/piece.css';
 
@@ -167,7 +167,7 @@ export function PieceActivity({ piece, zone, className }: { piece: ActivityPiece
       </header>
       {events.length === 0 ? (
         loading ? (
-          <div className="pc-skel" aria-hidden="true"><i /><i /><i /></div>
+          <SkeletonText lines={4} />
         ) : (
           <p className="pc-side-empty">{t('piece.act.empty')}</p>
         )
@@ -176,7 +176,7 @@ export function PieceActivity({ piece, zone, className }: { piece: ActivityPiece
           {shown.map((e) => (
             <li key={e.key} className={`pc-tl-item is-${e.kind}`}>
               <span className="pc-tl-mark">
-                {e.network ? <NetMark network={e.network} /> : e.who?.agent ? <Avatar agent size={24} title={e.who.name ?? undefined} /> : <Avatar name={short(e.who?.name)} size={24} />}
+                {e.network ? <NetMark network={e.network} size="md" labelled /> : e.who?.agent ? <Avatar agent size={24} title={e.who.name ?? undefined} /> : <Avatar name={short(e.who?.name)} size={24} />}
               </span>
               <div className="pc-tl-body">
                 <p className="pc-tl-line">

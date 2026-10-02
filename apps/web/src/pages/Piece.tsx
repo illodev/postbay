@@ -11,7 +11,7 @@ import { PieceAgentCard } from '../components/PieceAgentCard';
 import { ago, authorName, formatHint, formatName, PieceHero, variantName } from '../components/PieceHero';
 import { PublicationList } from '../components/publications';
 import { UploadDialog } from '../components/UploadDialog';
-import { Chip, Dialog, Empty, ErrorBox, Field, Spinner, useToast } from '../components/ui';
+import { Chip, Dialog, Empty, ErrorBox, Field, Skeleton, SkeletonText, useToast } from '../components/ui';
 import { t, type Key } from '../i18n';
 import { fmtDateTime, fmtShort, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -400,6 +400,26 @@ function VariantRow({ variant, current, canUpload, onUpload, onShow }: {
 
 // ───────────────────────────── the page ─────────────────────────────
 
+/** The page's shape while it loads: the header, the stage and the facts beside it. */
+function PieceSkeleton() {
+  return (
+    <div aria-busy="true" aria-label={t('common.loading')}>
+      <div className="page-top"><Skeleton width={260} height={16} /></div>
+      <div className="pc-hero">
+        <div className="pc-hero-media">
+          <Skeleton className="pc-stage" height="auto" radius={12} />
+          <div className="pc-film">{[0, 1, 2].map((i) => <Skeleton key={i} width={60} height={60} radius={8} />)}</div>
+        </div>
+        <div className="pc-info">
+          <Skeleton width={90} height={20} radius={99} />
+          <Skeleton width="80%" height={22} />
+          <SkeletonText lines={4} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** The variant a new upload most likely goes to: one with changes asked for, else one still empty, else the first. */
 function suggestedVariant(variants: Variant[]): Variant | undefined {
   return (
@@ -466,7 +486,7 @@ export function PiecePage() {
     r: latest ? () => navigate(`/review/${latest.id}`) : null,
   });
 
-  if (isLoading) return <Spinner />;
+  if (isLoading) return <PieceSkeleton />;
   if (error) return <ErrorBox error={error} />;
   if (!piece || !variant) {
     if (!piece) return null;
