@@ -4,6 +4,7 @@ import { loadConfig } from './config.js';
 import { setTap, type Exchange } from './connectors/http.js';
 import { createDb } from './db.js';
 import { isValidZone } from './domain/time.js';
+import { localeOf, t, withLocale, type Key, type Params } from './i18n/index.js';
 import { migrate } from './migrate.js';
 import { consoleLogger, createContext } from './runtime.js';
 import { resetByEmail } from './services/secondfactor.js';
@@ -66,29 +67,32 @@ try {
     if (!done) throw new Error(`There is no account for ${f.email}`);
     console.log(`The authenticator and recovery codes of ${f.email} are gone, every session of theirs has ended and any sign-in link not used yet no longer works. They set up a new authenticator the next time they sign in; an email tells them about the reset.`);
   } else if (command === 'check') {
+    // The report is written in the language the terminal is set to (LANG): English for en_*, Spanish otherwise.
+    const locale = localeOf(process.env.LANG);
+    const say = (key: Key, params?: Params) => t(locale, key, params);
     const f = flags(rest);
     if (!f.brand || f.brand === 'true') throw new Error(`Missing --brand\n${USAGE}`);
-    if (f.publish && !f.yes) throw new Error('--publish makes a real post on every account it checks. Add --yes to say you mean it (use test accounts if you can).');
+    if (f.publish && !f.yes) throw new Error(say('check.cli.publishNeedsYes'));
     await migrate(db);
     const ctx = createContext(config, db, consoleLogger());
     const exchanges: (Exchange & { account: string })[] = [];
     let current = '(server)';
     if (f.capture) setTap((e) => exchanges.push({ account: current, ...e }));
-    const report = await runChecks(ctx, { brand: f.brand, network: f.network, publish: !!f.publish, onAccount: (label) => { current = label; } });
+    const report = await withLocale(locale, () => runChecks(ctx, { brand: f.brand!, network: f.network, publish: !!f.publish, onAccount: (label) => { current = label; } }));
     setTap(null);
     if (f.json) {
       console.log(JSON.stringify(report, null, 2));
     } else {
-      console.log(`Checking ${report.brand.name}\n\nThis server\n${formatChecks(report.server)}`);
+      console.log(`${say('check.cli.checking', { brand: report.brand.name })}\n\n${say('check.cli.server')}\n${formatChecks(report.server)}`);
       for (const a of report.accounts) console.log(`\n${a.account.network} · ${a.account.display_name}\n${formatChecks(a.results)}`);
-      if (!report.accounts.length) console.log('\nNo connected account to check.');
-      console.log(report.ok ? '\nNothing failed.' : '\nSomething failed: see the ✖ lines above.');
+      if (!report.accounts.length) console.log(`\n${say('check.cli.noAccounts')}`);
+      console.log(`\n${say(report.ok ? 'check.cli.ok' : 'check.cli.failed')}`);
     }
     if (f.capture) {
       await mkdir(f.capture, { recursive: true });
       const file = path.join(f.capture, `transcript-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
       await writeFile(file, JSON.stringify({ note: 'Every call this check made to the networks. Tokens, secrets and signed query strings are removed.', exchanges }, null, 2));
-      console.error(`Transcript of ${exchanges.length} calls written to ${file}`);
+      console.error(say('check.cli.transcript', { count: exchanges.length, file }));
     }
     if (!report.ok) process.exitCode = 1;
   } else {

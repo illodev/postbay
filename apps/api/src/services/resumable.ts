@@ -7,6 +7,7 @@ import { actorCols, authorize, type Principal } from '../auth/principal.js';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { badRequest, conflict, notFound } from '../errors.js';
+import { msg, type Localized } from '../i18n/index.js';
 
 /**
  * Uploads that can be resumed. A big file sent in one request is lost whenever the connection drops; here the browser sends it in
@@ -80,9 +81,9 @@ async function loadOwn(ctx: Ctx, db: Queryable, p: Principal, uploadId: string, 
   );
   if (!u || u.created_by_user !== a.user || u.created_by_token !== a.token) throw notFound('Upload');
   await authorize(ctx.db, p, u.brand_id, 'version.upload');
-  if (!u.resumable) throw badRequest('not_resumable', 'This upload was not made to be sent in pieces');
-  if (u.consumed_at) throw conflict('upload_used', 'This upload was already used in a version');
-  if (u.expired) throw conflict('upload_expired', 'This upload has expired: choose the file again to start a new one');
+  if (!u.resumable) throw badRequest('not_resumable', msg('error.upload.notResumable'));
+  if (u.consumed_at) throw conflict('upload_used', msg('error.upload.used'));
+  if (u.expired) throw conflict('upload_expired', msg('error.upload.expired'));
   return u;
 }
 
@@ -100,7 +101,7 @@ export async function appendPiece(ctx: Ctx, p: Principal, uploadId: string, offs
   if (piece.length > MAX_CHUNK_BYTES) throw badRequest('piece_too_large', `Send at most ${MAX_CHUNK_BYTES} bytes at a time`);
   const done = await ctx.db.tx<Appended>(async (db) => {
     const u = await loadOwn(ctx, db, p, uploadId, true);
-    if (u.completed_at) throw conflict('upload_complete', 'All of this file has already arrived');
+    if (u.completed_at) throw conflict('upload_complete', msg('error.upload.complete'));
     const have = Number(u.received_bytes);
     const total = Number(u.bytes);
     const file = stagingFile(ctx, uploadId);
@@ -112,7 +113,7 @@ export async function appendPiece(ctx: Ctx, p: Principal, uploadId: string, offs
       return { kind: 'mismatch', offset: 0 };
     }
     if (offset !== have) return { kind: 'mismatch', offset: have };
-    if (have + piece.length > total) throw badRequest('too_much_data', 'That would make the file longer than declared');
+    if (have + piece.length > total) throw badRequest('too_much_data', msg('error.upload.tooMuch'));
     await mkdir(path.dirname(file), { recursive: true });
     if (onDisk > have) await truncate(file, have);
     const handle = await open(file, 'a');
@@ -133,7 +134,7 @@ export async function appendPiece(ctx: Ctx, p: Principal, uploadId: string, offs
   return done.progress;
 }
 
-type Finished = { kind: 'ok'; progress: UploadProgress } | { kind: 'bad'; message: string } | { kind: 'short'; offset: number };
+type Finished = { kind: 'ok'; progress: UploadProgress } | { kind: 'bad'; message: Localized } | { kind: 'short'; offset: number };
 
 /**
  * Called once every byte has arrived: checks the hash, puts the file in storage and removes the staging file. Safe to call again after a
@@ -152,7 +153,7 @@ export async function finishUpload(ctx: Ctx, p: Principal, uploadId: string): Pr
     if (onDisk !== have || hash.digest('hex') !== u.sha256) {
       await rm(file, { force: true });
       await db.query('update upload set received_bytes = 0 where id = $1', [uploadId]);
-      return { kind: 'bad', message: 'What arrived does not match the declared size and hash, so it was discarded. Choose the file again to send it from the start.' };
+      return { kind: 'bad', message: msg('error.upload.discarded') };
     }
     await ctx.storage.putFile(u.storage_key, file, u.mime, { sha256: u.sha256 });
     await rm(file, { force: true });
@@ -163,7 +164,7 @@ export async function finishUpload(ctx: Ctx, p: Principal, uploadId: string): Pr
     );
     return { kind: 'ok', progress: progressOf(row!) };
   });
-  if (done.kind === 'short') throw conflict('upload_incomplete', 'Not all of the file has arrived yet', { offset: done.offset });
+  if (done.kind === 'short') throw conflict('upload_incomplete', msg('error.upload.incomplete'), { offset: done.offset });
   if (done.kind === 'bad') throw badRequest('upload_mismatch', done.message);
   return done.progress;
 }

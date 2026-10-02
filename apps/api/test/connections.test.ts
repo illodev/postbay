@@ -15,7 +15,7 @@ async function signIn(provider: 'meta' | 'google', code = 'good', as = env.users
   const start = await env.call(as, 'POST', brandUrl(`/connections/${provider}`), reconnectAccountId ? { reconnectAccountId } : {});
   expect(start.status, JSON.stringify(start.body)).toBe(200);
   const state = new URL(start.body.url).searchParams.get('state')!;
-  const back = await env.app.inject({ method: 'GET', url: `/api/oauth/callback?code=${code}&state=${state}`, headers: { cookie: as.cookie! } });
+  const back = await env.app.inject({ method: 'GET', url: `/api/oauth/callback?code=${code}&state=${state}`, headers: { cookie: as.cookie!, 'accept-language': 'en-GB,en;q=0.9' } });
   return { start, state, back, location: new URL(back.headers.location as string, 'http://app.test') };
 }
 
