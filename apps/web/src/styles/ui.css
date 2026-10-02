@@ -1,0 +1,38 @@
+/*
+ * The shared pieces of components/ui.tsx that styles.css does not cover yet: the confirm dialog, the network mark's sizes and
+ * the loading skeleton. Tokens only.
+ */
+
+/* ───────────────────────────── confirm ───────────────────────────── */
+.dialog.confirm { width: min(420px, calc(100vw - 24px)); }
+.confirm-body { display: flex; flex-direction: column; gap: 10px; padding: 20px 20px 16px; margin: 0; }
+.confirm-body h2 { font-size: 1rem; line-height: 1.35; }
+.confirm-text { color: var(--muted); font-size: .875rem; line-height: 1.5; overflow-wrap: anywhere; }
+.confirm-text p { margin: 0 0 .4rem; }
+.confirm-text p:last-child { margin: 0; }
+.confirm-text strong { color: var(--text); font-weight: 500; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.confirm-actions .btn { min-height: 36px; }
+.btn-confirm-danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn-confirm-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 88%, #fff); border-color: color-mix(in srgb, var(--bad) 88%, #fff); }
+@media (max-width: 480px) {
+  .confirm-actions { flex-direction: column-reverse; }
+  .confirm-actions .btn { width: 100%; }
+}
+
+/* ───────────────────────────── network marks ───────────────────────────── */
+/* styles.css loads after this file: the sizes need the extra class to win over its .net */
+.net { line-height: 1; flex: none; font-family: var(--font); font-variant-numeric: normal; }
+.net.net-xs { width: 16px; height: 16px; border-radius: 4px; font-size: .5rem; letter-spacing: 0; }
+.net.net-sm { width: 18px; height: 18px; border-radius: 5px; font-size: .5625rem; }
+.net.net-lg { width: 34px; height: 34px; border-radius: 9px; font-size: .6875rem; }
+
+/* ───────────────────────────── loading ───────────────────────────── */
+.skeleton {
+  display: block; max-width: 100%; border-radius: 6px;
+  background: linear-gradient(90deg, var(--surface-2) 0%, var(--surface-3) 40%, var(--surface-2) 80%) 0 0 / 300% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+.skeleton-text { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+@keyframes skeleton-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
