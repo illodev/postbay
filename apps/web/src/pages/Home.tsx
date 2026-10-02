@@ -5,10 +5,9 @@ import { Link } from 'react-router-dom';
 import { api, type ActivityItem, type AttentionItem, type AwaitingItem, type Overview, type PublicationRow, type TodayItem } from '../api';
 import { Avatar } from '../components/Avatar';
 import { Icon, type IconName } from '../components/icons';
-import { NetMark } from '../components/NetworkOptions';
 import { PageBar } from '../components/PageBar';
 import { RetryDialog } from '../components/publications';
-import { Chip, ErrorBox, errorMessage, useToast } from '../components/ui';
+import { Chip, ErrorBox, errorMessage, NetMark, Skeleton, useToast } from '../components/ui';
 import { getLocale, t, tMaybe, type Key } from '../i18n';
 import { BLOCK_REASON_LABEL, ERROR_CLASS_LABEL, NETWORK_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -436,53 +435,53 @@ function Activity({ data }: { data: Overview }) {
 
 // ───────────────────────────── loading ─────────────────────────────
 
-function Skeleton() {
+function HomeSkeleton() {
   return (
     <div className="home" aria-busy="true" aria-label={t('common.loading')}>
       <div className="home-main">
         <div className="home-hello">
-          <span className="sk" style={{ width: 280, height: 26 }} />
-          <span className="sk" style={{ width: 360, height: 14, marginTop: 10 }} />
+          <Skeleton width={280} height={26} />
+          <Skeleton width={360} height={14} style={{ marginTop: 10 }} />
         </div>
         <div className="home-sec">
-          <span className="sk" style={{ width: 170, height: 14, marginBottom: 14 }} />
+          <Skeleton width={170} height={14} style={{ marginBottom: 14 }} />
           <div className="home-wait">
             {[0, 1, 2].map((i) => (
               <div key={i} className="hw-card sk-card">
-                <span className="sk sk-thumb" />
+                <Skeleton className="sk-thumb" width={104} height="auto" radius={0} />
                 <div className="hw-body">
-                  <span className="sk" style={{ width: '85%', height: 13 }} />
-                  <span className="sk" style={{ width: '55%', height: 13 }} />
-                  <span className="sk" style={{ width: 64, height: 18, borderRadius: 99, marginTop: 4 }} />
-                  <span className="sk" style={{ width: '70%', height: 11 }} />
-                  <span className="sk" style={{ width: '100%', height: 30, marginTop: 'auto', borderRadius: 8 }} />
+                  <Skeleton width="85%" height={13} />
+                  <Skeleton width="55%" height={13} />
+                  <Skeleton width={64} height={18} radius={99} style={{ marginTop: 4 }} />
+                  <Skeleton width="70%" height={11} />
+                  <Skeleton width="100%" height={30} radius={8} style={{ marginTop: 'auto' }} />
                 </div>
               </div>
             ))}
           </div>
         </div>
         <div className="home-sec">
-          <span className="sk" style={{ width: 130, height: 14, marginBottom: 14 }} />
+          <Skeleton width={130} height={14} style={{ marginBottom: 14 }} />
           <div className="home-list sk-list">
             {[0, 1].map((i) => (
               <div key={i} className="hl-row">
-                <span className="sk" style={{ width: 40, height: 12 }} />
-                <span className="sk" style={{ width: 22, height: 22 }} />
-                <span className="sk" style={{ width: 34, height: 42 }} />
-                <span className="sk" style={{ flex: 1, height: 12, maxWidth: 260 }} />
+                <Skeleton width={40} height={12} />
+                <Skeleton width={22} height={22} />
+                <Skeleton width={34} height={42} />
+                <Skeleton height={12} style={{ flex: 1, maxWidth: 260 }} />
               </div>
             ))}
           </div>
         </div>
       </div>
       <div className="home-feed">
-        <span className="sk" style={{ width: 80, height: 14, marginBottom: 18 }} />
+        <Skeleton width={80} height={14} style={{ marginBottom: 18 }} />
         {[0, 1, 2, 3, 4].map((i) => (
           <div key={i} className="sk-ev">
-            <span className="sk" style={{ width: 28, height: 28, borderRadius: '50%' }} />
+            <Skeleton width={28} height={28} radius="50%" />
             <div style={{ flex: 1 }}>
-              <span className="sk" style={{ width: '90%', height: 12 }} />
-              <span className="sk" style={{ width: '40%', height: 10, marginTop: 8 }} />
+              <Skeleton width="90%" height={12} />
+              <Skeleton width="40%" height={10} style={{ marginTop: 8 }} />
             </div>
           </div>
         ))}
@@ -518,7 +517,7 @@ export function HomePage() {
   return (
     <>
       <PageBar crumbs={[{ label: t('layout.nav.home') }]} />
-      {isLoading && <Skeleton />}
+      {isLoading && <HomeSkeleton />}
       {error && <ErrorBox error={error} />}
       {data && (
         <div className="home">

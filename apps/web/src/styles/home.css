@@ -78,7 +78,7 @@
 .hl-row:first-child { border-top: 0; }
 .hl-row:hover { background: rgb(255 255 255 / 2%); }
 .hl-time { width: 44px; flex: none; font: 500 .8125rem/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
-.hl-when { color: var(--bad); font-size: .75rem; }
+.hl-when { color: var(--bad); font-family: var(--font); font-size: .75rem; font-weight: 500; }
 .hl-mark { flex: none; display: grid; place-items: center; }
 .hl-mark .net { line-height: 1; }
 .hl-thumb { width: 34px; height: 42px; flex: none; border-radius: 6px; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 6%); }
@@ -114,30 +114,23 @@ a.hl-title:hover { text-decoration: none; color: #fff; }
 .hf-line { margin: 0; font-size: .8125rem; line-height: 18px; color: #c3c6ce; overflow-wrap: anywhere; }
 .hf-line b, .hf-piece { color: var(--text); font-weight: 500; }
 .hf-piece:hover { color: #fff; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 2px; }
-.hf-quote { margin: 7px 0 0; padding: 7px 9px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font-size: .8125rem; line-height: 1.45; color: #d6d8de; overflow-wrap: anywhere; }
+.hf-quote { margin: 7px 0 0; padding: 7px 10px; background: var(--surface-2); border-radius: 8px; font-size: .8125rem; line-height: 1.45; color: #d6d8de; overflow-wrap: anywhere; }
 .hf-quote .tc, .hf-quote .hf-page { margin-right: 6px; vertical-align: 1px; }
 .hf-quote .tc { font-size: .6875rem; line-height: 1.55; }
 .hf-page { font-size: .6875rem; line-height: 1.5; padding: 0 .35rem; }
-.hf-quote-agent { border-color: rgb(45 212 191 / 22%); background: rgb(45 212 191 / 6%); }
+.hf-quote-agent { background: var(--agent-soft); color: #c8f3ec; }
 .hf-meta { margin: 4px 0 0; font-size: .75rem; line-height: 1.3; color: var(--faint); }
 .hf-studio { background: var(--live-soft); color: var(--live); }
 .hf-more { display: none; width: 100%; margin-top: 16px; }
 .hf-studio svg { width: 13px; height: 13px; }
 
 /* ───────────────────────────── loading ───────────────────────────── */
-.sk {
-  display: block; border-radius: 6px; flex: none;
-  background: linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 45%, var(--surface) 90%); background-size: 220% 100%;
-  animation: home-shimmer 1.4s ease-in-out infinite;
-}
+/* the shared <Skeleton> blocks, laid out in the shape of the page that will come */
 .sk-card:hover { border-color: var(--border); }
-.sk-thumb { width: 104px; height: auto; border-radius: 0; }
-/* on a surface, the shimmer is drawn a step lighter so the blocks show */
-.sk-card .sk, .sk-list .sk { background-image: linear-gradient(90deg, var(--surface-2) 0%, var(--surface-3) 45%, var(--surface-2) 90%); }
+.sk-card .skeleton, .sk-list .skeleton, .sk-ev .skeleton, .home-hello .skeleton { flex: none; }
+.sk-thumb { align-self: stretch; }
 .sk-list .hl-row:hover { background: none; }
 .sk-ev { display: flex; gap: 10px; margin-bottom: 20px; }
-@keyframes home-shimmer { from { background-position: 100% 0; } to { background-position: -120% 0; } }
-@media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
 
 /* ───────────────────────────── narrower screens ───────────────────────────── */
 @media (max-width: 1180px) {
