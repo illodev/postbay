@@ -4,7 +4,7 @@ import { define } from './define';
 export const results = define({
   es: {
     'results.title': 'Resultados',
-    'results.subtitle': 'Cómo les ha ido a las publicaciones que ha hecho la app, según cuenta cada red. Últimos 90 días si no eliges fechas.',
+    'results.defaultRange': 'Últimos 90 días',
     'results.filters': 'Filtros',
     'results.network': 'Red',
     'results.allNetworks': 'Todas las redes',
@@ -63,7 +63,7 @@ export const results = define({
   },
   en: {
     'results.title': 'Results',
-    'results.subtitle': 'How the posts the app published did, as each network reports it. Last 90 days unless you pick dates.',
+    'results.defaultRange': 'Last 90 days',
     'results.filters': 'Filters',
     'results.network': 'Network',
     'results.allNetworks': 'All networks',

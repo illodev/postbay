@@ -2,11 +2,13 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type BrandMetrics, type CommonMetrics, type MetricAge, type MetricSnapshot, type MetricsRow } from '../api';
-import { Chip, Dialog, Empty, ErrorBox, Field, Spinner } from '../components/ui';
+import { Icon } from '../components/icons';
+import { PageBar } from '../components/PageBar';
+import { Chip, Dialog, ErrorBox, NetMark, Skeleton } from '../components/ui';
 import { getLocale, t, type Key } from '../i18n';
 import { fmtDateTime, NETWORK_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
-import { netShort } from './Calendar';
+import { Thumb } from './Calendar';
 import '../styles/ops.css';
 
 const METRICS: (keyof CommonMetrics)[] = ['views', 'reach', 'likes', 'comments', 'shares', 'saves', 'avgWatchSeconds', 'watchMinutes'];
@@ -95,8 +97,8 @@ function NetworkSection({ summary, rows, zone, onOpen }: {
   return (
     <section className="rs-net" aria-labelledby={headId}>
       <header className="rs-net-head">
-        <h2 id={headId}><span className="tag">{netShort(summary.network)}</span>{name}</h2>
-        <span className="muted small">{t('results.posts', { count: summary.posts })} · {t('results.read', { count: summary.read })}</span>
+        <h2 id={headId}><NetMark network={summary.network} />{name}</h2>
+        <span className="rs-net-meta">{t('results.posts', { count: summary.posts })} · {t('results.read', { count: summary.read })}</span>
       </header>
       {shown.some((k) => k !== 'avgWatchSeconds') && (
         <div className="rs-kpis" role="group" aria-label={t('results.totals', { network: name })}>
@@ -126,9 +128,14 @@ function NetworkSection({ summary, rows, zone, onOpen }: {
               return (
                 <tr key={pub.id}>
                   <td className="rs-post">
-                    <Link to={`/pieces/${pub.piece_id}`}>{pub.piece}</Link>
-                    <div className="muted small">{[pub.account, pub.placement, fmtDateTime(pub.published_at, zone)].filter(Boolean).join(' · ')}</div>
-                    {pub.visibility === 'private' && <div className="rs-private">{t('results.private')}</div>}
+                    <div className="rs-post-in">
+                      <Thumb pieceId={pub.piece_id} />
+                      <div className="rs-post-text">
+                        <Link to={`/pieces/${pub.piece_id}`}>{pub.piece}</Link>
+                        <div className="rs-post-meta">{[pub.account, pub.placement, fmtDateTime(pub.published_at, zone)].filter(Boolean).join(' · ')}</div>
+                        {pub.visibility === 'private' && <div className="rs-private">{t('results.private')}</div>}
+                      </div>
+                    </div>
                   </td>
                   <td className="rs-reading">
                     {r.latest ? <span className="rs-latest">{t('results.after', { age: ageLabel(r.latest.age) })}</span> : <span className="muted small">{t('results.notRead')}</span>}
@@ -146,7 +153,10 @@ function NetworkSection({ summary, rows, zone, onOpen }: {
                     );
                   })}
                   <td className="rs-actions">
-                    <button className="btn btn-small" onClick={() => onOpen(r)} aria-label={t('results.readingsOf', { title: pub.piece })}>{t('results.readings')}</button>
+                    <button className="btn btn-small btn-ghost" onClick={() => onOpen(r)} aria-label={t('results.readingsOf', { title: pub.piece })}>
+                      <Icon name="chart" />
+                      <span>{t('results.readings')}</span>
+                    </button>
                   </td>
                 </tr>
               );
@@ -173,36 +183,62 @@ export function ResultsPage() {
     placeholderData: keepPreviousData,
     queryFn: () => api.get<BrandMetrics>(`/api/brands/${brand.id}/metrics?${query.toString()}`),
   });
+  const filtered = !!(network || from || to);
   return (
-    <div className="ops">
-      <div className="page-head">
-        <div>
-          <h1>{t('results.title')}</h1>
-          <p className="muted">{t('results.subtitle')}</p>
-        </div>
-      </div>
+    <div className="ops rs">
+      <PageBar crumbs={[{ label: t('results.title') }]} />
       <div className="rs-filters" role="group" aria-label={t('results.filters')}>
-        <Field label={t('results.network')}>
-          <select value={network} onChange={(e) => setNetwork(e.target.value)}>
-            <option value="">{t('results.allNetworks')}</option>
-            {Object.keys(NETWORK_LABEL).map((k) => <option key={k} value={k}>{NETWORK_LABEL[k]}</option>)}
-          </select>
-        </Field>
-        <Field label={t('results.from')}><input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} /></Field>
-        <Field label={t('results.to')}><input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} /></Field>
-        {(network || from || to) && <button className="btn btn-ghost" onClick={() => { setNetwork(''); setFrom(''); setTo(''); }}>{t('results.clear')}</button>}
+        <select className="ops-select" aria-label={t('results.network')} value={network} onChange={(e) => setNetwork(e.target.value)}>
+          <option value="">{t('results.allNetworks')}</option>
+          {Object.keys(NETWORK_LABEL).map((k) => <option key={k} value={k}>{NETWORK_LABEL[k]}</option>)}
+        </select>
+        <div className="rs-range">
+          <label>
+            <span>{t('results.from')}</span>
+            <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+          </label>
+          <span className="rs-range-sep" aria-hidden="true">–</span>
+          <label>
+            <span>{t('results.to')}</span>
+            <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+          </label>
+        </div>
+        {filtered ? (
+          <button className="btn btn-small btn-ghost" onClick={() => { setNetwork(''); setFrom(''); setTo(''); }}>
+            <Icon name="x" />
+            <span>{t('results.clear')}</span>
+          </button>
+        ) : (
+          <span className="rs-default">{t('results.defaultRange')}</span>
+        )}
       </div>
       {error && <ErrorBox error={error} />}
-      {!data && !error && <Spinner />}
-      {data && data.networks.length === 0 && <Empty title={t('results.empty')}>{t('results.emptyHint')}</Empty>}
+      {!data && !error && (
+        <div className="rs-nets" aria-busy="true">
+          {[0, 1].map((i) => (
+            <section key={i} className="rs-net">
+              <header className="rs-net-head"><Skeleton width={160} height={18} /></header>
+              <div className="rs-kpis">{[0, 1, 2, 3].map((k) => <div key={k} className="rs-kpi"><Skeleton width={70} height={10} /><Skeleton width={90} height={22} style={{ marginTop: 8 }} /></div>)}</div>
+              <div style={{ padding: 16 }}><Skeleton height={40} /></div>
+            </section>
+          ))}
+        </div>
+      )}
+      {data && data.networks.length === 0 && (
+        <div className="rs-empty">
+          <span className="rs-empty-icon"><Icon name="chart" /></span>
+          <strong>{t('results.empty')}</strong>
+          <p>{t('results.emptyHint')}</p>
+        </div>
+      )}
       {data && data.networks.length > 0 && (
         <>
-          <p className="rs-note">{t('results.note')}</p>
           <div className="rs-nets">
             {data.networks.map((n) => (
               <NetworkSection key={n.network} summary={n} rows={data.rows.filter((r) => r.publication.network === n.network)} zone={brand.timezone} onOpen={setOpen} />
             ))}
           </div>
+          <p className="rs-note"><Icon name="globe" />{t('results.note')}</p>
         </>
       )}
       {open && <Detail row={open} zone={brand.timezone} onClose={() => setOpen(null)} />}
