@@ -229,8 +229,6 @@ body .auth { background: var(--bg); }
 .auth .card.auth-card { width: min(400px, 100%); padding: 28px 26px 24px; display: flex; flex-direction: column; gap: 16px; background: var(--panel); box-shadow: none; }
 .auth .card.auth-card.auth-wide { width: min(480px, 100%); }
 .auth-brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: .9375rem; color: var(--text); }
-.logo-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; flex: none; }
-.logo-mark svg { width: 12px; height: 12px; }
 .auth-head h1 { font-size: 1.25rem; }
 .auth-head p { margin: 6px 0 0; color: var(--muted); font-size: .875rem; }
 .auth-card .btn { min-height: 38px; }
