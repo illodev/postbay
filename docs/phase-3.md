@@ -129,10 +129,13 @@ def verify(secret: str, headers: dict, raw_body: bytes) -> bool:
 A webhook is the studio making an HTTP request to an address someone typed, so the address is checked **after DNS resolution** (so
 a name that resolves to a private address does not get through) and again on connection:
 
-- Link-local (cloud metadata at `169.254.169.254` included), unspecified, multicast and reserved addresses are **always** refused.
+- Link-local (cloud metadata at `169.254.169.254` included), unspecified, multicast and reserved addresses are **always** refused,
+  and so are the metadata addresses clouds put elsewhere: AWS's `fd00:ec2::254`, Google's `fd20:ce::254`, Alibaba's `100.100.100.200`,
+  Oracle's `192.0.0.192` (all of `192.0.0.0/24`) and Azure's platform endpoint `168.63.129.16`. A private-network setting does not change that.
 - Loopback and private ranges are allowed in development and **refused in production**, unless `WEBHOOK_ALLOW_PRIVATE_NETWORKS=true`
   (a runner on the same private network, for instance). Plain `http` to a public address is refused in production.
-- IPv4-mapped IPv6 addresses are unwrapped before the check.
+- An IPv6 address that carries an IPv4 one is judged by both, and the stricter answer wins: IPv4-mapped and -compatible addresses,
+  NAT64 (`64:ff9b::/96` and `64:ff9b:1::/48`), 6to4 (`2002::/16`) and Teredo (`2001:0::/32`, server and client).
 
 A refusal is final: it is recorded on the delivery with the reason and is not retried.
 
