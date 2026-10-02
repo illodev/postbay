@@ -256,10 +256,45 @@ export async function listAssets(db: Queryable, versionId: string) {
   return db.query('select * from asset where version_id = $1 order by position, kind', [versionId]);
 }
 
-/** Fingerprint recomputed from the stored files. It must always match the version's own. */
+/** Fingerprint recomputed from the version's file records. It must always match the version's own. */
 export async function recomputeFingerprint(db: Queryable, versionId: string): Promise<string> {
   const assets = await listAssets(db, versionId);
   return fingerprintOf(assets.map((x) => ({ kind: x.kind, position: x.position, sha256: x.sha256 })));
+}
+
+/**
+ * Whether the objects in storage are still the files the version was made of: each one's size and sha256 as storage reports them
+ * (S3 keeps the checksum the upload was verified with; local storage hashes the file again). A file replaced or removed in storage,
+ * which the database cannot see, makes this false.
+ */
+export async function storedFilesMatch(ctx: Ctx, versionId: string, db: Queryable = ctx.db): Promise<boolean> {
+  for (const a of await listAssets(db, versionId)) {
+    const stored = await ctx.storage.stat(a.storage_key).catch(() => null);
+    if (!stored || stored.bytes !== Number(a.bytes) || stored.sha256 !== a.sha256) return false;
+  }
+  return true;
+}
+
+export type Uploader =
+  | { kind: 'user'; id: string; name: string | null }
+  | { kind: 'token'; id: string; name: string; created_by: { id: string; name: string | null } };
+
+/**
+ * Who uploaded a version: a person, or a producer token and the person who made it. Approval does not depend on this (only on
+ * permissions: whoever made a token is not the author of what it uploads), but people deciding should see it.
+ */
+export async function uploaderOf(db: Queryable, versionId: string): Promise<Uploader | null> {
+  const r = await db.one(
+    `select ver.author_user_id, ver.author_token_id, coalesce(u.name, u.email) as user_name, t.name as token_name,
+       t.created_by as token_created_by, coalesce(cu.name, cu.email) as token_created_by_name
+     from version ver left join app_user u on u.id = ver.author_user_id
+     left join api_token t on t.id = ver.author_token_id left join app_user cu on cu.id = t.created_by
+     where ver.id = $1`,
+    [versionId],
+  );
+  if (!r) return null;
+  if (r.author_token_id) return { kind: 'token', id: r.author_token_id, name: r.token_name, created_by: { id: r.token_created_by, name: r.token_created_by_name } };
+  return { kind: 'user', id: r.author_user_id, name: r.user_name };
 }
 
 export async function getVersion(ctx: Ctx, p: Principal, versionId: string) {
@@ -275,7 +310,7 @@ export async function getVersion(ctx: Ctx, p: Principal, versionId: string) {
     });
   }
   const approvals = await ctx.db.query(
-    `select a.id, a.decision, a.account_ids, a.checklist, a.note, a.created_at, a.approved_fingerprint,
+    `select a.id, a.decision, a.account_ids, a.checklist, a.note, a.created_at, a.approved_fingerprint, a.piece_title, a.ai_generated,
        coalesce(u.name, u.email) as approver, a.approved_fingerprint = $2 as matches_fingerprint
      from approval a join app_user u on u.id = a.approver_user_id where a.version_id = $1 order by a.created_at`,
     [versionId, version.fingerprint],
@@ -294,7 +329,7 @@ export async function getVersion(ctx: Ctx, p: Principal, versionId: string) {
   return {
     id: version.id, number: version.number, notes: version.notes, fingerprint: version.fingerprint,
     review_state: version.review_state, created_at: version.created_at, author: author?.name ?? null,
-    author_user_id: version.author_user_id, by_agent: version.author_token_id !== null,
+    author_user_id: version.author_user_id, by_agent: version.author_token_id !== null, uploaded_by: await uploaderOf(ctx.db, versionId),
     variant: { id: variant.id, format: variant.format, style: variant.style, piece_id: variant.piece_id },
     piece: await ctx.db.one('select id, title, kind, brief, ai_generated, review_state from piece where id = $1', [version.piece_id]),
     brand, assets: withUrls, approvals, versions: siblings,

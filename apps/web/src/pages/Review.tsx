@@ -197,7 +197,7 @@ export function ReviewPage() {
             <Chip state={v.review_state} />
           </div>
           <p className="muted small">
-            {v.variant.format}{v.variant.style && ` · ${v.variant.style}`} · uploaded by {v.author ?? 'unknown'}{v.by_agent ? ' (agent)' : ''} · {fmtDateTime(v.created_at, v.brand.timezone)}
+            {v.variant.format}{v.variant.style && ` · ${v.variant.style}`} · uploaded by {v.author ?? 'unknown'}{v.by_agent ? ' (agent)' : ''}{v.uploaded_by?.kind === 'token' && v.uploaded_by.created_by.name ? `, a token made by ${v.uploaded_by.created_by.name}` : ''} · {fmtDateTime(v.created_at, v.brand.timezone)}
             {v.piece.ai_generated && ' · generated with AI'}
           </p>
         </div>
