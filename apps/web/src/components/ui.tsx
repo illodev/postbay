@@ -66,16 +66,31 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
 /** Modal built on <dialog>: focus trap, Escape to close and backdrop come from the browser. */
 export function Dialog({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
+  // Closing the <dialog> on unmount fires its "close" event a moment later. That is not the person closing it, and
+  // must not call onClose: under StrictMode the effect runs, cleans up and runs again, and the stray event used to
+  // unmount the dialog right after it opened.
+  const closingOnUnmount = useRef(false);
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) d.showModal();
-    return () => d?.close();
+    return () => {
+      if (d?.open) {
+        closingOnUnmount.current = true;
+        d.close();
+      }
+    };
   }, []);
   return (
     <dialog
       ref={ref}
       className={wide ? 'dialog dialog-wide' : 'dialog'}
-      onClose={onClose}
+      onClose={() => {
+        if (closingOnUnmount.current) {
+          closingOnUnmount.current = false;
+          return;
+        }
+        onClose();
+      }}
       onClick={(e) => e.target === ref.current && onClose()}
     >
       <div className="dialog-body">
