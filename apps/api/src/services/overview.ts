@@ -79,8 +79,10 @@ export interface AttentionItem {
   at: string;
   /** A code the interface words itself: an error class, a block reason, why a publication is held. */
   reason: string | null;
-  /** What the server or the network said, as it said it. */
+  /** What the server or the network said. A text the studio kept as a code comes in the reader's language (see `detail_i18n`). */
   detail: string | null;
+  /** The kept code behind `detail`, rendered into it on the way out (renderStored) and never sent as such. */
+  detail_i18n?: unknown;
   piece_id: string | null;
   piece_title: string | null;
   version_id: string | null;
@@ -216,7 +218,7 @@ async function attentionFor(ctx: Ctx, brandId: string, userId: string, role: Rol
 
   const pubs = await ctx.db.query(
     `select pub.id, pub.status, pub.manual, pub.scheduled_at, pub.failed_at, pub.updated_at, pub.last_error, pub.last_error_class, pub.hold_reason,
-       pub.moved_by, sa.network, sa.display_name as account_name, p.id as piece_id, p.title as piece_title, pub.version_id,
+       pub.moved_by, pub.last_error_i18n, pub.hold_reason_i18n, sa.network, sa.display_name as account_name, p.id as piece_id, p.title as piece_title, pub.version_id,
        latest.id as latest_version_id, latest.review_state as latest_state
      from publication pub
      join variant v on v.id = pub.variant_id join piece p on p.id = v.piece_id
@@ -235,14 +237,14 @@ async function attentionFor(ctx: Ctx, brandId: string, userId: string, role: Rol
     const openPiece = acts ? ({ type: 'open', to: `/pieces/${r.piece_id}` } as const) : null;
     if (r.status === 'failed') {
       out.push({
-        ...base, kind: 'publication_failed', at: iso(r.failed_at ?? r.updated_at)!, reason: r.last_error_class, detail: r.last_error, version_id: r.version_id,
+        ...base, kind: 'publication_failed', at: iso(r.failed_at ?? r.updated_at)!, reason: r.last_error_class, detail: r.last_error, detail_i18n: r.last_error_i18n, version_id: r.version_id,
         action: schedule && !r.manual ? { type: 'retry', publication_id: r.id } : openPiece,
       });
     } else if (r.status === 'on_hold') {
       // Held because a newer version is waiting: deciding on that version is what lets it go.
       const newer = r.latest_version_id !== r.version_id && r.latest_state === 'in_review';
       out.push({
-        ...base, kind: 'publication_on_hold', at: iso(r.updated_at)!, reason: newer ? 'new_version' : 'held', detail: r.hold_reason,
+        ...base, kind: 'publication_on_hold', at: iso(r.updated_at)!, reason: newer ? 'new_version' : 'held', detail: r.hold_reason, detail_i18n: r.hold_reason_i18n,
         version_id: newer ? r.latest_version_id : r.version_id,
         action: newer && acts ? { type: 'review', to: `/review/${r.latest_version_id}` } : openPiece,
       });
@@ -291,7 +293,7 @@ async function attentionFor(ctx: Ctx, brandId: string, userId: string, role: Rol
 
   // The agent gave a piece back (it declined, or it was not allowed to start) and no person has picked it up since.
   const handed = await ctx.db.query(
-    `select r.id, r.outcome, r.blocked_reason, r.notes, coalesce(r.finished_at, r.started_at) as at, p.id as piece_id, p.title as piece_title,
+    `select r.id, r.outcome, r.blocked_reason, r.notes, r.notes_i18n, coalesce(r.finished_at, r.started_at) as at, p.id as piece_id, p.title as piece_title,
        (select ver.id from version ver join variant v on v.id = ver.variant_id where v.piece_id = p.id order by v.created_at, ver.number desc limit 1) as version_id
      from piece p
      join lateral (select * from agent_run r where r.piece_id = p.id and r.status = 'finished' order by r.started_at desc, r.seq desc limit 1) r on true
@@ -305,7 +307,7 @@ async function attentionFor(ctx: Ctx, brandId: string, userId: string, role: Rol
   for (const h of handed) {
     out.push({
       kind: 'agent_needs_person', id: h.id, at: iso(h.at)!, reason: h.outcome === 'blocked' ? h.blocked_reason : 'agent_declined',
-      detail: h.notes || null, piece_id: h.piece_id, piece_title: h.piece_title, version_id: h.version_id, network: null, account_name: null,
+      detail: h.notes || null, detail_i18n: h.notes_i18n, piece_id: h.piece_id, piece_title: h.piece_title, version_id: h.version_id, network: null, account_name: null,
       scheduled_at: null, thumb: h.version_id ? thumbOf(h.version_id) : null, action: acts ? { type: 'open', to: `/pieces/${h.piece_id}` } : null,
     });
   }

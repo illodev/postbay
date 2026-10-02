@@ -27,8 +27,10 @@ const waitingIds = (o: { awaiting: { version_id: string }[] }) => o.awaiting.map
 async function publication(versionId: string, o: { at: Date; status: string; manual?: boolean; account?: string; error?: string; errorClass?: string; movedBy?: string }) {
   const v = (await env.db.one<{ variant_id: string }>('select variant_id from version where id = $1', [versionId]))!;
   const row = await env.db.one<{ id: string }>(
-    `insert into publication (variant_id, social_account_id, version_id, scheduled_at, status, manual, created_by, last_error, last_error_class, failed_at, moved_by, hold_reason)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,case when $5 = 'failed' then now() end,$10,case when $5 = 'on_hold' then 'A new version is awaiting approval' end) returning id`,
+    `insert into publication (variant_id, social_account_id, version_id, scheduled_at, status, manual, created_by, last_error, last_error_class, failed_at, moved_by,
+       hold_reason, hold_reason_i18n)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,case when $5 = 'failed' then now() end,$10,
+       case when $5 = 'on_hold' then 'A new version is awaiting approval' end, case when $5 = 'on_hold' then '{"code":"pub.hold.newVersion"}'::jsonb end) returning id`,
     [v.variant_id, o.account ?? env.accounts.instagram, versionId, o.at, o.status, o.manual ?? true, env.users.admin.id, o.error ?? null, o.errorClass ?? null, o.movedBy ?? null],
   );
   return row!.id;
@@ -141,7 +143,13 @@ describe('what needs attention', () => {
     const moved = await publication(v1.id, { at: new Date(Date.now() + 2 * 86_400_000), status: 'awaiting_reapproval', account: env.accounts.youtube, movedBy: users.approver.id });
 
     const o = await overview(users.approver2);
-    expect(o.attention.find((x: { id: string }) => x.id === held)).toMatchObject({ kind: 'publication_on_hold', reason: 'new_version', version_id: v2.id, action: { type: 'review', to: `/review/${v2.id}` } });
+    const item = o.attention.find((x: { id: string }) => x.id === held);
+    expect(item).toMatchObject({ kind: 'publication_on_hold', reason: 'new_version', version_id: v2.id, action: { type: 'review', to: `/review/${v2.id}` } });
+    // Why it is held was kept as a code: it reads in the language of whoever asks (English here, Spanish below).
+    expect(item.detail).toBe('A new version is awaiting approval');
+    expect(item).not.toHaveProperty('detail_i18n');
+    const es = await env.callIn('es', users.approver2, 'GET', `/api/brands/${env.brandId}/overview`);
+    expect(es.body.attention.find((x: { id: string }) => x.id === held).detail).toBe('Hay una versión nueva esperando aprobación');
     expect(o.attention.find((x: { id: string }) => x.id === moved)).toMatchObject({ kind: 'publication_awaiting_confirmation', reason: 'moved', action: { type: 'confirm', publication_id: moved } });
     // Whoever moved it cannot confirm it.
     expect((await overview(users.approver)).attention.find((x: { id: string }) => x.id === moved)).toMatchObject({ reason: 'moved_by_you', action: { type: 'open' } });
