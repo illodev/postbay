@@ -1,3 +1,8 @@
+import dns from 'node:dns';
+import http from 'node:http';
+import https from 'node:https';
+import { isIP } from 'node:net';
+import { PolicyError, refusal, type NetPolicy } from '../net.js';
 import { ConnectorError } from './types.js';
 
 export interface Reply {
@@ -17,6 +22,12 @@ export interface CallOptions {
   body?: BodyInit | null;
   duplex?: 'half';
   timeoutMs?: number;
+  /**
+   * For an address a person typed (a Bluesky server of their own) rather than one this deployment configured: the call is made only
+   * to an address the policy allows (checked after the name is resolved, at the moment of connecting), redirects are not followed,
+   * and the body has to be in memory. The same rules as the webhooks' (net.ts).
+   */
+  guard?: NetPolicy;
 }
 
 /** One exchange with a network, as the self-check records it: what was asked and answered, with every secret removed. */
@@ -82,11 +93,21 @@ export async function call(url: string, o: CallOptions = {}): Promise<Reply> {
   };
   let res: Response;
   try {
-    res = await fetch(u, { method: o.method ?? 'GET', headers, body, signal: timeout, ...(o.duplex ? { duplex: o.duplex } : {}) } as RequestInit);
+    res = o.guard
+      ? await guardedFetch(u, { method: o.method ?? 'GET', headers, body, timeoutMs: o.timeoutMs ?? 60_000 }, o.guard)
+      : await fetch(u, { method: o.method ?? 'GET', headers, body, signal: timeout, ...(o.duplex ? { duplex: o.duplex } : {}) } as RequestInit);
   } catch (err) {
+    if (err instanceof PolicyError) {
+      record({ error: `${u.host} refused: ${err.message}` });
+      throw new ConnectorError('unsupported', `This server will not connect to ${u.host}: ${err.message}`, { detail: { url: redactUrl(u.toString()) } });
+    }
     const reason = (err as Error).name === 'TimeoutError' ? 'timed out' : `could not connect (${(err as Error).message})`;
     record({ error: `${u.host} ${reason}` });
     throw new ConnectorError('transient', `${u.host} ${reason}`, { detail: { url: redactUrl(u.toString()) } });
+  }
+  if (o.guard && res.status >= 300 && res.status < 400) {
+    record({ status: res.status, error: 'redirect not followed' });
+    throw new ConnectorError('unsupported', `${u.host} answered with a redirect (${res.status}), which this server does not follow for an address a person typed`, { httpStatus: res.status });
   }
   const text = await res.text();
   let parsed: any = null;
@@ -101,11 +122,106 @@ export async function call(url: string, o: CallOptions = {}): Promise<Reply> {
   return { status: res.status, ok: res.ok, headers: res.headers, body: parsed };
 }
 
-const SECRET_KEY = /token|secret|authorization|password|code_verifier|^code$/i;
-const SECRET_PARAM = /(access_token|client_secret|fb_exchange_token|refresh_token|input_token)=[^&\s"]+/gi;
+const GUARDED_MAX_BYTES = 16 * 1024 * 1024;
 
-export function redactUrl(url: string): string {
-  return url.replace(SECRET_PARAM, '$1=[removed]');
+/**
+ * fetch() for an address a person typed: node's own client, so the resolved address can be checked when connecting (a name that
+ * points somewhere else a moment later does not get past it), no redirects, and an answer of bounded size.
+ */
+function guardedFetch(u: URL, o: { method: string; headers: Record<string, string>; body: BodyInit | null | undefined; timeoutMs: number }, policy: NetPolicy): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return reject(new PolicyError(`${u.protocol} addresses are not allowed`));
+    if (u.username || u.password) return reject(new PolicyError('an address with credentials in it is not allowed'));
+    const host = u.hostname.replace(/^\[|\]$/g, '');
+    if (isIP(host)) {
+      const why = refusal(host, u.protocol, policy);
+      if (why) return reject(new PolicyError(why));
+    }
+    let payload: Buffer | undefined;
+    if (typeof o.body === 'string') payload = Buffer.from(o.body);
+    else if (o.body instanceof Uint8Array) payload = Buffer.from(o.body);
+    else if (o.body instanceof ArrayBuffer) payload = Buffer.from(o.body);
+    else if (o.body !== undefined && o.body !== null) return reject(new PolicyError('only a body held in memory can be sent to an address a person typed'));
+    const lookup = ((hostname: string, options: dns.LookupOptions, cb: (...a: unknown[]) => void) => {
+      dns.lookup(hostname, { ...options, all: true }, (err, addresses) => {
+        if (err) return cb(err);
+        const list = addresses as dns.LookupAddress[];
+        for (const a of list) {
+          const why = refusal(a.address, u.protocol, policy);
+          if (why) return cb(new PolicyError(`${hostname} resolves to ${why}`));
+        }
+        if (options.all) return cb(null, list);
+        cb(null, list[0]!.address, list[0]!.family);
+      });
+    }) as unknown as http.RequestOptions['lookup'];
+    const lib = u.protocol === 'https:' ? https : http;
+    // A connection of its own each time (agent: false), so every call is checked where it connects, never a pooled socket.
+    const req = lib.request(u, {
+      method: o.method, lookup, timeout: o.timeoutMs, agent: false,
+      headers: { ...o.headers, ...(payload ? { 'content-length': String(payload.length) } : {}) },
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      res.on('data', (c: Buffer) => {
+        size += c.length;
+        if (size > GUARDED_MAX_BYTES) { res.destroy(new Error('the answer is too large')); return; }
+        chunks.push(c);
+      });
+      res.on('error', (err) => reject(err));
+      res.on('end', () => {
+        const h = new Headers();
+        for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) h.set(k, Array.isArray(v) ? v.join(', ') : String(v));
+        const status = res.statusCode ?? 0;
+        // A Response cannot carry a body with these statuses.
+        const empty = status === 204 || status === 304 || (status >= 100 && status < 200);
+        resolve(new Response(empty ? null : Buffer.concat(chunks), { status: status || 502, headers: h }));
+      });
+    });
+    req.on('timeout', () => req.destroy(Object.assign(new Error('timed out'), { name: 'TimeoutError' })));
+    req.on('error', (err) => reject(err));
+    req.end(payload);
+  });
+}
+
+/**
+ * Secrets are found by their shape, not by a list of the names the networks happened to use when this was written (a Bluesky
+ * session is `accessJwt`, Meta's is `access_token`, an OAuth `state` is as good as a password for a few minutes):
+ *  - a key that names a credential has its value removed, whatever the value looks like;
+ *  - a value that looks like a JWT is removed wherever it is;
+ *  - an address that is signed (it carries a signature, a policy or an expiry in its query) loses every query value, because a
+ *    signed address IS the credential; any other address loses the values of the parameters whose names name a credential.
+ */
+const SECRET_KEY = /token|secret|authori[sz]ation|password|passwd|jwt|cookie|session|credential|signature|api[_-]?key|code_verifier|^code$|^state$|^sig$|^key$|^policy$/i;
+const JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g;
+/** Query parameters that only a signed address carries (S3, Google Cloud Storage, Azure, CloudFront, Meta's CDN, this app's own media links). */
+const SIGNED_PARAM = /^(x-amz-[a-z-]+|x-goog-[a-z-]+|signature|sig|sv|se|sp|sr|skoid|policy|key-pair-id|expires|exp|oh|oe|_nc_[a-z_]+|token|hmac|hash)$/i;
+const URL_IN_TEXT = /https?:\/\/[^\s"'<>`]+/g;
+
+function redactOneUrl(raw: string): string {
+  const q = raw.indexOf('?');
+  if (q === -1) return raw;
+  const hashAt = raw.indexOf('#', q);
+  const query = raw.slice(q + 1, hashAt === -1 ? undefined : hashAt);
+  const pairs = query.split('&').filter(Boolean).map((part) => {
+    const eq = part.indexOf('=');
+    let name = eq === -1 ? part : part.slice(0, eq);
+    try { name = decodeURIComponent(name.replace(/\+/g, ' ')); } catch { /* keep it as written */ }
+    return { name, raw: part, hasValue: eq !== -1 };
+  });
+  const signed = pairs.some((p) => SIGNED_PARAM.test(p.name));
+  const kept = pairs.map((p) => {
+    if (!p.hasValue) return p.raw;
+    const value = p.raw.slice(p.raw.indexOf('=') + 1);
+    let decoded = value;
+    try { decoded = decodeURIComponent(value.replace(/\+/g, ' ')); } catch { /* keep it as written */ }
+    return signed || SECRET_KEY.test(p.name) || new RegExp(JWT.source).test(decoded) ? `${p.raw.slice(0, p.raw.indexOf('='))}=[removed]` : p.raw;
+  });
+  return `${raw.slice(0, q)}?${kept.join('&')}`;
+}
+
+/** An address, or a text with addresses in it, with every secret in it removed (see above). */
+export function redactUrl(text: string): string {
+  return text.replace(URL_IN_TEXT, (u) => redactOneUrl(u)).replace(JWT, '[removed]');
 }
 
 /** A copy of a network's answer that is safe to store and show: no tokens, no secrets, no signed query strings. */
