@@ -35,6 +35,14 @@ describe('database guarantees', () => {
     await expect(env.db.query(`delete from approval where version_id = $1`, [id])).rejects.toThrow(/append-only/);
   });
 
+  it('refuses TRUNCATE on versions, their files, approvals and the attempt log, as on the audit log', async () => {
+    await approvedVersion();
+    for (const table of ['version', 'asset', 'approval', 'publication_attempt']) {
+      await expect(env.db.query(`truncate ${table} cascade`), table).rejects.toThrow(/append-only/);
+    }
+    expect((await env.db.query('select 1 from version')).length).toBeGreaterThan(0);
+  });
+
   it('keeps the audit log append-only', async () => {
     await approvedVersion();
     await expect(env.db.query(`update audit_event set action = 'x'`)).rejects.toThrow(/append-only/);
