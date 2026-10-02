@@ -1,7 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { ApiError } from '../api';
 import { t, tMaybe } from '../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
+import { Icon, type IconName } from './icons';
 import '../styles/ui.css';
 import { HAS_LOGO, NetLogo } from './netlogos';
 
@@ -266,5 +267,84 @@ export function SkeletonText({ lines = 3, className = '' }: { lines?: number; cl
     <span className={`skeleton-text ${className}`.trim()} aria-hidden="true">
       {Array.from({ length: lines }, (_, i) => <Skeleton key={i} width={i === lines - 1 && lines > 1 ? '62%' : '100%'} />)}
     </span>
+  );
+}
+
+// ───────────────────────────── a row's "⋯" menu ─────────────────────────────
+
+export interface MenuItem {
+  label: string;
+  icon?: IconName;
+  /** Takes something away: red, and usually last. */
+  danger?: boolean;
+  disabled?: boolean;
+  onSelect: () => void;
+}
+
+/**
+ * The "⋯" button of a row and the menu it opens: the row's less frequent actions, out of the way until asked for. Arrow keys
+ * move, Enter picks, Escape or a click outside closes and gives the focus back to the button.
+ */
+export function MenuButton({ label, items, align = 'right', icon = 'more', className = '' }: { label: string; items: (MenuItem | false | null | undefined)[]; align?: 'left' | 'right'; icon?: IconName; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const list = items.filter(Boolean) as MenuItem[];
+  const close = useCallback((focus = true) => {
+    setOpen(false);
+    if (focus) button.current?.focus();
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => wrap.current && !wrap.current.contains(e.target as Node) && close(false);
+    document.addEventListener('mousedown', onDown);
+    // The first item takes the focus, so the keyboard can go on from there.
+    wrap.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open, close]);
+  const onKey = (e: KeyboardEvent) => {
+    const all = [...(wrap.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])];
+    const at = all.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); all[(at + 1) % all.length]?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); all[(at - 1 + all.length) % all.length]?.focus(); }
+    else if (e.key === 'Home') { e.preventDefault(); all[0]?.focus(); }
+    else if (e.key === 'End') { e.preventDefault(); all[all.length - 1]?.focus(); }
+    else if (e.key === 'Tab') close(false);
+  };
+  if (list.length === 0) return null;
+  return (
+    <div ref={wrap} className={`menu-wrap ${className}`.trim()} onKeyDown={open ? onKey : undefined}>
+      <button
+        ref={button}
+        type="button"
+        className="menu-trigger"
+        aria-label={label}
+        title={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => { if (e.key === 'ArrowDown' && !open) { e.preventDefault(); setOpen(true); } }}
+      >
+        <Icon name={icon} />
+      </button>
+      {open && (
+        <div className={`menu-pop menu-pop-${align}`} role="menu" aria-label={label}>
+          {list.map((it, i) => (
+            <button
+              key={i}
+              type="button"
+              role="menuitem"
+              className={`menu-item ${it.danger ? 'menu-item-danger' : ''}`}
+              disabled={it.disabled}
+              onClick={() => { close(false); it.onSelect(); }}
+            >
+              {it.icon && <Icon name={it.icon} />}
+              <span>{it.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
