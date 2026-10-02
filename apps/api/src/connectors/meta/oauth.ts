@@ -1,3 +1,4 @@
+import { english, msg } from '../../i18n/index.js';
 import { call, redact } from '../http.js';
 import { ConnectorError, type Candidate, type OAuthProvider } from '../types.js';
 import { classifyMeta, type MetaConfig } from './client.js';
@@ -111,7 +112,8 @@ export function createMetaOAuth(cfg: MetaConfig): OAuthProvider {
         next = body.paging?.next;
       }
       if (out.length === 0) {
-        throw new ConnectorError('auth', `Meta did not share any Page this person can publish for. Check that they have a role on the Page and tick it in the permission dialog${cfg.loginConfigId ? '' : ". If the app uses Facebook Login for Business, set META_LOGIN_CONFIG_ID to its login configuration: without it the dialog may not offer the Pages at all"}.`, { detail: redact({ granted }) });
+        const text = msg(cfg.loginConfigId ? 'connect.meta.noPages' : 'connect.meta.noPagesLoginConfig');
+        throw new ConnectorError('auth', english(text), { detail: redact({ granted }), text });
       }
       return out;
     },

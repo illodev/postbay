@@ -4,7 +4,8 @@ import type { Ctx } from '../context.js';
 import { TokenVault } from '../crypto.js';
 import { badRequest } from '../errors.js';
 import { checkUrl, type NetPolicy } from '../net.js';
-import { KIND_LIST, KINDS, describeNotification, type NotifyKind } from './notify.js';
+import { requestLocale, tr, type Locale } from '../i18n/index.js';
+import { KIND_LIST, KINDS, chosenLocale, describeNotification, kindLabel, recipientLocale, type NotifyKind } from './notify.js';
 import { newVapidKeys, sendPush, type PushSubscription, type VapidKeys } from './webpush.js';
 
 /**
@@ -42,14 +43,19 @@ export async function vapidKeys(ctx: Ctx): Promise<VapidKeys> {
 // ───────────────────────────── what each person wants ─────────────────────────────
 
 export interface Preferences {
-  /** Every kind there is, with what to call it. */
+  /** Every kind there is, with what to call it (in the language of the request). */
   kinds: { kind: NotifyKind; label: string }[];
   emailKinds: NotifyKind[];
   pushKinds: NotifyKind[];
   pushDevices: number;
+  /**
+   * The language emails, Slack-free notices and pushes are written to this person in: `es`, `en`, or null to follow each brand's
+   * language (Spanish when a brand has none).
+   */
+  locale: Locale | null;
 }
 
-interface Stored { emailOff?: string[]; pushOn?: string[] }
+interface Stored { emailOff?: string[]; pushOn?: string[]; locale?: string }
 
 export async function getPreferences(ctx: Ctx, userId: string): Promise<Preferences> {
   const u = await ctx.db.one<{ notify_prefs: Stored }>('select notify_prefs from app_user where id = $1', [userId]);
@@ -58,20 +64,38 @@ export async function getPreferences(ctx: Ctx, userId: string): Promise<Preferen
   const pushOn = p.pushOn ? new Set(p.pushOn) : new Set(KIND_LIST.filter((k) => KINDS[k].push));
   const devices = await ctx.db.one<{ n: number }>('select count(*)::int as n from push_subscription where user_id = $1', [userId]);
   return {
-    kinds: KIND_LIST.map((kind) => ({ kind, label: KINDS[kind].label })),
+    kinds: KIND_LIST.map((kind) => ({ kind, label: kindLabel(requestLocale(), kind) })),
     emailKinds: KIND_LIST.filter((k) => !off.has(k)),
     pushKinds: KIND_LIST.filter((k) => pushOn.has(k)),
     pushDevices: devices?.n ?? 0,
+    locale: chosenLocale(p),
   };
 }
 
 const kindList = z.array(z.enum(KIND_LIST as [NotifyKind, ...NotifyKind[]])).max(KIND_LIST.length);
-export const preferencesInput = z.object({ emailKinds: kindList, pushKinds: kindList });
+/** `locale` may be left out (the language stays as it was), or null to follow each brand's language again. */
+export const preferencesInput = z.object({ emailKinds: kindList, pushKinds: kindList, locale: z.enum(['es', 'en']).nullable().optional() });
 
 export async function setPreferences(ctx: Ctx, userId: string, raw: unknown): Promise<Preferences> {
   const input = preferencesInput.parse(raw);
-  const stored: Stored = { emailOff: KIND_LIST.filter((k) => !input.emailKinds.includes(k)), pushOn: [...new Set(input.pushKinds)] };
+  const before = await ctx.db.one<{ notify_prefs: Stored }>('select notify_prefs from app_user where id = $1', [userId]);
+  const locale = input.locale === undefined ? chosenLocale(before?.notify_prefs) : input.locale;
+  const stored: Stored = {
+    emailOff: KIND_LIST.filter((k) => !input.emailKinds.includes(k)), pushOn: [...new Set(input.pushKinds)], ...(locale ? { locale } : {}),
+  };
   await ctx.db.query('update app_user set notify_prefs = $2 where id = $1', [userId, JSON.stringify(stored)]);
+  return getPreferences(ctx, userId);
+}
+
+/** Only the language a person is written to in (see Preferences.locale): what the web sends when someone picks a language. */
+export const localeInput = z.object({ locale: z.enum(['es', 'en']).nullable() });
+
+export async function setLocale(ctx: Ctx, userId: string, raw: unknown): Promise<Preferences> {
+  const { locale } = localeInput.parse(raw);
+  await ctx.db.query(
+    `update app_user set notify_prefs = case when $2::text is null then notify_prefs - 'locale' else notify_prefs || jsonb_build_object('locale', $2::text) end where id = $1`,
+    [userId, locale],
+  );
   return getPreferences(ctx, userId);
 }
 
@@ -133,7 +157,7 @@ async function pushToUser(ctx: Ctx, userId: string, message: object): Promise<{ 
 
 /** A message to this person's own browsers, so they can see it works before an event needs it to. */
 export async function sendTest(ctx: Ctx, userId: string) {
-  const r = await pushToUser(ctx, userId, { title: 'Content Studio', body: 'Push messages work in this browser.', url: ctx.config.APP_URL, tag: 'test' });
+  const r = await pushToUser(ctx, userId, { title: tr('notify.pushTestTitle'), body: tr('notify.pushTest'), url: ctx.config.APP_URL, tag: 'test' });
   return { devices: r.subscriptions, reached: r.reached };
 }
 
@@ -146,7 +170,7 @@ export async function sendPendingPush(ctx: Ctx, limit = 100): Promise<number> {
   await ctx.db.query(`update notification set pushed_at = now() where pushed_at is null and created_at < $1`, [new Date(ctx.now().getTime() - STALE_MS)]);
   return ctx.db.tx(async (db) => {
     const rows = await db.query(
-      `select n.id, n.user_id, n.kind, n.payload, n.push_tries, u.notify_prefs, b.name as brand, p.title as piece_title
+      `select n.id, n.user_id, n.kind, n.payload, n.push_tries, u.notify_prefs, b.name as brand, b.locale as brand_locale, p.title as piece_title
        from notification n join app_user u on u.id = n.user_id join brand b on b.id = n.brand_id
        left join piece p on p.id = nullif(n.payload->>'pieceId', '')::uuid
        where n.pushed_at is null and (n.push_next_at is null or n.push_next_at <= $2)
@@ -161,7 +185,7 @@ export async function sendPendingPush(ctx: Ctx, limit = 100): Promise<number> {
         await db.query('update notification set pushed_at = $2 where id = $1', [n.id, ctx.now()]);
         continue;
       }
-      const d = describeNotification(ctx.config.APP_URL, n.kind, n.payload, n.brand, n.piece_title);
+      const d = describeNotification(recipientLocale(n.notify_prefs, n.brand_locale), ctx.config.APP_URL, n.kind, n.payload, n.brand, n.piece_title);
       // `tag` makes a second push about the same piece replace the first on the person's screen instead of piling up.
       const r = await pushToUser(ctx, n.user_id, { title: d.title, body: d.body, url: d.url, tag: `${n.kind}:${n.payload.pieceId ?? ''}` });
       if (r.reached > 0 || !r.retry) {

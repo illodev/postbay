@@ -4,6 +4,7 @@ import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { canTransition } from '../domain/review.js';
 import { badRequest, conflict, forbidden } from '../errors.js';
+import { isKnown, msg, type Key, type Localized } from '../i18n/index.js';
 import { audit } from './audit.js';
 import { accountRef, actorOf, commentRef, emit, openComments, pieceRef, versionRef } from './events.js';
 import { openCommentCount } from './comments.js';
@@ -23,8 +24,11 @@ export const requestChangesInput = z.object({
   note: z.string().trim().max(5000).default(''),
 });
 
+/** A version's state as a word in a sentence, in the reader's language (the English is the state's code, as it always was). */
+const versionState = (state: string): Localized | string => (isKnown(`error.versionState.${state}`) ? msg(`error.versionState.${state}` as Key) : state);
+
 async function setVersionState(db: Queryable, versionId: string, from: string, to: string) {
-  if (!canTransition(from as never, to as never)) throw conflict('invalid_state', `A version in state ${from} cannot become ${to}`);
+  if (!canTransition(from as never, to as never)) throw conflict('invalid_state', msg('error.approval.transition', { from: versionState(from), to: versionState(to) }));
   await db.query('update version set review_state = $2 where id = $1', [versionId, to]);
 }
 
@@ -62,7 +66,7 @@ export async function requestChanges(ctx: Ctx, p: Principal, versionId: string, 
     const version = await loadVersion(db, versionId);
     await authorize(db, p, version.brand_id, 'version.request_changes');
     if (version.review_state !== 'in_review') {
-      throw conflict('invalid_state', 'Changes can only be requested on a version that is in review');
+      throw conflict('invalid_state', msg('error.approval.changesOnlyInReview'));
     }
     const a = actorCols(p);
     if (input.note) {
@@ -71,7 +75,7 @@ export async function requestChanges(ctx: Ctx, p: Principal, versionId: string, 
       if (ref) await emit(ctx, db, version.brand_id, 'comment.created', ref);
     }
     const open = await openCommentCount(db, version.variant_id);
-    if (open === 0) throw badRequest('no_comments', 'Add at least one comment (or a note) saying what should change');
+    if (open === 0) throw badRequest('no_comments', msg('error.approval.noComments'));
     await setVersionState(db, versionId, version.review_state, 'changes_requested');
     await refreshPieceState(db, version.piece_id);
     await audit(db, p, version.brand_id, 'version.changes_requested', 'version', versionId,
@@ -96,36 +100,36 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
     await db.query('select 1 from version where id = $1 for update', [versionId]);
     const version = await loadVersion(db, versionId);
     await authorize(db, p, version.brand_id, 'version.approve');
-    if (p.kind !== 'user') throw forbidden('Only people can approve');
-    if (version.review_state !== 'in_review') throw conflict('invalid_state', 'Only a version that is in review can be approved or rejected');
+    if (p.kind !== 'user') throw forbidden(msg('error.approval.peopleOnly'));
+    if (version.review_state !== 'in_review') throw conflict('invalid_state', msg('error.approval.onlyInReview'));
     if (version.author_user_id === p.userId) {
-      throw forbidden('You cannot approve a version you uploaded yourself');
+      throw forbidden(msg('error.approval.ownUpload'));
     }
     const fingerprint = await recomputeFingerprint(db, versionId);
     // Both the file records and the stored objects themselves: a file replaced in storage stops counting too.
     if (fingerprint !== version.fingerprint || (input.decision === 'approve' && !(await storedFilesMatch(ctx, versionId, db)))) {
       ctx.log.error({ versionId }, 'stored files no longer match the version fingerprint');
-      throw conflict('fingerprint_mismatch', 'The stored files do not match the version fingerprint; nothing can be approved');
+      throw conflict('fingerprint_mismatch', msg('error.approval.fingerprint'));
     }
     const brand = await loadBrand(db, version.brand_id);
     const rules = rulesOf(brand);
     const prior = await db.one('select 1 from approval where version_id = $1 and approver_user_id = $2', [versionId, p.userId]);
-    if (prior) throw conflict('already_decided', 'You have already decided on this version');
+    if (prior) throw conflict('already_decided', msg('error.approval.alreadyDecided'));
 
     if (input.decision === 'reject') {
-      if (!input.note.trim()) throw badRequest('note_required', 'Say why you are rejecting this version');
+      if (!input.note.trim()) throw badRequest('note_required', msg('error.approval.noteRequired'));
     } else {
       const open = await openCommentCount(db, version.variant_id);
-      if (open > 0) throw conflict('open_comments', `There are ${open} open comment(s): resolve them before approving`, { open });
+      if (open > 0) throw conflict('open_comments', msg('error.approval.openComments', { count: open }), { open });
       const missing = rules.checklist.filter((item) => input.checklist[item] !== true);
-      if (missing.length) throw badRequest('checklist_incomplete', 'Tick every checklist item before approving', { missing });
-      if (input.accountIds.length === 0) throw badRequest('no_accounts', 'Choose at least one account to approve for');
+      if (missing.length) throw badRequest('checklist_incomplete', msg('error.approval.checklist'), { missing });
+      if (input.accountIds.length === 0) throw badRequest('no_accounts', msg('error.approval.noAccounts'));
       const accounts = await db.query<{ id: string; status: string }>(
         'select id, status from social_account where brand_id = $1 and id = any($2)',
         [version.brand_id, input.accountIds],
       );
-      if (accounts.length !== new Set(input.accountIds).size) throw badRequest('invalid_accounts', 'An account does not belong to this brand');
-      if (accounts.some((x) => x.status === 'reconnect_required')) throw badRequest('invalid_accounts', 'An account needs to be reconnected first');
+      if (accounts.length !== new Set(input.accountIds).size) throw badRequest('invalid_accounts', msg('error.approval.accountNotInBrand'));
+      if (accounts.some((x) => x.status === 'reconnect_required')) throw badRequest('invalid_accounts', msg('error.approval.accountReconnect'));
     }
 
     // What goes to a network besides the files is approved with them: the title and the AI label as the approver saw them.
@@ -148,7 +152,7 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
       );
       const common = valid.map((v) => v.account_ids).reduce((acc, ids) => acc.filter((x) => ids.includes(x)));
       if (common.length === 0) {
-        throw conflict('no_common_accounts', 'The approvers did not agree on any account: align on at least one');
+        throw conflict('no_common_accounts', msg('error.approval.noCommonAccounts'));
       }
       if (valid.length >= rules.required_approvals) {
         await setVersionState(db, versionId, 'in_review', 'approved');

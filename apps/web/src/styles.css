@@ -3,21 +3,22 @@
  * teal is the agent; the other colours are reserved for state. One set of tokens, used everywhere.
  */
 :root {
-  --bg: #0b0c10;
-  --rail: #07080b;
-  --side: #0f1116;
-  --surface: #14161c;
-  --surface-2: #1c1f27;
-  --surface-3: #252830;
-  --border: #22252d;
-  --border-strong: #2e323c;
-  --text: #eceef3;
-  --muted: #8e93a0;
-  --faint: #5b606d;
+  /* Frame.io's dark: navy, not neutral black (sampled from the owner's screenshots) */
+  --bg: #101119;
+  --rail: #101119;
+  --side: #151725;
+  --surface: #1a1d2b;
+  --surface-2: #1e2231;
+  --surface-3: #2d314b;
+  --border: #23263a;
+  --border-strong: #2f3349;
+  --text: #e8e9ef;
+  --muted: #96979f;
+  --faint: #5d5f6c;
   /* violet: action and selection */
-  --accent: #7466ff;
-  --accent-hover: #8579ff;
-  --accent-soft: rgb(116 102 255 / 16%);
+  --accent: #6f63f5;
+  --accent-hover: #8076ff;
+  --accent-soft: rgb(111 99 245 / 18%);
   --accent-contrast: #ffffff;
   /* yellow: time — timecodes, review marks, drawings */
   --time: #f2c94c;
@@ -43,14 +44,14 @@
   --gutter: 24px;
   --rail-w: 56px;
   --sidebar: 236px;
-  --font: 'Geist Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --mono: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
   color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text); }
-body { font: 15px/1.5 var(--font); -webkit-font-smoothing: antialiased; font-feature-settings: 'ss01', 'cv11'; }
+body { font: 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; font-feature-settings: 'cv11', 'ss03'; letter-spacing: -0.003em; }
 h1, h2, h3 { line-height: 1.25; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
 h1 { font-size: 1.375rem; }
 h2 { font-size: 1.0625rem; }
@@ -75,16 +76,16 @@ details > summary { cursor: pointer; color: var(--muted); }
 
 /* ───────────────────────────── shell: icon rail + sidebar + content ───────────────────────────── */
 .shell { display: grid; grid-template-columns: var(--rail-w) var(--sidebar) minmax(0, 1fr); min-height: 100dvh; }
-.rail { position: sticky; top: 0; height: 100dvh; background: var(--rail); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 0; z-index: 30; }
+.rail { position: sticky; top: 0; height: 100dvh; background: var(--rail); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 0; z-index: 30; }
 .rail-logo { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, #8f86ff, #5a4cf0); display: grid; place-items: center; margin-bottom: 12px; }
 .rail-logo svg { width: 12px; height: 12px; }
-.rail-btn { position: relative; width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; color: var(--muted); background: none; border: 0; cursor: pointer; }
+.rail-btn { position: relative; width: 36px; height: 36px; padding: 0; border-radius: 9px; display: grid; place-items: center; color: var(--muted); background: none; border: 0; cursor: pointer; }
 .rail-btn:hover { background: var(--surface); color: var(--text); text-decoration: none; }
-.rail-btn.active { background: var(--surface-2); color: var(--text); }
+.rail-btn.active { background: var(--surface-3); color: var(--text); }
 .rail-btn svg { width: 18px; height: 18px; }
 .rail-btn .rail-dot { position: absolute; top: 6px; right: 6px; min-width: 8px; height: 8px; border-radius: 99px; background: var(--bad); box-shadow: 0 0 0 2px var(--rail); }
 .rail-spacer { flex: 1; }
-.sidebar { position: sticky; top: 0; height: 100dvh; display: flex; flex-direction: column; gap: 1px; background: var(--side); border-right: 1px solid var(--border); padding: 10px 10px 12px; overflow-y: auto; }
+.sidebar { position: sticky; top: 8px; height: calc(100dvh - 16px); margin: 8px 0; display: flex; flex-direction: column; gap: 1px; background: var(--side); border: 1px solid var(--border); border-radius: 12px; padding: 10px 10px 12px; overflow-y: auto; }
 .brand-switch { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 8px; margin-bottom: 8px; border-radius: 8px; border: 0; background: none; color: var(--text); font: 600 .9375rem var(--font); cursor: pointer; text-align: left; }
 .brand-switch:hover { background: var(--surface); }
 .brand-mark { width: 24px; height: 24px; border-radius: 6px; background: #fff; color: #111; display: grid; place-items: center; font-size: .75rem; font-weight: 700; flex: none; }
@@ -99,7 +100,7 @@ details > summary { cursor: pointer; color: var(--muted); }
   white-space: nowrap; border: 0; background: none; font-family: inherit; cursor: pointer; text-align: left; width: 100%; min-width: 0;
 }
 .nav a:hover, .sb-item:hover { background: var(--surface); color: var(--text); text-decoration: none; }
-.nav a.active, .sb-item.on { background: var(--surface-2); color: var(--text); }
+.nav a.active, .sb-item.on { background: var(--surface-3); color: var(--text); }
 .nav a > svg, .sb-item > svg { width: 16px; height: 16px; color: var(--faint); flex: none; }
 .nav .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .nav-count { margin-left: auto; font-size: .75rem; color: var(--faint); font-variant-numeric: tabular-nums; }

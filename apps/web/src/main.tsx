@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import '@fontsource-variable/geist';
+import '@fontsource-variable/inter';
 import '@fontsource-variable/geist-mono';
 import { App } from './App';
 import { ToastProvider } from './components/ui';

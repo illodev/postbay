@@ -29,7 +29,7 @@ let runner = null;
 const runnerLog = [];
 
 async function newSession(email, viewport = { width: 1280, height: 900 }, mobile = false) {
-  const context = await browser.newContext({ baseURL: BASE, viewport, isMobile: mobile, hasTouch: mobile });
+  const context = await browser.newContext({ baseURL: BASE, locale: 'en-US', viewport, isMobile: mobile, hasTouch: mobile });
   const page = await context.newPage();
   pages.push([email, page]);
   page.on('pageerror', (e) => problems.push(`[${email}] page error: ${e.message}`));
@@ -87,7 +87,7 @@ async function seekVideo(page, seconds) {
 
 const state = {};
 const admin = await newSession('admin@example.com');
-const api = (method, url, data) => admin.context.request.fetch(url, { method, data, headers: { 'x-requested-by': 'studio' } });
+const api = (method, url, data) => admin.context.request.fetch(url, { method, data, headers: { 'x-requested-by': 'studio', 'accept-language': 'en' } });
 
 await step('seed: members for the approver, the reviewer and the producer', async () => {
   const me = await (await api('GET', '/api/me')).json();

@@ -1,0 +1,146 @@
+import { define } from './define.js';
+
+// Connecting an account: what the sign-in with a network says when it does not work (the `connect_error` the web shows), the errors of
+// choosing, reconnecting and disconnecting, and what the app knows about a Meta Page pushing its comments (kept on the account).
+export const connect = define({
+  es: {
+    'connect.provider.meta': 'Facebook e Instagram',
+    'connect.docs.both': 'docs/phase-2.md y docs/phase-4.md',
+    'connect.cred.handle': 'Usuario',
+    'connect.cred.handleHelp': 'Por ejemplo lumen.bsky.social',
+    'connect.cred.appPassword': 'Contraseña de app',
+    'connect.cred.appPasswordHelp': 'Se crea en Bluesky, en Ajustes → Privacidad y seguridad → Contraseñas de aplicación. No es la contraseña de tu cuenta.',
+    'connect.cred.server': 'Servidor',
+    'connect.cred.serverHelp': 'Solo si la cuenta no está en bsky.social',
+    'connect.notConfigured': '{provider} no está configurado en este servidor (mira {docs})',
+    'connect.credentialsRequired': '{provider} se conecta con una contraseña de app, no con una página de inicio de sesión',
+    'connect.redirectRequired': '{provider} se conecta con una página de inicio de sesión',
+    'connect.peopleOnly': 'Solo las personas pueden conectar cuentas',
+    'connect.wrongProvider': 'Esa cuenta es de otra red',
+    'connect.noState': 'El inicio de sesión ha vuelto sin su estado',
+    'connect.expired': 'Este intento de conexión ha caducado o ya se ha usado. Vuelve a empezarlo desde Ajustes.',
+    'connect.someoneElse': 'Este intento de conexión lo empezó otra persona',
+    'connect.cancelled': 'Se ha cancelado el inicio de sesión',
+    'connect.networkNotSetUp': 'Esta red no está configurada en el servidor',
+    'connect.exchangeFailed': 'No se ha podido terminar el inicio de sesión con la red',
+    'connect.fieldNeeded': 'Falta {field}',
+    'connect.field.handle': 'el usuario',
+    'connect.field.appPassword': 'la contraseña de app',
+    'connect.field.server': 'el servidor',
+    'connect.unknownCandidate': 'Una de las cuentas elegidas no salía en este inicio de sesión',
+    'connect.chooseOne': 'Elige exactamente una cuenta de {network} para volver a conectar {name}',
+    'connect.wrongAccount': 'Has entrado con {chosen}, no con {name}. Entra con la cuenta correcta.',
+    'connect.inUse': {
+      one: 'Todavía hay {count} publicación esperando a salir por esta cuenta: cancélala antes',
+      other: 'Todavía hay {count} publicaciones esperando a salir por esta cuenta: cancélalas antes',
+    },
+    'connect.approvalNotApplicable': 'Solo las cuentas de YouTube, TikTok y Pinterest tienen estado de aprobación',
+    'connect.kidsNotApplicable': 'Solo los canales de YouTube tienen la declaración de contenido para niños',
+    'connect.optionsRefused': '{provider} no ha dicho qué puede publicar ahora esta cuenta: {error}',
+
+    'connect.meta.noPages': 'Meta no ha compartido ninguna página en la que esta persona pueda publicar. Comprueba que tiene un rol en la página y márcala en el diálogo de permisos.',
+    'connect.meta.noPagesLoginConfig':
+      'Meta no ha compartido ninguna página en la que esta persona pueda publicar. Comprueba que tiene un rol en la página y márcala en el diálogo de permisos. Si la app usa Facebook Login for Business, pon en META_LOGIN_CONFIG_ID su configuración de inicio de sesión: sin ella puede que el diálogo ni siquiera ofrezca las páginas.',
+    'connect.google.noRefreshToken':
+      'Google no ha devuelto un token de renovación, así que la conexión dejaría de funcionar en una hora. Quita esta app del acceso de terceros de la cuenta de Google y vuelve a conectarla.',
+    'connect.google.noChannel': 'Esta cuenta de Google no tiene canal de YouTube. Crea uno en YouTube y vuelve a conectarla.',
+    'connect.linkedin.noPages': 'LinkedIn no ha compartido ninguna página de empresa que administre esta persona. Comprueba que es administradora de la página y márcala en el diálogo de permisos.',
+    'connect.pinterest.noBoard': 'Esta cuenta de Pinterest no tiene ningún tablero en el que guardar pines. Crea un tablero en Pinterest y vuelve a conectarla.',
+    'connect.tiktok.noAccount': 'TikTok no ha dicho qué cuenta ha entrado',
+    'connect.bluesky.badServer': 'No se puede usar la dirección del servidor: {error}',
+    'connect.bluesky.httpsOnly': 'La dirección del servidor tiene que empezar por https://',
+    'connect.bluesky.serverOnly': 'Pon solo la dirección del servidor, como https://pds.example.com',
+    'connect.bluesky.needed': 'Hacen falta un usuario y una contraseña de app',
+    'connect.bluesky.refused': 'Bluesky no ha aceptado ese usuario y esa contraseña de app. Revísalos, y comprueba que la contraseña sea una contraseña de app.',
+    'connect.bluesky.noSession': 'No hay ninguna sesión que renovar',
+    'connect.noRenewalToken': 'Esta conexión no tiene token de renovación: vuelve a conectarla',
+    'connect.noRefreshToken': 'Esta conexión no tiene token de renovación: vuelve a conectarla',
+
+    'connect.noTokenKey': 'No se pueden leer los tokens de las redes: TOKEN_KEY no está configurada',
+    'connect.notConnected': 'Esta cuenta no está conectada a su red',
+    'connect.mustReconnect': 'Hay que volver a conectar esta cuenta antes de que pueda publicar',
+    'connect.noLongerValid': 'La red dice que esta conexión ya no vale',
+
+    'connect.events.noPermission':
+      'Sin suscripción a los eventos de la página: hace falta pages_manage_metadata, que solo se pide con los premios activados. Mientras, los comentarios se leen cada pocos minutos.',
+    'connect.events.refusedByMeta':
+      'Meta no ha dejado suscribir la app a los eventos de la página ({error}). Hace falta pages_manage_metadata, que solo se pide con los premios activados; mientras, los comentarios se leen cada pocos minutos.',
+    'connect.events.unconfirmed': 'Meta no ha confirmado la suscripción a la página',
+    'connect.events.refused': 'La red no ha aceptado la suscripción: {error}',
+    'connect.events.subscribed': 'Meta manda a la app los comentarios de esta cuenta en cuanto llegan (la app está suscrita a los eventos «{field}» de la página).',
+    'connect.events.notSubscribed':
+      'La app no está suscrita a los eventos «{field}» de esta página, así que Meta no manda sus comentarios: se encuentran leyéndolos cada pocos minutos. Los premios la suscriben; si sigue así, vuelve a conectar la cuenta con los premios activados.',
+    'connect.events.unreadable':
+      'No se ha podido saber si la app está suscrita a los eventos de la página ({error}); hace falta pages_manage_metadata, que solo se pide con los premios activados.',
+  },
+  en: {
+    'connect.provider.meta': 'Facebook and Instagram',
+    'connect.docs.both': 'docs/phase-2.md and docs/phase-4.md',
+    'connect.cred.handle': 'Handle',
+    'connect.cred.handleHelp': 'For example lumen.bsky.social',
+    'connect.cred.appPassword': 'App password',
+    'connect.cred.appPasswordHelp': 'Made in Bluesky under Settings → Privacy and security → App passwords. Not your account password.',
+    'connect.cred.server': 'Server',
+    'connect.cred.serverHelp': 'Only if the account is not on bsky.social',
+    'connect.notConfigured': '{provider} is not set up on this server (see {docs})',
+    'connect.credentialsRequired': '{provider} is connected with an app password, not through a sign-in page',
+    'connect.redirectRequired': '{provider} is connected through a sign-in page',
+    'connect.peopleOnly': 'Only people can connect accounts',
+    'connect.wrongProvider': 'That account is on a different network',
+    'connect.noState': 'The sign-in came back without its state',
+    'connect.expired': 'This connection attempt expired or was already used. Start it again from Settings.',
+    'connect.someoneElse': 'This connection was started by someone else',
+    'connect.cancelled': 'The sign-in was cancelled',
+    'connect.networkNotSetUp': 'This network is not set up on the server',
+    'connect.exchangeFailed': 'Could not complete the sign-in with the network',
+    'connect.fieldNeeded': '{field} is needed',
+    'connect.field.handle': 'Handle',
+    'connect.field.appPassword': 'App password',
+    'connect.field.server': 'Server',
+    'connect.unknownCandidate': 'One of the chosen accounts was not part of this sign-in',
+    'connect.chooseOne': 'Choose exactly one {network} account to reconnect {name}',
+    'connect.wrongAccount': 'You signed in with {chosen}, not {name}. Sign in with the right account.',
+    'connect.inUse': {
+      one: '{count} publication(s) are still waiting to go out through this account: cancel them first',
+      other: '{count} publication(s) are still waiting to go out through this account: cancel them first',
+    },
+    'connect.approvalNotApplicable': 'Only YouTube, TikTok and Pinterest accounts have an approval status',
+    'connect.kidsNotApplicable': 'Only YouTube channels have a made-for-kids declaration',
+    'connect.optionsRefused': '{provider} did not say what this account may post right now: {error}',
+
+    'connect.meta.noPages': 'Meta did not share any Page this person can publish for. Check that they have a role on the Page and tick it in the permission dialog.',
+    'connect.meta.noPagesLoginConfig':
+      'Meta did not share any Page this person can publish for. Check that they have a role on the Page and tick it in the permission dialog. If the app uses Facebook Login for Business, set META_LOGIN_CONFIG_ID to its login configuration: without it the dialog may not offer the Pages at all.',
+    'connect.google.noRefreshToken':
+      "Google did not return a refresh token, so the connection would stop working within an hour. Remove this app from the Google account's third-party access and connect again.",
+    'connect.google.noChannel': 'This Google account has no YouTube channel. Create one on YouTube first, then connect again.',
+    'connect.linkedin.noPages': 'LinkedIn did not share any company page this person administers. Check that they are an administrator of the page and tick it in the permission dialog.',
+    'connect.pinterest.noBoard': 'This Pinterest account has no board to pin to. Make a board on Pinterest first, then connect again.',
+    'connect.tiktok.noAccount': 'TikTok did not say which account signed in',
+    'connect.bluesky.badServer': 'The server address cannot be used: {error}',
+    'connect.bluesky.httpsOnly': 'The server address has to start with https://',
+    'connect.bluesky.serverOnly': 'Give only the address of the server, such as https://pds.example.com',
+    'connect.bluesky.needed': 'A handle and an app password are needed',
+    'connect.bluesky.refused': 'Bluesky did not accept that handle and app password. Check them, and that the password is an app password.',
+    'connect.bluesky.noSession': 'There is no session to renew',
+    'connect.noRenewalToken': 'There is no renewal token for this connection: connect it again',
+    'connect.noRefreshToken': 'There is no refresh token for this connection: connect it again',
+
+    'connect.noTokenKey': 'Network tokens cannot be read: TOKEN_KEY is not configured',
+    'connect.notConnected': 'This account is not connected to its network',
+    'connect.mustReconnect': 'This account has to be reconnected before it can publish',
+    'connect.noLongerValid': 'The network says this connection is no longer valid',
+
+    'connect.events.noPermission':
+      "Not subscribed to the Page's events: that needs pages_manage_metadata, which is asked for only when prizes are on. Comments are read every few minutes instead.",
+    'connect.events.refusedByMeta':
+      "Meta refused to subscribe the app to the Page's events ({error}). It needs pages_manage_metadata, asked for only when prizes are on; comments are read every few minutes instead.",
+    'connect.events.unconfirmed': 'Meta did not confirm the subscription to the Page',
+    'connect.events.refused': 'The network refused the subscription: {error}',
+    'connect.events.subscribed': 'Meta sends this account\'s comments to the app as they happen (the app is subscribed to the Page\'s "{field}" events).',
+    'connect.events.notSubscribed':
+      'The app is not subscribed to this Page\'s "{field}" events, so Meta does not push its comments: they are found by reading them every few minutes. Prizes subscribe it; connect the account again with prizes on if this stays.',
+    'connect.events.unreadable':
+      "Could not read whether the app is subscribed to the Page's events ({error}); that needs pages_manage_metadata, which is asked for only with prizes on.",
+  },
+});

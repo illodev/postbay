@@ -15,7 +15,7 @@ async function signIn(provider: 'meta' | 'google', code = 'good', as = env.users
   const start = await env.call(as, 'POST', brandUrl(`/connections/${provider}`), reconnectAccountId ? { reconnectAccountId } : {});
   expect(start.status, JSON.stringify(start.body)).toBe(200);
   const state = new URL(start.body.url).searchParams.get('state')!;
-  const back = await env.app.inject({ method: 'GET', url: `/api/oauth/callback?code=${code}&state=${state}`, headers: { cookie: as.cookie! } });
+  const back = await env.app.inject({ method: 'GET', url: `/api/oauth/callback?code=${code}&state=${state}`, headers: { cookie: as.cookie!, 'accept-language': 'en-GB,en;q=0.9' } });
   return { start, state, back, location: new URL(back.headers.location as string, 'http://app.test') };
 }
 
@@ -242,6 +242,46 @@ describe("Meta's webhooks: the app subscribed to the Page's events", () => {
       env.meta.grantedScopes = scopes;
       env.meta.pages = [{ id: '111', name: 'Lumen Coffee', token: 'page-token-111', ig: { id: '222', username: 'lumen.coffee' } }];
     }
+  });
+
+  it('subscribes the brand\'s Meta accounts as soon as prizes are switched on, and the account list shows it', async () => {
+    env.meta.pages = [{ id: '781', name: 'Prize Page', token: 'page-token-781', ig: { id: '782', username: 'prize.page' } }];
+    const scopes = env.meta.grantedScopes;
+    env.meta.grantedScopes = [...scopes, 'pages_manage_metadata'];
+    try {
+      // Connected before subscriptions existed: nothing on the Page, nothing on the account.
+      const fb = await env.connect('facebook', { externalId: '781', name: 'Prize Page', token: 'page-token-781', providerData: { pageId: '781' } });
+      const ig = await env.connect('instagram', { externalId: '782', name: '@prize.page', token: 'page-token-781', providerData: { igUserId: '782', pageId: '781' } });
+      const listed = async (id: string) => (await env.call(env.users.reader, 'GET', brandUrl('/accounts'))).body.find((a: any) => a.id === id);
+      expect((await listed(ig)).details.events).toBeUndefined();
+
+      const on = await env.call(env.users.admin, 'PATCH', `/api/brands/${env.brandId}`, { prizes: { enabled: true } });
+      expect(on.status, JSON.stringify(on.body)).toBe(200);
+      expect(env.meta.subscriptions.get('781')).toEqual([{ id: 'app', name: 'Estudio', subscribed_fields: ['feed', 'comments'] }]);
+      expect((await listed(fb)).details.events).toMatchObject({ subscribed: true, fields: ['feed'] });
+      expect((await listed(ig)).details.events).toMatchObject({ subscribed: true, fields: ['feed', 'comments'] });
+
+      // Saving the settings again with prizes still on asks Meta nothing more.
+      const posts = env.meta.callsTo(/^781\/subscribed_apps$/, 'POST').length;
+      expect((await env.call(env.users.admin, 'PATCH', `/api/brands/${env.brandId}`, { prizes: { enabled: true, retention_days: 30 } })).status).toBe(200);
+      expect(env.meta.callsTo(/^781\/subscribed_apps$/, 'POST')).toHaveLength(posts);
+    } finally {
+      await env.call(env.users.admin, 'PATCH', `/api/brands/${env.brandId}`, { prizes: { enabled: false } });
+      env.meta.grantedScopes = scopes;
+      env.meta.pages = [{ id: '111', name: 'Lumen Coffee', token: 'page-token-111', ig: { id: '222', username: 'lumen.coffee' } }];
+    }
+  });
+
+  it('shows a YouTube channel\'s made-for-kids default in the account list, and nothing once it is removed', async () => {
+    const yt = await env.connect('youtube', { externalId: 'UC-kids', name: 'Kids TV', providerData: { channelId: 'UC-kids' } });
+    const listed = async () => (await env.call(env.users.reader, 'GET', brandUrl('/accounts'))).body.find((a: any) => a.id === yt);
+    expect((await listed()).details).not.toHaveProperty('madeForKids');
+    expect((await env.call(env.users.admin, 'PATCH', brandUrl(`/accounts/${yt}`), { madeForKids: true })).status).toBe(200);
+    expect((await listed()).details.madeForKids).toBe(true);
+    expect((await env.call(env.users.admin, 'PATCH', brandUrl(`/accounts/${yt}`), { madeForKids: false })).status).toBe(200);
+    expect((await listed()).details.madeForKids).toBe(false);
+    expect((await env.call(env.users.admin, 'PATCH', brandUrl(`/accounts/${yt}`), { madeForKids: null })).status).toBe(200);
+    expect((await listed()).details).not.toHaveProperty('madeForKids');
   });
 
   it('does not ask without the permission (prizes off), says so, and the check reports comments are read instead', async () => {

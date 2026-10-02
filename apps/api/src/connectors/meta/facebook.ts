@@ -1,3 +1,4 @@
+import { english, msg, type Localized } from '../../i18n/index.js';
 import { validateAgainst } from '../validate.js';
 import {
   ConnectorError,
@@ -203,21 +204,22 @@ export function createFacebook(client: MetaClient): Connector {
       // needs pages_manage_engagement: a refusal does not undo the post, but it is said, in the history, in words a person can act on.
       let next: Handle | undefined;
       let note: string | undefined;
+      let noteText: Localized | undefined;
       if (handle.firstComment && !handle.commentId && !handle.firstCommentError) {
         try {
           const c = await client.post<{ id: string }>(`${externalId}/comments`, token, { message: handle.firstComment });
           next = { ...handle, commentId: c.id };
         } catch (err) {
           const permission = err instanceof ConnectorError && (err.errorClass === 'auth' || /permission|pages_manage_engagement/i.test(err.message));
-          const message = permission
-            ? `Facebook refused the first comment: commenting as the Page needs the pages_manage_engagement permission. Connect the Page again and accept it, then post the comment by hand. (${(err as Error).message})`
-            : `Facebook refused the first comment: ${(err as Error).message}. Post it by hand.`;
-          next = { ...handle, firstCommentError: message };
+          const said = (err as Error).message;
+          noteText = permission ? msg('pub.firstComment.fbPermission', { error: said }) : msg('pub.firstComment.refused', { network: msg('network.facebook'), error: said });
+          const message = english(noteText);
+          next = { ...handle, firstCommentError: message, firstCommentErrorText: noteText };
           note = message;
           env.log.warn({ err: String(err) }, 'could not post the Facebook first comment');
         }
       }
-      return { visibility: 'public', url, handle: next, ...(note ? { note } : {}) };
+      return { visibility: 'public', url, handle: next, ...(note ? { note, noteText } : {}) };
     },
 
     async discard(_account, handle, env): Promise<void> {

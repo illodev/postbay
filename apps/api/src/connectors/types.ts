@@ -1,5 +1,6 @@
 import type { Readable } from 'node:stream';
 import type { Config } from '../config.js';
+import type { Localized, Params } from '../i18n/index.js';
 
 export type Network = 'instagram' | 'facebook' | 'youtube' | 'tiktok' | 'linkedin' | 'x' | 'threads' | 'pinterest' | 'bluesky';
 export type ProviderId = 'meta' | 'google' | 'threads' | 'tiktok' | 'linkedin' | 'x' | 'pinterest' | 'bluesky';
@@ -30,15 +31,21 @@ export class ConnectorError extends Error {
   readonly httpStatus?: number;
   readonly retryAfterSec?: number;
   readonly detail?: unknown;
+  /**
+   * The message kept as a code (see src/i18n), when it is the studio's own words and not the network's: it is what people read, in
+   * their language. `message` stays the English text, for logs and webhooks.
+   */
+  readonly text?: Localized | Localized[];
   constructor(
     public readonly errorClass: ErrorClass,
     message: string,
-    opts: { httpStatus?: number; retryAfterSec?: number; detail?: unknown } = {},
+    opts: { httpStatus?: number; retryAfterSec?: number; detail?: unknown; text?: Localized | Localized[] } = {},
   ) {
     super(message);
     this.httpStatus = opts.httpStatus;
     this.retryAfterSec = opts.retryAfterSec;
     this.detail = opts.detail;
+    this.text = opts.text;
   }
 }
 
@@ -46,8 +53,12 @@ export class ConnectorError extends Error {
 
 export interface Issue {
   severity: 'error' | 'warning';
+  /** Stable, for programs. The dictionary has its words as `issue.<code>` (src/i18n/messages/issues.ts). */
   code: string;
+  /** In the language of the request that asked (Spanish outside one). */
   message: string;
+  /** The values that fill the message, so it can be kept and said again in another language (a post that fails on it). */
+  params?: Params;
   field?: 'text' | 'firstComment' | 'media' | 'schedule' | 'placement';
 }
 
@@ -188,8 +199,15 @@ export interface VerifyResult {
   visibility: Visibility;
   url?: string;
   note?: string;
+  /** The note kept as a code, when the connector words it itself (see ConnectorError.text). */
+  noteText?: Localized;
   /** Changes to remember (a first comment that has now been posted); merged into the handle. */
   handle?: Handle;
+  /**
+   * When to look again, for a post that is not settled yet (processing, scheduled): what the network's own pace calls for. Without it
+   * the publisher looks again in a minute.
+   */
+  retryAfterSec?: number;
 }
 
 export interface HealthResult {
@@ -206,6 +224,8 @@ export interface EventSubscription {
   /** The fields the app is subscribed to on the Page now. */
   fields: string[];
   note?: string;
+  /** The note kept as a code (see ConnectorError.text): stored beside it as `note_i18n`, so each person reads it in their language. */
+  noteText?: Localized;
 }
 
 // ───────────────────────────── what came of a post ─────────────────────────────
@@ -271,6 +291,16 @@ export interface Connector {
   accountOptions?(account: Account, env: ConnectorEnv): Promise<AccountOptions>;
   prepare(input: PublishInput, account: Account, handle: Handle, env: ConnectorEnv): Promise<PrepareResult>;
   publish(input: PublishInput, account: Account, handle: Handle, env: ConnectorEnv): Promise<Published>;
+  /**
+   * Looks, without sending anything, for the post an earlier try may already have made, from what that try saved in the handle (a
+   * container that Instagram says is published, the time a post was attempted…). Returns the handle with the post's id filled in when
+   * the post exists, so that `publish` finishes the steps after it (the link, the first comment) and never posts again; null when the
+   * network shows no such post, so it is safe to send one. Throws when it cannot tell.
+   *
+   * The publisher calls it before any repeated send (after a crash, a lost answer or a failed step): within the tolerance a post that is
+   * not there is sent; past it, it is not sent late.
+   */
+  find?(input: PublishInput, account: Account, handle: Handle, env: ConnectorEnv): Promise<Handle | null>;
   verify(account: Account, externalId: string, handle: Handle, env: ConnectorEnv): Promise<VerifyResult>;
   health?(account: Account, env: ConnectorEnv): Promise<HealthResult>;
   /**

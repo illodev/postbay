@@ -1,16 +1,16 @@
 import type { Ctx } from './context.js';
 import { sendPendingPush } from './services/push.js';
 import { sendPendingSlack } from './services/slack.js';
-import { describeNotification, notifyRoles } from './services/notify.js';
+import { describeNotification, notifyRoles, recipientLocale } from './services/notify.js';
 
 /** Whether a person wants this kind by email: all of them unless they turned some off (see services/push.ts for the preferences). */
 const emailWanted = (prefs: { emailOff?: string[] } | null, kind: string) => !(prefs?.emailOff ?? []).includes(kind);
 
-/** Emails the notifications that have not been sent yet. Without SMTP they end up in the server log. */
+/** Emails the notifications that have not been sent yet, each in its reader's language. Without SMTP they end up in the server log. */
 export async function sendPendingEmails(ctx: Ctx, limit = 50): Promise<number> {
   return ctx.db.tx(async (db) => {
     const rows = await db.query(
-      `select n.id, n.kind, n.payload, u.email, u.notify_prefs, b.name as brand, p.title as piece_title
+      `select n.id, n.kind, n.payload, u.email, u.notify_prefs, b.name as brand, b.locale as brand_locale, p.title as piece_title
        from notification n join app_user u on u.id = n.user_id join brand b on b.id = n.brand_id
        left join piece p on p.id = nullif(n.payload->>'pieceId', '')::uuid
        where n.emailed_at is null order by n.created_at limit $1 for update of n skip locked`,
@@ -23,7 +23,8 @@ export async function sendPendingEmails(ctx: Ctx, limit = 50): Promise<number> {
         await db.query('update notification set emailed_at = now() where id = $1', [n.id]);
         continue;
       }
-      const d = describeNotification(ctx.config.APP_URL, n.kind, n.payload, n.brand, n.piece_title);
+      // In the person's language: their own choice, or the brand's.
+      const d = describeNotification(recipientLocale(n.notify_prefs, n.brand_locale), ctx.config.APP_URL, n.kind, n.payload, n.brand, n.piece_title);
       try {
         await ctx.mailer.send(n.email, d.title, `${d.subject}${d.body ? `\n\n${d.body}` : ''}\n\n${d.url}\n`);
         await db.query('update notification set emailed_at = now() where id = $1', [n.id]);
