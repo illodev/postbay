@@ -207,7 +207,7 @@ function TodayRow({ p, canPrepare }: { p: TodayItem; canPrepare: boolean }) {
   return (
     <li className="hl-row">
       <span className="hl-time" title={fullDate(p.scheduled_at)}>{p.time}</span>
-      <span className="hl-mark" title={`${netName(p.network)} · ${p.account_name}`}><NetMark network={p.network} /></span>
+      <span className="hl-mark"><NetMark network={p.network} labelled /></span>
       <Thumb src={p.thumb} className="hl-thumb" />
       <div className="hl-text">
         <Link to={`/pieces/${p.piece_id}`} className="hl-title" data-nav title={p.piece_title}>{p.piece_title}</Link>
@@ -304,7 +304,7 @@ function AttentionRow({ a, onRetry }: { a: AttentionItem; onRetry: (a: Attention
     <li className="hl-row ha-row">
       <span className="hl-time hl-when" title={fullDate(a.at)}>{agoShort(a.at)}</span>
       {/* Where (the network) and what (the piece, or the kind of thing when there is no piece), in the same columns as "today". */}
-      <span className="hl-mark">{a.network && <NetMark network={a.network} />}</span>
+      <span className="hl-mark">{a.network && <NetMark network={a.network} labelled />}</span>
       {a.thumb ? (
         <Thumb src={a.thumb} className="hl-thumb" />
       ) : (
