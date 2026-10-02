@@ -84,7 +84,8 @@ export function createConnectorSet(config: Config, now: () => Date = () => new D
     connectors.set('x', createX(client));
   }
   if (config.enabled.bluesky) {
-    const client = new BlueskyClient({ pdsUrl: config.BLUESKY_PDS_URL, videoUrl: config.BLUESKY_VIDEO_URL });
+    // A server a person types is held to the webhooks' rules: https, no redirects, and no private address unless those are allowed.
+    const client = new BlueskyClient({ pdsUrl: config.BLUESKY_PDS_URL, videoUrl: config.BLUESKY_VIDEO_URL, policy: { allowPrivate: config.webhookAllowPrivate, httpsForPublic: true } });
     providers.set('bluesky', createBlueskyOAuth(client));
     connectors.set('bluesky', createBluesky(client));
   }

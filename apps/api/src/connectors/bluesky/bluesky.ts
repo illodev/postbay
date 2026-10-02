@@ -4,14 +4,15 @@ import {
   type Account, type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
   type MediaItem, type MetricsResult, type PrepareResult, type Published, type PublishInput, type VerifyResult,
 } from '../types.js';
-import type { BlueskyClient } from './client.js';
+import { didWebOf, pdsEndpointOf, tidFor, type BlueskyClient } from './client.js';
 import { facetsFor, graphemes, mentionedHandles } from './richtext.js';
 
 /**
  * Bluesky publishing through the AT Protocol. A post is a record in the account's repository; pictures are uploaded as blobs
  * first and videos go through Bluesky's video service. There is no scheduling and no way to flag AI content.
  *
- * Posts are written with a key made from the publication, so a repeated step writes the same record again instead of a second post.
+ * Posts are written with a record key (a TID, as Bluesky expects for posts) made from the publication and its time, and kept in the
+ * handle, so a repeated step writes the same record again instead of a second post.
  */
 const CAPS: Capabilities = {
   network: 'bluesky',
@@ -34,9 +35,21 @@ const CAPS: Capabilities = {
 const mainOf = (input: PublishInput): MediaItem[] =>
   input.media.filter((m) => m.kind === 'video' || m.kind === 'image').sort((a, b) => a.position - b.position);
 
-const pdsOf = (a: Account, client: BlueskyClient) => String(a.providerData.pds ?? client.cfg.pdsUrl).replace(/\/$/, '');
-const postUri = (did: string, rkey: string) => `at://${did}/app.bsky.feed.post/${rkey}`;
-const rkeyOf = (publicationId: string, suffix = '') => `${publicationId.replace(/[^A-Za-z0-9._~-]/g, '')}${suffix}`;
+const pdsOf = (a: Account, client: BlueskyClient) => String(a.providerData.pds || client.cfg.pdsUrl).replace(/\/$/, '');
+/** The post's key, and its reply's a second later (so the reply sorts after the post). */
+const rkeyOf = (input: PublishInput, reply = false) =>
+  tidFor(new Date(input.scheduledAt.getTime() + (reply ? 1000 : 0)), `${input.publicationId}${reply ? ':reply' : ''}`);
+
+/**
+ * The video service is a separate service with its own idea of who may call it. A refusal from it says nothing about the account's
+ * own connection (the session is fine: the server gave the service token), so it must not ask for the account to be connected again.
+ */
+function videoServiceError(err: unknown): unknown {
+  if (err instanceof ConnectorError && err.errorClass === 'auth') {
+    return new ConnectorError('unsupported', `Bluesky's video service refused the upload (${err.message.replace(/ \(Bluesky no longer accepts this connection\)$/, '')}). The account's connection itself is fine; a person can post this video in Bluesky.`, { httpStatus: err.httpStatus, detail: err.detail });
+  }
+  return err;
+}
 
 async function readAll(env: ConnectorEnv, key: string): Promise<Buffer> {
   const { stream } = await env.open(key, 0);
@@ -51,16 +64,36 @@ export function createBluesky(client: BlueskyClient): Connector {
     return r.blob;
   }
 
-  /** A video goes to the video service with a token that says which server it is for; the service answers with a job to ask about. */
+  /**
+   * The DID of the server the account's repository is on. bsky.social is only the entrance: each account lives on a server of its
+   * own (*.host.bsky.network), named in its DID document, and that server is who the video service writes the video to.
+   */
+  async function repoServerDid(account: Account, pds: string, token: string): Promise<string> {
+    let endpoint = account.providerData.pdsEndpoint as string | undefined;
+    if (!endpoint) {
+      const s = await client.xrpc<{ didDoc?: unknown }>(pds, 'com.atproto.server.getSession', { token });
+      endpoint = pdsEndpointOf(s.didDoc) ?? pds;
+    }
+    return didWebOf(endpoint);
+  }
+
+  /**
+   * A video goes to the video service with a token the account's server signs for it: the audience is the account's own repository
+   * server (the service writes the video there), and the method is uploadBlob. The service answers with a job to ask about.
+   */
   async function startVideoJob(account: Account, pds: string, token: string, m: MediaItem, env: ConnectorEnv): Promise<string> {
-    const aud = `did:web:${new URL(pds).host}`;
+    const aud = await repoServerDid(account, pds, token);
     const exp = Math.floor(env.now().getTime() / 1000) + 30 * 60;
     const auth = await client.xrpc<{ token: string }>(pds, 'com.atproto.server.getServiceAuth', { token, query: { aud, lxm: 'com.atproto.repo.uploadBlob', exp } });
     const bytes = await readAll(env, m.key);
-    const r = await client.xrpc<{ jobId: string }>(client.cfg.videoUrl, 'app.bsky.video.uploadVideo', {
-      token: auth.token, query: { did: account.externalId, name: m.name }, body: bytes as unknown as BodyInit, headers: { 'content-type': m.mime }, timeoutMs: 30 * 60_000,
-    });
-    return r.jobId;
+    try {
+      const r = await client.xrpc<{ jobId: string }>(client.cfg.videoUrl, 'app.bsky.video.uploadVideo', {
+        token: auth.token, query: { did: account.externalId, name: m.name }, body: bytes as unknown as BodyInit, headers: { 'content-type': m.mime }, timeoutMs: 30 * 60_000,
+      });
+      return r.jobId;
+    } catch (err) {
+      throw videoServiceError(err);
+    }
   }
 
   const connector: Connector = {
@@ -98,17 +131,27 @@ export function createBluesky(client: BlueskyClient): Connector {
         const m = main[0]!;
         if (!h.blob) {
           if (!h.jobId) {
-            // The daily allowance for video is asked first, so a refusal is a wait and not a failure after an upload.
-            const lim = await client.xrpc<{ canUpload?: boolean; message?: string }>(client.cfg.videoUrl, 'app.bsky.video.getUploadLimits', {
-              token: (await client.xrpc<{ token: string }>(pds, 'com.atproto.server.getServiceAuth', {
-                token, query: { aud: `did:web:${new URL(pds).host}`, lxm: 'app.bsky.video.getUploadLimits', exp: Math.floor(env.now().getTime() / 1000) + 600 },
-              })).token,
+            // The daily allowance for video is asked first, so a refusal is a wait and not a failure after an upload. This question is
+            // addressed to the video service itself (did:web:video.bsky.app), unlike the upload.
+            const svc = await client.xrpc<{ token: string }>(pds, 'com.atproto.server.getServiceAuth', {
+              token, query: { aud: didWebOf(client.cfg.videoUrl), lxm: 'app.bsky.video.getUploadLimits', exp: Math.floor(env.now().getTime() / 1000) + 600 },
             });
-            if (lim.canUpload === false) throw new ConnectorError('rate_limit', lim.message ?? 'Bluesky will not take another video from this account today', { retryAfterSec: 3600 });
+            let lim: { canUpload?: boolean; message?: string; error?: string };
+            try {
+              lim = await client.xrpc(client.cfg.videoUrl, 'app.bsky.video.getUploadLimits', { token: svc.token });
+            } catch (err) {
+              throw videoServiceError(err);
+            }
+            if (lim.canUpload === false) throw new ConnectorError('rate_limit', lim.message ?? lim.error ?? 'Bluesky will not take another video from this account today', { retryAfterSec: 3600 });
             h = { ...h, jobId: await startVideoJob(account, pds, token, m, env) };
             await env.persist(h);
           }
-          const st = await client.xrpc<{ jobStatus: { state: string; blob?: unknown; error?: string; message?: string } }>(client.cfg.videoUrl, 'app.bsky.video.getJobStatus', { query: { jobId: h.jobId as string } });
+          let st: { jobStatus: { state: string; blob?: unknown; error?: string; message?: string } };
+          try {
+            st = await client.xrpc(client.cfg.videoUrl, 'app.bsky.video.getJobStatus', { query: { jobId: h.jobId as string } });
+          } catch (err) {
+            throw videoServiceError(err);
+          }
           const s = st.jobStatus;
           if (s.state === 'JOB_STATE_FAILED') throw new ConnectorError('file_rejected', `Bluesky could not process the video: ${s.message ?? s.error ?? 'unknown reason'}`, { detail: s });
           if (s.state !== 'JOB_STATE_COMPLETED' || !s.blob) return { done: false, handle: h, retryAfterSec: 10 };
@@ -133,7 +176,12 @@ export function createBluesky(client: BlueskyClient): Connector {
       const did = account.externalId;
       let h: Handle = { ...handle };
       const main = mainOf(input);
-      const rkey = rkeyOf(input.publicationId);
+      // The key is kept before the record is written, so whatever happens to the answer, a repeat writes the same record.
+      if (!h.rkey) {
+        h = { ...h, rkey: rkeyOf(input) };
+        await env.persist(h);
+      }
+      const rkey = h.rkey as string;
 
       if (!h.uri) {
         const mentions: Record<string, string> = {};
@@ -155,7 +203,7 @@ export function createBluesky(client: BlueskyClient): Connector {
           $type: 'app.bsky.feed.post', text: input.text, createdAt: env.now().toISOString(), embed,
           ...(facets.length ? { facets } : {}),
         };
-        // putRecord with a key made from the publication: the same call twice leaves one post.
+        // putRecord with the key kept for this publication: the same call twice leaves one post.
         const r = await client.xrpc<{ uri: string; cid: string }>(pds, 'com.atproto.repo.putRecord', {
           token, json: { repo: did, collection: 'app.bsky.feed.post', rkey, record, validate: true },
         });
@@ -169,7 +217,7 @@ export function createBluesky(client: BlueskyClient): Connector {
           const ref = { uri: h.uri, cid: h.cid };
           const r = await client.xrpc<{ uri: string }>(pds, 'com.atproto.repo.putRecord', {
             token, json: {
-              repo: did, collection: 'app.bsky.feed.post', rkey: rkeyOf(input.publicationId, '-c'),
+              repo: did, collection: 'app.bsky.feed.post', rkey: rkeyOf(input, true),
               record: { $type: 'app.bsky.feed.post', text: input.firstComment, createdAt: env.now().toISOString(), reply: { root: ref, parent: ref }, ...(facets.length ? { facets } : {}) },
             },
           });

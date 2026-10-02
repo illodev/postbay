@@ -1,5 +1,6 @@
+import { checkUrl } from '../../net.js';
 import { ConnectorError, type OAuthProvider, type TokenSet } from '../types.js';
-import { jwtExpiry, type BlueskyClient } from './client.js';
+import { jwtExpiry, pdsEndpointOf, type BlueskyClient } from './client.js';
 
 interface Session {
   accessJwt: string;
@@ -7,6 +8,7 @@ interface Session {
   did: string;
   handle: string;
   emailConfirmed?: boolean;
+  didDoc?: unknown;
 }
 
 const cleanHandle = (s: string) => s.trim().replace(/^@/, '');
@@ -28,6 +30,22 @@ export function createBlueskyOAuth(client: BlueskyClient): OAuthProvider {
     extra,
   });
 
+  /**
+   * The server a person typed, if any. It is a URL from outside, so only an https address of a server (no path, no credentials, no
+   * address on this machine's networks unless the deployment allows those) is taken; the calls to it then follow the same rules.
+   */
+  const checkedServer = (raw: string | undefined): string => {
+    const typed = raw?.trim();
+    if (!typed || client.configured(typed)) return serverOf(typed, client.cfg.pdsUrl);
+    const policy = client.cfg.policy ?? { allowPrivate: false, httpsForPublic: true };
+    const checked = checkUrl(/^[a-z][a-z0-9+.-]*:\/\//i.test(typed) ? typed : `https://${typed}`, policy);
+    if ('error' in checked) throw new ConnectorError('auth', `The server address cannot be used: ${checked.error}`);
+    const u = checked.url;
+    if (u.protocol !== 'https:' && !policy.allowPrivate) throw new ConnectorError('auth', 'The server address has to start with https://');
+    if ((u.pathname !== '/' && u.pathname !== '') || u.search || u.hash) throw new ConnectorError('auth', 'Give only the address of the server, such as https://pds.example.com');
+    return u.origin;
+  };
+
   return {
     id: 'bluesky',
     label: 'Bluesky',
@@ -42,7 +60,7 @@ export function createBlueskyOAuth(client: BlueskyClient): OAuthProvider {
         { key: 'server', label: 'Server', type: 'text', required: false, help: 'Only if the account is not on bsky.social' },
       ],
       async connect(values) {
-        const server = serverOf(values.server, client.cfg.pdsUrl);
+        const server = checkedServer(values.server);
         const identifier = cleanHandle(values.handle ?? '');
         if (!identifier || !values.appPassword) throw new ConnectorError('auth', 'A handle and an app password are needed');
         let s: Session;
@@ -60,7 +78,8 @@ export function createBlueskyOAuth(client: BlueskyClient): OAuthProvider {
           externalId: s.did,
           displayName: `@${s.handle}`,
           token: toToken(s, { server, identifier, appPassword: values.appPassword }),
-          providerData: { handle: s.handle, pds: server, emailConfirmed: s.emailConfirmed ?? false },
+          // Where the repository really lives (bsky.social sends each account to a server of its own): the video service is told it.
+          providerData: { handle: s.handle, pds: server, pdsEndpoint: pdsEndpointOf(s.didDoc), emailConfirmed: s.emailConfirmed ?? false },
         }];
       },
     },

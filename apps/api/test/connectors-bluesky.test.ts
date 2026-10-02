@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { tidFor } from '../src/connectors/bluesky/client.js';
+import { call } from '../src/connectors/http.js';
 import { facetsFor, graphemes } from '../src/connectors/bluesky/richtext.js';
 import { createConnectorSet } from '../src/connectors/registry.js';
 import type { Candidate } from '../src/connectors/types.js';
@@ -10,7 +12,7 @@ let set: ReturnType<typeof createConnectorSet>;
 const bsky = () => set.connector('bluesky')!;
 const provider = () => set.provider('bluesky')!;
 let signedIn: Candidate;
-let acc = account('bluesky', { externalId: 'did:plc:lumen', displayName: '@lumen.bsky.social', providerData: { handle: 'lumen.bsky.social', pds: '', emailConfirmed: true } });
+let acc = account('bluesky', { externalId: 'did:plc:lumen', displayName: '@lumen.bsky.social', providerData: { handle: 'lumen.bsky.social', pds: '', pdsEndpoint: 'https://morel.us-east.host.bsky.network', emailConfirmed: true } });
 const JPEG = Buffer.alloc(5000, 1);
 const files = { 'k/photo.jpg': JPEG, 'k/photo2.jpg': Buffer.alloc(4000, 2), 'k/reel.mp4': Buffer.alloc(9000, 3) };
 
@@ -48,7 +50,11 @@ describe('Bluesky: signing in with an app password', () => {
   });
 
   it('starts a session and finds the account, keeping what is needed to start another one', () => {
-    expect(signedIn).toMatchObject({ network: 'bluesky', externalId: 'did:plc:lumen', displayName: '@lumen.bsky.social', providerData: { handle: 'lumen.bsky.social', emailConfirmed: true } });
+    expect(signedIn).toMatchObject({
+      network: 'bluesky', externalId: 'did:plc:lumen', displayName: '@lumen.bsky.social',
+      // The server the repository really lives on, from the DID document: the video service is told it.
+      providerData: { handle: 'lumen.bsky.social', emailConfirmed: true, pdsEndpoint: 'https://morel.us-east.host.bsky.network' },
+    });
     expect(signedIn.token.extra).toMatchObject({ appPassword: fake.password, identifier: 'lumen.bsky.social', server: fake.url });
     const hours = (new Date(signedIn.token.expiresAt!).getTime() - Date.now()) / 3_600_000;
     expect(hours).toBeGreaterThan(1.9);
@@ -75,6 +81,32 @@ describe('Bluesky: signing in with an app password', () => {
     const fresh = await provider().refresh!(signedIn.token);
     expect(fresh.accessToken).toBeTruthy();
     expect(fake.callsTo('/xrpc/com.atproto.server.createSession')).toHaveLength(1);
+  });
+
+  it('takes a server a person types only as the address of a server, and only where the webhooks may go', async () => {
+    const strict = createConnectorSet(configFor({ BLUESKY_PDS_URL: fake.url, BLUESKY_VIDEO_URL: `${fake.url}/video`, WEBHOOK_ALLOW_PRIVATE_NETWORKS: 'false' })).provider('bluesky')!;
+    const connect = (server: string) => strict.credentials!.connect({ handle: 'lumen.bsky.social', appPassword: fake.password, server });
+    for (const server of ['http://pds.example.com', 'http://127.0.0.1:9', 'https://169.254.169.254', 'https://localhost', 'https://user:pw@pds.example.com', 'https://pds.example.com/xrpc?x=1', 'ftp://pds.example.com']) {
+      await expectError(connect(server), 'auth');
+    }
+    expect(fake.callsTo('/xrpc/com.atproto.server.createSession')).toHaveLength(0);
+  });
+
+  it('talks to a server a person typed through the guarded client: no redirects, and the address checked when connecting', async () => {
+    // Same stand-in under another name, so it is not the configured server: private addresses are allowed outside production.
+    const typed = fake.url.replace('127.0.0.1', 'localhost');
+    const c = (await provider().credentials!.connect({ handle: 'lumen.bsky.social', appPassword: fake.password, server: typed }))[0]!;
+    expect(c.providerData.pds).toBe(typed);
+    expect(fake.callsTo('/xrpc/com.atproto.server.createSession')).toHaveLength(1);
+    // A server that sends the call somewhere else is not followed.
+    fake.fail((x) => x.path === '/xrpc/com.atproto.server.createSession', '', 302, 1, { location: 'http://169.254.169.254/latest/meta-data/' });
+    const err = await expectError(provider().credentials!.connect({ handle: 'lumen.bsky.social', appPassword: fake.password, server: typed }), 'unsupported');
+    expect(err.message).toContain('redirect');
+    // With private networks refused, a name is refused once it has been resolved, when connecting, before anything is sent.
+    fake.calls.length = 0;
+    const refused = await expectError(call(`${typed}/xrpc/com.atproto.server.createSession`, { method: 'POST', json: {}, guard: { allowPrivate: false, httpsForPublic: true } }), 'unsupported');
+    expect(refused.message).toMatch(/resolves to/);
+    expect(fake.calls).toHaveLength(0);
   });
 
   it('asks to reconnect when the app password was revoked', async () => {
@@ -150,7 +182,10 @@ describe('Bluesky: publishing', () => {
     expect(record.embed.images).toHaveLength(2);
     expect(record.embed.images[0]).toMatchObject({ alt: 'A loaf on a table', aspectRatio: { width: 1080, height: 1350 } });
     expect(record.facets.map((f: any) => f.features[0].$type)).toEqual(['app.bsky.richtext.facet#link', 'app.bsky.richtext.facet#tag']);
-    expect(pub.url).toBe(`https://bsky.app/profile/lumen.bsky.social/post/${inp.publicationId}`);
+    // The record key is a TID, as Bluesky expects for posts, and it is the one in the address.
+    const rkey = pub.externalId.split('/').pop()!;
+    expect(rkey).toMatch(/^[234567a-j][234567a-z]{12}$/);
+    expect(pub.url).toBe(`https://bsky.app/profile/lumen.bsky.social/post/${rkey}`);
     expect((await bsky().verify(acc, pub.externalId, {}, e)).visibility).toBe('public');
   });
 
@@ -174,6 +209,16 @@ describe('Bluesky: publishing', () => {
     const second = await bsky().publish(inp, acc, prep.handle, env(token(), files));
     expect(second.externalId).toBe(first.externalId);
     expect(fake.records.size).toBe(1);
+  });
+
+  it('makes record keys that are TIDs, the same for the same publication and different for another at the same minute', () => {
+    const at = new Date('2026-10-02T10:00:00Z');
+    const a = tidFor(at, 'pub-a');
+    expect(a).toMatch(/^[234567a-j][234567a-z]{12}$/);
+    expect(tidFor(at, 'pub-a')).toBe(a);
+    expect(tidFor(at, 'pub-b')).not.toBe(a);
+    // They sort by time, as TIDs do.
+    expect(tidFor(new Date(at.getTime() + 2000), 'pub-a') > a).toBe(true);
   });
 
   it('posts the first comment as a reply that points at the post', async () => {
@@ -221,11 +266,35 @@ describe('Bluesky: video', () => {
     expect(prep.looks).toBeGreaterThan(1);
     expect(fake.callsTo('/video/xrpc/app.bsky.video.getUploadLimits')).toHaveLength(1);
     expect(fake.callsTo('/video/xrpc/app.bsky.video.uploadVideo')).toHaveLength(1); // one upload however many looks
+    // The upload's token is made out to the account's repository server, from its DID document, not to the server signed in to.
     const svc = fake.serviceTokens.find((t) => t.lxm === 'com.atproto.repo.uploadBlob')!;
-    expect(svc.aud).toBe(`did:web:${new URL(fake.url).host}`);
+    expect(svc.aud).toBe('did:web:morel.us-east.host.bsky.network');
+    // The allowance question is addressed to the video service itself.
+    const limits = fake.serviceTokens.find((t) => t.lxm === 'app.bsky.video.getUploadLimits')!;
+    expect(limits.aud).toBe(`did:web:${new URL(fake.url).host.replace(':', '%3A')}`);
     const pub = await bsky().publish(inp, acc, prep.handle, e);
     expect([...fake.records.values()][0]!.value.embed.$type).toBe('app.bsky.embed.video');
     expect(pub.externalId).toMatch(/^at:\/\//);
+  });
+
+  it('finds the repository server from the session when the account was connected before it was kept', async () => {
+    const older = { ...acc, providerData: { ...acc.providerData, pdsEndpoint: undefined } };
+    await prepareUntilDone(bsky(), input({ placement: 'video' }), older, env(token(), files));
+    expect(fake.callsTo('/xrpc/com.atproto.server.getSession')).toHaveLength(1);
+    expect(fake.serviceTokens.find((t) => t.lxm === 'com.atproto.repo.uploadBlob')!.aud).toBe('did:web:morel.us-east.host.bsky.network');
+  });
+
+  it('does not ask for the account to be connected again when the video service refuses a token', async () => {
+    fake.pdsEndpoint = 'https://elsewhere.host.bsky.network';
+    try {
+      const err = await expectError(prepareUntilDone(bsky(), input({ placement: 'video' }), acc, env(token(), files)), 'unsupported');
+      expect(err.message).toContain('video service');
+      expect(err.message).toContain("connection itself is fine");
+    } finally {
+      fake.pdsEndpoint = 'https://morel.us-east.host.bsky.network';
+    }
+    fake.fail((c) => c.path === '/video/xrpc/app.bsky.video.getUploadLimits', { error: 'AuthenticationRequired', message: 'Bad token' }, 401);
+    await expectError(bsky().prepare(input({ placement: 'video' }), acc, {}, env(token(), files)), 'unsupported');
   });
 
   it('waits a while instead of failing when the daily allowance for video is used up', async () => {
