@@ -8,7 +8,6 @@ import { useSession } from '../lib/session';
 import { Avatar, displayName } from './Avatar';
 import { PaletteProvider, usePalette } from './CommandPalette';
 import { Icon, type IconName } from './icons';
-import { PageBarSlots } from './PageBar';
 import { Dialog, ErrorBox, Field, useToast, errorMessage } from './ui';
 
 export interface Campaign {
@@ -193,6 +192,7 @@ const COLLECTIONS: { key: string; param: string; colour: string; count?: (p: Pie
 
 function Sidebar() {
   const { me, brand, setBrandId, can } = useSession();
+  const palette = usePalette();
   const navigate = useNavigate();
   const location = useLocation();
   const [params] = useSearchParams();
@@ -226,6 +226,9 @@ function Sidebar() {
           </div>
         )}
       </div>
+      <button className="sb-search" onClick={palette.open}>
+        <Icon name="search" /><span className="label">{t('common.search')}</span><span className="kbd">⌘K</span>
+      </button>
       <nav className="nav">
         <NavLink to="/" end><Icon name="home" /><span className="label">{t('layout.nav.home')}</span></NavLink>
       </nav>
@@ -271,8 +274,6 @@ function Shell() {
   const location = useLocation();
   const palette = usePalette();
   const [menu, setMenu] = useState(false);
-  const [crumbs, setCrumbs] = useState<HTMLElement | null>(null);
-  const [actions, setActions] = useState<HTMLElement | null>(null);
   useEffect(() => setMenu(false), [location.pathname, location.search]);
   const due = useQuery({
     queryKey: ['due-count', brand.id],
@@ -299,23 +300,17 @@ function Shell() {
       <Sidebar />
       {menu && <div className="scrim" onClick={() => setMenu(false)} aria-hidden="true" />}
       <div className="content">
-        <header className="pagebar">
-          <button className="icon-btn menu-btn" aria-label={t('layout.menu')} aria-expanded={menu} onClick={() => setMenu(true)}>
+        {/* Only on a phone: the rail is hidden, and this is where the menu lives. */}
+        <header className="mobilebar">
+          <button className="icon-btn" aria-label={t('layout.menu')} aria-expanded={menu} onClick={() => setMenu(true)}>
             <Icon name="menu" size={20} />
           </button>
-          <div ref={setCrumbs} style={{ minWidth: 0, display: 'flex' }} />
-          <div className="pagebar-actions">
-            <div ref={setActions} style={{ display: 'flex', gap: 8, alignItems: 'center' }} />
-            <button className="search-trigger" onClick={palette.open} aria-label={t('layout.palette.title')}>
-              <Icon name="search" /><span className="label">{t('layout.palette.placeholderShort')}</span><span className="kbd">⌘K</span>
-            </button>
-          </div>
+          <span className="mobilebar-brand">{brand.name}</span>
+          <button className="icon-btn" onClick={palette.open} aria-label={t('layout.palette.title')}><Icon name="search" size={18} /></button>
         </header>
         {brand.paused && <div className="banner" role="status">{t('layout.paused')}</div>}
         <main className="page">
-          <PageBarSlots.Provider value={{ crumbs, actions }}>
-            <Outlet />
-          </PageBarSlots.Provider>
+          <Outlet />
         </main>
       </div>
     </div>

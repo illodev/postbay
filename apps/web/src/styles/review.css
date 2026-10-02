@@ -210,7 +210,8 @@
 .rv-link:hover { text-decoration: underline; }
 
 /* tabs and filters */
-.rv-tabs { flex: none; display: flex; gap: 18px; padding: 0 18px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.rv-tabs { flex: none; display: flex; gap: 18px; padding: 0 18px; border-bottom: 1px solid var(--border); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.rv-tabs::-webkit-scrollbar { display: none; }
 .rv-tabs button {
   appearance: none; flex: none; display: inline-flex; align-items: center; gap: 6px; margin-bottom: -1px; padding: 11px 0 9px; border: 0;
   border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-size: .875rem; font-weight: 500; cursor: pointer; white-space: nowrap;
