@@ -57,6 +57,8 @@ async function scheduled(o: Opts) {
 
 const IMAGE = [{ name: 'photo.png', mime: 'image/png', kind: 'image' }];
 
+const until = async (cond: () => boolean, ms = 5000) => { const t0 = Date.now(); while (!cond()) { if (Date.now() - t0 > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 5)); } };
+
 describe('Instagram, from scheduling to a verified post', () => {
   it('prepares ahead of the hour, publishes on it and confirms the post is live', async () => {
     const { pub, res } = await scheduled({ account: ig, firstComment: 'Link in bio' });
@@ -117,6 +119,29 @@ describe('Instagram, from scheduling to a verified post', () => {
     const results = await Promise.all([advance(env.ctx, pub.id), advance(env.ctx, pub.id), advance(env.ctx, pub.id)]);
     expect(results.filter((r) => r === 'published')).toHaveLength(1);
     expect(env.meta.callsTo(/media_publish/)).toHaveLength(1);
+  });
+
+  it('keeps its lease for as long as the publishing takes, not just until it starts', async () => {
+    // The network is slow to answer: the first worker is still inside the call to publish when the second one comes. A lease that was
+    // dropped as soon as the work began (a `return somePromise` inside try/finally does exactly that) would let the second one publish again.
+    const { pub } = await scheduled({ account: ig, kind: 'post', format: '4:5', files: IMAGE, leadMs: 40 * MIN });
+    env.meta.processingPolls = 0;
+    env.clock.set(new Date(pub.prepare_at));
+    await env.settle();
+    expect((await row(pub.id)).status).toBe('ready');
+    env.clock.set(new Date(pub.scheduled_at));
+    env.meta.latency = { match: /media_publish$/, ms: 600 };
+    try {
+      const first = advance(env.ctx, pub.id);
+      await until(() => env.meta.callsTo(/media_publish/).length === 1); // the first worker is now waiting for the network
+      const during = await Promise.all([advance(env.ctx, pub.id), advance(env.ctx, pub.id)]);
+      expect(during).toEqual(['skipped', 'skipped']);
+      expect(await first).toBe('published');
+    } finally {
+      env.meta.latency = null;
+    }
+    expect(env.meta.callsTo(/media_publish/)).toHaveLength(1);
+    expect((await row(pub.id)).lease_until).toBeNull(); // and it lets go once it is done
   });
 
   it('does not publish late by itself: past the tolerance it fails and says so', async () => {

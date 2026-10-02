@@ -34,6 +34,8 @@ export class FakeMeta {
   calls: Call[] = [];
   pages: FakePage[] = [{ id: '111', name: 'Lumen Coffee', token: 'page-token-111', ig: { id: '222', username: 'lumen.coffee' } }];
   grantedScopes = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'instagram_basic', 'instagram_content_publish'];
+  /** Milliseconds a call to a path matching this takes to be answered, for tests that need something to be in flight. */
+  latency: { match: RegExp; ms: number } | null = null;
   /** Containers stay IN_PROGRESS for this many status reads before FINISHED. */
   processingPolls = 1;
   igQuota = { usage: 0, total: 50 };
@@ -105,6 +107,7 @@ export class FakeMeta {
       for (const [k, v] of Object.entries(f.headers ?? {})) reply.header(k, v);
       return reply.code(f.status).send(f.body);
     }
+    if (this.latency?.match.test(path)) await new Promise((r) => setTimeout(r, this.latency!.ms));
     const out = this.route(call, req);
     if (out && typeof out === 'object' && 'error' in (out as object) && !(out as any).data) return reply.code(400).send(out);
     return reply.send(out ?? { error: { message: `Unknown path ${path}`, code: 2500 } });

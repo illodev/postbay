@@ -203,6 +203,12 @@ All of it with real PostgreSQL, real ffmpeg and stand-ins. For each piece of sec
 flow, TOTP and the second factor, Slack and push delivery, the service worker, resumable uploads, the subtitle parser and the comment
 anchor rules, YouTube watch time) I also ran **mutation checks**: break the code in a plausible way (drop a check, flip a comparison, remove
 a limit) and confirm a test fails. Survivors were either covered with a new test or shown to be equivalent (dead code, which was then removed).
+The final regression also found a defect **in phase 2's publisher**: the lease that keeps two workers from publishing the same post was let go
+as soon as publishing *began* (a `return somePromise` inside a `try`/`finally` runs the `finally` before the promise ends), not when it
+finished. Two workers picking the same post up within the network call could both publish it. It showed up as a test that failed one run in six.
+The lease is now held until the work is done (the same pattern in the webhook delivery was changed too, where it could not matter in practice),
+and a new test keeps a slow network call in flight while two more workers try. Phases 2 to 4 were released with the defect.
+
 The tests and the mutation checks found real defects along the way, among them: an empty `Upload-Offset` header read as 0, a service
 worker that opened `/undefined` for a push without an address, a subtitle comment checked against the video's length before its line had
 been looked up (so a forged time could pass or fail the wrong check), and an SQL statement that set the same column twice.

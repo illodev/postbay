@@ -413,6 +413,7 @@ export async function advance(ctx: Ctx, publicationId: string): Promise<string> 
     [publicationId, addSeconds(now, TIMING.leaseMinutes * 60), now],
   );
   if (!claimed) return 'skipped';
+  // Every `return` below is awaited: the lease is let go in `finally`, and a bare `return somePromise` would let it go while the work is still going.
   try {
     let L = await load(ctx, publicationId);
     if (!L) return 'gone';
@@ -426,10 +427,10 @@ export async function advance(ctx: Ctx, publicationId: string): Promise<string> 
         }
         if (!(await commit(ctx, publicationId, ['scheduled'], { status: 'preparing', attempts: 0, handle: {} }))) return 'changed';
         L = (await load(ctx, publicationId))!;
-        return prepare(ctx, L);
+        return await prepare(ctx, L);
       }
       case 'preparing':
-        return prepare(ctx, L);
+        return await prepare(ctx, L);
       case 'ready': {
         const at = L.pub.native_scheduled ? addSeconds(scheduled, TIMING.nativeGraceSeconds) : scheduled;
         if (now < at) {
@@ -438,16 +439,16 @@ export async function advance(ctx: Ctx, publicationId: string): Promise<string> 
         }
         if (!(await commit(ctx, publicationId, ['ready'], { status: 'publishing' }))) return 'changed';
         L = (await load(ctx, publicationId))!;
-        return publish(ctx, L);
+        return await publish(ctx, L);
       }
       case 'publishing':
-        return publish(ctx, L);
+        return await publish(ctx, L);
       case 'published':
-        return verify(ctx, L);
+        return await verify(ctx, L);
       case 'cancelled':
       case 'on_hold':
       case 'failed':
-        return discard(ctx, L);
+        return await discard(ctx, L);
       default:
         await commit(ctx, publicationId, [L.pub.status], { next_run_at: null });
         return 'idle';

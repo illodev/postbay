@@ -229,8 +229,8 @@ export async function deliver(ctx: Ctx, deliveryId: string): Promise<DeliveryOut
       [deliveryId],
     );
     if (!d) return 'skipped';
-    if (!d.active) return finish(ctx, d, { ok: false, final: true, error: 'The webhook is disabled' });
-    if (!ctx.vault) return finish(ctx, d, { ok: false, final: true, error: 'The server has no TOKEN_KEY, so the secret cannot be opened' });
+    if (!d.active) return await finish(ctx, d, { ok: false, final: true, error: 'The webhook is disabled' });
+    if (!ctx.vault) return await finish(ctx, d, { ok: false, final: true, error: 'The server has no TOKEN_KEY, so the secret cannot be opened' });
 
     const secret = ctx.vault.open<{ secret: string }>(d.secret_encrypted, `webhook:${d.webhook_id}`).secret;
     const body = JSON.stringify({
@@ -270,7 +270,7 @@ export async function deliver(ctx: Ctx, deliveryId: string): Promise<DeliveryOut
     const ok = status !== null && status >= 200 && status < 300;
     const why = ok ? null : error ?? (status !== null && status >= 300 && status < 400 ? `The receiver answered ${status}: redirects are not followed` : `The receiver answered ${status}${text ? `: ${text.replace(/\s+/g, ' ').slice(0, 200)}` : ''}`);
     await ctx.db.query('insert into webhook_attempt (delivery_id, at, http_status, error, duration_ms) values ($1,$2,$3,$4,$5)', [deliveryId, now, status, why, ms]);
-    return finish(ctx, d, { ok, status, error: why, final: policy || status === 410, disable: status === 410, retryAfter });
+    return await finish(ctx, d, { ok, status, error: why, final: policy || status === 410, disable: status === 410, retryAfter });
   } finally {
     await ctx.db.query('update webhook_delivery set lease_until = null where id = $1', [deliveryId]);
   }
