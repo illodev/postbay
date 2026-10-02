@@ -83,9 +83,36 @@ export interface PieceSummary {
   variant_count: number;
   open_comments: number;
   campaign_id: string | null;
-  source?: string | null;
-  /** Filled by the richer list (latest version, its format, who made it, what is scheduled). */
-  latest_by_agent?: boolean;
+  campaign_name: string | null;
+  /** Where the piece's project lives (a runner resolves it), e.g. "videos:2026-09/telenovela". */
+  source: string | null;
+  discarded_at: string | null;
+  /** The latest version of the first variant: the one the preview is drawn from. Null until something is uploaded. */
+  latest_version: PieceLatestVersion | null;
+  /** Whether the latest version of any variant was uploaded by the agent. */
+  latest_by_agent: boolean;
+  /** When the latest version anywhere was uploaded, or the piece created. */
+  updated_at: string;
+  /** The earliest publication still to go out. */
+  next_publication: { scheduled_at: string; network: string; status: PublicationStatus } | null;
+  /** Networks the piece is scheduled or published on. */
+  networks: string[];
+  last_published_at: string | null;
+}
+
+export interface PieceLatestVersion {
+  id: string;
+  number: number;
+  review_state: VersionState;
+  created_at: string;
+  by_agent: boolean;
+  /** A person's name (or the part of their email before the @), or the agent token's name. */
+  author: string | null;
+  format: string;
+  /** The kind of its main files, how many there are, and the video's length. */
+  media: 'video' | 'image' | 'pdf' | null;
+  files: number;
+  duration_ms: number | null;
 }
 
 export interface VersionSummary {
