@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useEffect, useState, type FormEvent } from 'react';
+import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate, useResolvedPath, useSearchParams } from 'react-router-dom';
 import { api, type NotificationItem, type PieceSummary } from '../api';
 import { LOCALES, t, tMaybe, useLocale, type Locale } from '../i18n';
 import { fmtShort } from '../lib/format';
@@ -8,42 +8,28 @@ import { useSession } from '../lib/session';
 import { Avatar, displayName } from './Avatar';
 import { PaletteProvider, usePalette } from './CommandPalette';
 import { Icon, type IconName } from './icons';
-import { Dialog, ErrorBox, Field, useToast, errorMessage } from './ui';
+import { Dialog, ErrorBox, Field, Menu, MenuItem, MenuLabel, MenuSeparator, Popover, Tip, useToast, errorMessage } from './ui';
 
 export interface Campaign {
   id: string;
   name: string;
 }
 
-/** Closes a popover when the pointer goes down outside it. */
-function useOutside(open: boolean, close: () => void) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && close();
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close();
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open, close]);
-  return ref;
-}
-
 function RailLink({ to, icon, label, end, dot }: { to: string; icon: IconName; label: string; end?: boolean; dot?: boolean }) {
+  // A plain Link with the class worked out here: the tooltip's trigger merges classes as strings, and NavLink's is a function.
+  const active = !!useMatch({ path: useResolvedPath(to).pathname, end: !!end });
   return (
-    <NavLink to={to} end={end} className={({ isActive }) => `rail-btn ${isActive ? 'active' : ''}`} title={label} aria-label={label}>
-      <Icon name={icon} />
-      {dot && <span className="rail-dot" />}
-    </NavLink>
+    <Tip label={label} side="right">
+      <Link to={to} className={`rail-btn ${active ? 'active' : ''}`} aria-label={label} aria-current={active ? 'page' : undefined}>
+        <Icon name={icon} />
+        {dot && <span className="rail-dot" />}
+      </Link>
+    </Tip>
   );
 }
 
 function Notifications() {
   const [open, setOpen] = useState(false);
-  const ref = useOutside(open, () => setOpen(false));
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { data } = useQuery({
@@ -57,53 +43,50 @@ function Notifications() {
     qc.invalidateQueries({ queryKey: ['notifications'] });
   };
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button
-        className="rail-btn"
-        title={t('notif.title')}
-        aria-label={unread ? t('notif.buttonUnread', { count: unread }) : t('notif.button')}
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        <Icon name="bell" />
-        {unread > 0 && <span className="rail-dot" />}
-      </button>
-      {open && (
-        <div className="popover" style={{ left: 'calc(100% + 10px)', top: -8 }}>
-          <div className="card-head" style={{ padding: '.35rem .4rem 0' }}>
-            <strong>{t('notif.title')}</strong>
-            <button className="btn btn-small" onClick={readAll} disabled={!unread}>{t('notif.markAll')}</button>
-          </div>
-          {data?.items.length ? (
-            data.items.slice(0, 20).map((n) => (
-              <button
-                key={n.id}
-                className={`notif-item ${n.read_at ? '' : 'unread'}`}
-                onClick={() => {
-                  setOpen(false);
-                  navigate(n.payload.pieceId ? `/pieces/${n.payload.pieceId}` : '/today');
-                }}
-              >
-                <span style={{ fontWeight: n.read_at ? 400 : 600 }}>{tMaybe(`notif.kind.${n.kind}`, n.kind)}</span>
-                {n.piece_title && <span className="muted"> · {n.piece_title}</span>}
-                <br />
-                <span className="muted small">{n.brand} · {fmtShort(n.created_at)}</span>
-              </button>
-            ))
-          ) : (
-            <p className="muted" style={{ padding: '.5rem .6rem' }}>{t('notif.empty')}</p>
-          )}
-        </div>
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      side="right"
+      align="start"
+      width={380}
+      label={t('notif.title')}
+      trigger={
+        <button className="rail-btn" aria-label={unread ? t('notif.buttonUnread', { count: unread }) : t('notif.button')}>
+          <Icon name="bell" />
+          {unread > 0 && <span className="rail-dot" />}
+        </button>
+      }
+    >
+      <div className="card-head" style={{ padding: '.35rem .4rem 0' }}>
+        <strong>{t('notif.title')}</strong>
+        <button className="btn btn-small" onClick={readAll} disabled={!unread}>{t('notif.markAll')}</button>
+      </div>
+      {data?.items.length ? (
+        data.items.slice(0, 20).map((n) => (
+          <button
+            key={n.id}
+            className={`notif-item ${n.read_at ? '' : 'unread'}`}
+            onClick={() => {
+              setOpen(false);
+              navigate(n.payload.pieceId ? `/pieces/${n.payload.pieceId}` : '/today');
+            }}
+          >
+            <span style={{ fontWeight: n.read_at ? 400 : 600 }}>{tMaybe(`notif.kind.${n.kind}`, n.kind)}</span>
+            {n.piece_title && <span className="muted"> · {n.piece_title}</span>}
+            <br />
+            <span className="muted small">{n.brand} · {fmtShort(n.created_at)}</span>
+          </button>
+        ))
+      ) : (
+        <p className="muted" style={{ padding: '.5rem .6rem' }}>{t('notif.empty')}</p>
       )}
-    </div>
+    </Popover>
   );
 }
 
 function AccountMenu() {
   const { me } = useSession();
   const { locale, setLocale } = useLocale();
-  const [open, setOpen] = useState(false);
-  const ref = useOutside(open, () => setOpen(false));
   const qc = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
@@ -118,33 +101,32 @@ function AccountMenu() {
     }
   };
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button className="rail-btn" aria-label={t('layout.account')} aria-expanded={open} onClick={() => setOpen(!open)} title={me.user.email}>
-        <Avatar name={me.user.name ?? me.user.email} size={30} />
-      </button>
-      {open && (
-        <div className="popover" style={{ left: 'calc(100% + 10px)', bottom: 0, width: 260 }} role="menu">
-          <div style={{ display: 'flex', gap: '.6rem', alignItems: 'center', padding: '.45rem .6rem .6rem' }}>
-            <Avatar name={me.user.name ?? me.user.email} size={32} />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 500 }}>{name}</div>
-              <div className="muted small" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{me.user.email}</div>
-            </div>
-          </div>
-          <div className="menu-sep" />
-          <button className="menu-item" role="menuitem" onClick={() => { setOpen(false); navigate('/security'); }}><Icon name="user" />{t('layout.account')}</button>
-          <div className="menu-label">{t('layout.language')}</div>
-          {LOCALES.map((l) => (
-            <button key={l.value} className="menu-item" role="menuitemradio" aria-checked={locale === l.value} onClick={() => setLocale(l.value as Locale)}>
-              <Icon name={locale === l.value ? 'check' : 'globe'} style={{ visibility: locale === l.value ? 'visible' : 'hidden' }} />
-              {l.label}
-            </button>
-          ))}
-          <div className="menu-sep" />
-          <button className="menu-item" role="menuitem" onClick={signOut}><Icon name="logout" />{t('layout.signOut')}</button>
+    <Menu
+      side="right"
+      align="end"
+      width={260}
+      trigger={
+        <button className="rail-btn" aria-label={t('layout.account')}>
+          <Avatar name={me.user.name ?? me.user.email} size={30} />
+        </button>
+      }
+    >
+      <div className="menu-who">
+        <Avatar name={me.user.name ?? me.user.email} size={32} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 500 }}>{name}</div>
+          <div className="muted small" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{me.user.email}</div>
         </div>
-      )}
-    </div>
+      </div>
+      <MenuSeparator />
+      <MenuItem icon="user" onSelect={() => navigate('/security')}>{t('layout.account')}</MenuItem>
+      <MenuLabel>{t('layout.language')}</MenuLabel>
+      {LOCALES.map((l) => (
+        <MenuItem key={l.value} icon="globe" checked={locale === l.value} onSelect={() => setLocale(l.value as Locale)}>{l.label}</MenuItem>
+      ))}
+      <MenuSeparator />
+      <MenuItem icon="logout" onSelect={signOut}>{t('layout.signOut')}</MenuItem>
+    </Menu>
   );
 }
 
@@ -249,8 +231,6 @@ function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [params] = useSearchParams();
-  const [brandsOpen, setBrandsOpen] = useState(false);
-  const brandsRef = useOutside(brandsOpen, () => setBrandsOpen(false));
   const [creating, setCreating] = useState(false);
   const [newBrand, setNewBrand] = useState(false);
   const { data: campaigns } = useQuery({ queryKey: ['campaigns', brand.id], queryFn: () => api.get<Campaign[]>(`/api/brands/${brand.id}/campaigns`) });
@@ -261,31 +241,35 @@ function Sidebar() {
   const byCampaign = (id: string) => live.filter((p) => p.campaign_id === id).length;
   return (
     <aside className="sidebar" aria-label={t('layout.nav.main')}>
-      <div ref={brandsRef} style={{ position: 'relative' }}>
-        <button className="brand-switch" onClick={() => setBrandsOpen(!brandsOpen)} aria-expanded={brandsOpen} aria-haspopup="menu">
-          <span className="brand-mark" aria-hidden="true">{brand.name.slice(0, 1).toUpperCase()}</span>
-          <span className="name">{brand.name}</span>
-          <Icon name="chevronDown" />
-        </button>
-        {brandsOpen && (
-          <div className="popover" style={{ left: 0, top: 'calc(100% + 4px)', width: '100%' }} role="menu">
-            <div className="menu-label">{t('layout.brands')}</div>
-            {me.brands.map((b) => (
-              <button key={b.id} className="menu-item" role="menuitemradio" aria-checked={b.id === brand.id} onClick={() => { setBrandId(b.id); setBrandsOpen(false); navigate('/'); }}>
-                <span className="brand-mark" style={{ width: 20, height: 20, fontSize: '.6875rem' }}>{b.name.slice(0, 1).toUpperCase()}</span>
-                <span className="grow" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.name}</span>
-                {b.id === brand.id && <Icon name="check" />}
-              </button>
-            ))}
-            {can('manage') && (
-              <>
-                <div className="menu-sep" />
-                <button className="menu-item" role="menuitem" onClick={() => { setBrandsOpen(false); setNewBrand(true); }}><Icon name="plus" />{t('layout.newBrand')}</button>
-              </>
-            )}
-          </div>
+      <Menu
+        align="start"
+        width="var(--radix-dropdown-menu-trigger-width)"
+        trigger={
+          <button className="brand-switch">
+            <span className="brand-mark" aria-hidden="true">{brand.name.slice(0, 1).toUpperCase()}</span>
+            <span className="name">{brand.name}</span>
+            <Icon name="chevronDown" />
+          </button>
+        }
+      >
+        <MenuLabel>{t('layout.brands')}</MenuLabel>
+        {me.brands.map((b) => (
+          <MenuItem
+            key={b.id}
+            lead={<span className="brand-mark brand-mark-sm" aria-hidden="true">{b.name.slice(0, 1).toUpperCase()}</span>}
+            checked={b.id === brand.id}
+            onSelect={() => { setBrandId(b.id); navigate('/'); }}
+          >
+            {b.name}
+          </MenuItem>
+        ))}
+        {can('manage') && (
+          <>
+            <MenuSeparator />
+            <MenuItem icon="plus" onSelect={() => setNewBrand(true)}>{t('layout.newBrand')}</MenuItem>
+          </>
         )}
-      </div>
+      </Menu>
       <button className="sb-search" onClick={palette.open}>
         <Icon name="search" /><span className="label">{t('common.search')}</span><span className="kbd">⌘K</span>
       </button>
