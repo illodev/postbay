@@ -6,7 +6,7 @@ import { api, type Account, type BrandInvitation, type BrandSettings, type Integ
 import { Avatar, displayName } from '../components/Avatar';
 import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
-import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, MoreMenu, NetMark, Skeleton, Spinner, Switch, useConfirm, useToast } from '../components/ui';
+import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, MoreMenu, NetMark, Select, Skeleton, Spinner, Switch, Tip, useConfirm, useToast } from '../components/ui';
 import { t, tMaybe, type Key } from '../i18n';
 import { fmtDateTime, fmtDay, fmtShort, NETWORK_LABEL, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -21,6 +21,8 @@ import '../styles/settings.css';
 type Tab = 'general' | 'members' | 'accounts' | 'schedule' | 'agent' | 'webhooks' | 'prizes' | 'notifications' | 'tokens' | 'audit';
 
 const ROLES: Role[] = ['admin', 'approver', 'reviewer', 'producer', 'reader'];
+/** Built on use: the labels follow the language. */
+const ROLE_OPTIONS = () => ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r] ?? r }));
 
 /** Day names from luxon, so they follow the language: Monday is 1, as the API counts them. */
 const weekdayName = (n: number) => {
@@ -59,7 +61,9 @@ function General({ brandId }: { brandId: string }) {
   });
   if (error) return <ErrorBox error={error} />;
   if (!b || !f) return <Spinner />;
-  const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+  const known = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+  // The brand's own zone is always offered, even when this browser's list spells it differently (UTC, Etc/…).
+  const zones = known.includes(f.timezone) ? known : [f.timezone, ...known];
   return (
     <>
       {can('manage') && (
@@ -71,8 +75,7 @@ function General({ brandId }: { brandId: string }) {
             </Field>
             <div className="set-fields">
               <Field label={t('settings.general.timezone')}>
-                <input type="text" list="zones" required value={f.timezone} onChange={(e) => setForm({ ...f, timezone: e.target.value })} />
-                <datalist id="zones">{zones.map((z) => <option key={z} value={z} />)}</datalist>
+                <Select label={t('settings.general.timezone')} value={f.timezone} onChange={(z) => setForm({ ...f, timezone: z })} options={zones.map((z) => ({ value: z, label: z.replace(/_/g, ' ') }))} />
               </Field>
               <Field label={t('settings.general.locale')} hint={t('settings.general.localeHint')}>
                 <input type="text" required maxLength={10} value={f.locale} onChange={(e) => setForm({ ...f, locale: e.target.value })} />
@@ -216,9 +219,7 @@ function Members({ brandId }: { brandId: string }) {
                       <Icon name="shield" />
                       <span>{m.second_factor ? t('settings.members.2faOn') : t('settings.members.2faOff')}</span>
                     </span>
-                    <select className="set-inline-select" aria-label={t('settings.members.roleOf', { email: m.email })} value={m.role} onChange={(e) => change.mutate({ id: m.id, role: e.target.value as Role })}>
-                      {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
-                    </select>
+                    <Select className="set-inline-select" label={t('settings.members.roleOf', { email: m.email })} value={m.role} onChange={(role) => change.mutate({ id: m.id, role })} options={ROLE_OPTIONS()} />
                     <MoreMenu
                       label={t('settings.members.actionsOf', { name: who })}
                       items={[
@@ -289,7 +290,7 @@ function Members({ brandId }: { brandId: string }) {
           <Field label={t('settings.members.email')}><input type="email" required placeholder={t('settings.members.emailPlaceholder')} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
           <Field label={`${t('settings.members.name')} ${t('common.optional')}`}><input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
           <Field label={t('settings.members.role')}>
-            <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>{ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}</select>
+            <Select label={t('settings.members.role')} value={form.role} onChange={(role) => setForm({ ...form, role })} options={ROLE_OPTIONS()} />
           </Field>
           <button className="btn btn-primary" disabled={add.isPending}>{t('settings.members.add')}</button>
         </div>
@@ -664,7 +665,7 @@ function Accounts({ brandId }: { brandId: string }) {
         </header>
         <div className="set-invite">
           <Field label={t('settings.accounts.network')}>
-            <select value={form.network} onChange={(e) => setForm({ ...form, network: e.target.value })}>{Object.keys(NETWORK_LABEL).map((k) => <option key={k} value={k}>{NETWORK_LABEL[k]}</option>)}</select>
+            <Select label={t('settings.accounts.network')} value={form.network} onChange={(network) => setForm({ ...form, network })} options={Object.keys(NETWORK_LABEL).map((k) => ({ value: k, label: NETWORK_LABEL[k]!, icon: <NetMark network={k} size="xs" /> }))} />
           </Field>
           <Field label={t('settings.accounts.displayName')}><input type="text" required value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} /></Field>
           <Field label={t('settings.accounts.handle')}><input type="text" required value={form.externalId} onChange={(e) => setForm({ ...form, externalId: e.target.value })} /></Field>
@@ -685,17 +686,20 @@ function Accounts({ brandId }: { brandId: string }) {
 function KidsDefault({ a, disabled, onChange }: { a: Account; disabled?: boolean; onChange: (v: boolean | null) => void }) {
   const value = a.details.madeForKids === undefined ? 'ask' : a.details.madeForKids ? 'yes' : 'no';
   return (
-    <label className="set-control-row">
+    <div className="set-control-row">
       <span className="switch-text">
         <span className="switch-label">{t('settings.accounts.kids')}</span>
         <span className="switch-hint">{t('settings.accounts.kidsHint')}</span>
       </span>
-      <select className="set-inline-select" value={value} disabled={disabled} onChange={(e) => onChange(e.target.value === 'ask' ? null : e.target.value === 'yes')}>
-        <option value="ask">{t('settings.accounts.kidsAsk')}</option>
-        <option value="no">{t('settings.accounts.kidsNo')}</option>
-        <option value="yes">{t('settings.accounts.kidsYes')}</option>
-      </select>
-    </label>
+      <Select
+        className="set-inline-select"
+        label={t('settings.accounts.kids')}
+        value={value}
+        disabled={disabled}
+        onChange={(v) => onChange(v === 'ask' ? null : v === 'yes')}
+        options={[{ value: 'ask', label: t('settings.accounts.kidsAsk') }, { value: 'no', label: t('settings.accounts.kidsNo') }, { value: 'yes', label: t('settings.accounts.kidsYes') }]}
+      />
+    </div>
   );
 }
 
@@ -758,15 +762,17 @@ function Schedule({ brandId }: { brandId: string }) {
                     <div className="set-slot-top">
                       <span className="set-slot-time">{sl.local_time.slice(0, 5)}</span>
                       <NetMark network={sl.network} size="xs" />
-                      <button
-                        className="set-slot-x"
-                        aria-label={t('settings.schedule.removeLabel', { day: weekdayName(sl.weekday), time: sl.local_time.slice(0, 5) })}
-                        onClick={async () => {
-                          if (await confirm({ title: t('settings.schedule.removeTitle'), text: t('settings.schedule.removeConfirm', { day: weekdayName(sl.weekday), time: sl.local_time.slice(0, 5) }), confirmLabel: t('settings.schedule.remove'), danger: true })) remove.mutate(sl.id);
-                        }}
-                      >
-                        <Icon name="x" />
-                      </button>
+                      <Tip label={t('settings.schedule.removeTitle')}>
+                        <button
+                          className="set-slot-x"
+                          aria-label={t('settings.schedule.removeLabel', { day: weekdayName(sl.weekday), time: sl.local_time.slice(0, 5) })}
+                          onClick={async () => {
+                            if (await confirm({ title: t('settings.schedule.removeTitle'), text: t('settings.schedule.removeConfirm', { day: weekdayName(sl.weekday), time: sl.local_time.slice(0, 5) }), confirmLabel: t('settings.schedule.remove'), danger: true })) remove.mutate(sl.id);
+                          }}
+                        >
+                          <Icon name="x" />
+                        </button>
+                      </Tip>
                     </div>
                     <span className={`set-slot-label ${sl.label ? '' : 'none'}`}>{sl.label || t('settings.schedule.noLabel')}</span>
                     <span className="set-slot-account">{sl.account_name}</span>
@@ -786,15 +792,17 @@ function Schedule({ brandId }: { brandId: string }) {
         {accounts?.length === 0 && <div className="notice notice-warn" style={{ margin: '10px 0 0' }}>{t('settings.schedule.needAccount')}</div>}
         <div className="set-invite set-invite-slot">
           <Field label={t('settings.schedule.day')}>
-            <select value={form.weekday} onChange={(e) => setForm({ ...form, weekday: Number(e.target.value) })}>
-              {[1, 2, 3, 4, 5, 6, 7].map((d) => <option key={d} value={d}>{weekdayName(d)}</option>)}
-            </select>
+            <Select label={t('settings.schedule.day')} value={String(form.weekday)} onChange={(d) => setForm({ ...form, weekday: Number(d) })} options={[1, 2, 3, 4, 5, 6, 7].map((d) => ({ value: String(d), label: weekdayName(d) }))} />
           </Field>
           <Field label={t('settings.schedule.time')}><input type="time" required value={form.localTime} onChange={(e) => setForm({ ...form, localTime: e.target.value })} /></Field>
           <Field label={t('settings.schedule.account')}>
-            <select value={form.accountId || accounts?.[0]?.id || ''} onChange={(e) => setForm({ ...form, accountId: e.target.value })}>
-              {accounts?.map((a) => <option key={a.id} value={a.id}>{NETWORK_LABEL[a.network]} · {a.display_name}</option>)}
-            </select>
+            <Select
+              label={t('settings.schedule.account')}
+              value={form.accountId || accounts?.[0]?.id}
+              disabled={!accounts?.length}
+              onChange={(accountId) => setForm({ ...form, accountId })}
+              options={(accounts ?? []).map((a) => ({ value: a.id, label: a.display_name, icon: <NetMark network={a.network} size="xs" /> }))}
+            />
           </Field>
           <Field label={t('settings.schedule.label')}><input type="text" placeholder={t('settings.schedule.labelPlaceholder')} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} /></Field>
           <button className="btn btn-primary" disabled={add.isPending || !accounts?.length}>{t('settings.schedule.add')}</button>
@@ -1003,15 +1011,17 @@ export function SettingsPage() {
             return [
               <div key={g.label} className="set-nav-group" aria-hidden="true">{t(g.label)}</div>,
               ...items.map(([k]) => (
-                <button key={k} id={`tab-${k}`} role="tab" aria-selected={current === k} aria-controls="settings-panel" className="set-nav-item" title={t(`settings.tabDesc.${k}` as Key)} onClick={() => open(k)}>
-                  <span>{t(`settings.tab.${k}` as Key)}</span>
-                  {attention[k] && (
-                    <>
-                      <span className="set-dot" aria-hidden="true" />
-                      <span className="sr-only">{t('settings.needsAttention')}</span>
-                    </>
-                  )}
-                </button>
+                <Tip key={k} label={t(`settings.tabDesc.${k}` as Key)} side="right">
+                  <button id={`tab-${k}`} role="tab" aria-selected={current === k} aria-controls="settings-panel" className="set-nav-item" onClick={() => open(k)}>
+                    <span>{t(`settings.tab.${k}` as Key)}</span>
+                    {attention[k] && (
+                      <>
+                        <span className="set-dot" aria-hidden="true" />
+                        <span className="sr-only">{t('settings.needsAttention')}</span>
+                      </>
+                    )}
+                  </button>
+                </Tip>
               )),
             ];
           })}

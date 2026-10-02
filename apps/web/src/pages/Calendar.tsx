@@ -6,7 +6,7 @@ import { api, type Account, type CalendarData, type PieceDetail, type PieceSumma
 import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
 import { PublicationBadges, ScheduleDialog } from '../components/publications';
-import { Chip, Dialog, ErrorBox, errorMessage, Field, NetMark, Segmented, Skeleton, useToast } from '../components/ui';
+import { Chip, Dialog, ErrorBox, errorMessage, Field, NetMark, Segmented, Select, Skeleton, Tip, useToast } from '../components/ui';
 import { t, tMaybe, type Key } from '../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -277,7 +277,7 @@ export function CalendarPage() {
   };
   const setView = (v: View) => go({ view: v });
   const setAnchor = (a: DateTime) => go({ anchor: a });
-  const [network, setNetwork] = useState('');
+  const [network, setNetwork] = useState('all');
   const [dropDay, setDropDay] = useState<string | null>(null);
   const [blocking, setBlocking] = useState(false);
   const [scheduling, setScheduling] = useState<{ versionId: string; when?: string } | null>(null);
@@ -328,9 +328,9 @@ export function CalendarPage() {
     return out;
   }, [fromS, toS]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const pubs = (data?.publications ?? []).filter((p) => !network || p.network === network);
+  const pubs = (data?.publications ?? []).filter((p) => network === 'all' || p.network === network);
   const allSlots = (data?.slots ?? []).filter((s) => !s.filled && !s.past && !s.blocked);
-  const slots = allSlots.filter((s) => !network || s.network === network);
+  const slots = allSlots.filter((s) => network === 'all' || s.network === network);
   const blocked = new Map((data?.blocked ?? []).map((b) => [b.day, b.reason]));
   const dayOf = (iso: string) => DateTime.fromISO(iso, { zone }).toISODate()!;
   const now = DateTime.now().setZone(zone);
@@ -444,9 +444,11 @@ export function CalendarPage() {
       <Icon name="ban" />
       <span className="oc-blocked-text">{blocked.get(day) || t('calendar.blocked')}</span>
       {can('schedule') && (
-        <button className="oc-unblock" aria-label={t('calendar.unblock', { day: DateTime.fromISO(day).toLocaleString({ day: 'numeric', month: 'long' }) })} onClick={() => unblock.mutate(day)}>
-          <Icon name="x" />
-        </button>
+        <Tip label={t('calendar.unblock', { day: DateTime.fromISO(day).toLocaleString({ day: 'numeric', month: 'long' }) })}>
+          <button className="oc-unblock" aria-label={t('calendar.unblock', { day: DateTime.fromISO(day).toLocaleString({ day: 'numeric', month: 'long' }) })} onClick={() => unblock.mutate(day)}>
+            <Icon name="x" />
+          </button>
+        </Tip>
       )}
     </span>
   );
@@ -606,8 +608,8 @@ export function CalendarPage() {
 
       <div className="oc-toolbar">
         <div className="oc-nav">
-          <button className="btn btn-ghost ops-iconbtn" onClick={() => step(-1)} aria-label={t('calendar.prev')} title={t('calendar.prev')}><Icon name="chevronLeft" /></button>
-          <button className="btn btn-ghost ops-iconbtn" onClick={() => step(1)} aria-label={t('calendar.next')} title={t('calendar.next')}><Icon name="chevronRight" /></button>
+          <Tip label={t('calendar.prev')}><button className="btn btn-ghost ops-iconbtn" onClick={() => step(-1)} aria-label={t('calendar.prev')}><Icon name="chevronLeft" /></button></Tip>
+          <Tip label={t('calendar.next')}><button className="btn btn-ghost ops-iconbtn" onClick={() => step(1)} aria-label={t('calendar.next')}><Icon name="chevronRight" /></button></Tip>
           <button className="btn" onClick={() => setAnchor(DateTime.now().setZone(zone))}>{t('calendar.today')}</button>
           <h2 className="oc-period" aria-live="polite">{title}</h2>
           {paused && <span title={t('calendar.pausedHint')}><Chip state="on_hold" label={t('calendar.paused')} /></span>}
@@ -621,18 +623,23 @@ export function CalendarPage() {
             </span>
           )}
           {networks.length > 1 && (
-            <select className="ops-select" aria-label={t('calendar.network')} value={network} onChange={(e) => setNetwork(e.target.value)}>
-              <option value="">{t('calendar.allNetworks')}</option>
-              {networks.map((n) => <option key={n} value={n}>{NETWORK_LABEL[n] ?? n}</option>)}
-            </select>
+            <Select
+              className="ops-select"
+              label={t('calendar.network')}
+              value={network}
+              onChange={setNetwork}
+              options={[{ value: 'all', label: t('calendar.allNetworks') }, ...networks.map((n) => ({ value: n, label: NETWORK_LABEL[n] ?? n, icon: <NetMark network={n} size="xs" /> }))]}
+            />
           )}
           {narrow && viewSwitch}
           {can('schedule') && !narrow && (
-            <button className="btn btn-ghost oc-tray-toggle" aria-pressed={trayOpen} onClick={toggleTray} title={trayOpen ? t('calendar.tray.hide') : t('calendar.tray.show')}>
-              <Icon name="inbox" />
-              <span>{t('calendar.tray.title')}</span>
-              {ready.items.length > 0 && <span className="ops-count">{ready.items.length}</span>}
-            </button>
+            <Tip label={trayOpen ? t('calendar.tray.hide') : t('calendar.tray.show')}>
+              <button className="btn btn-ghost oc-tray-toggle" aria-pressed={trayOpen} onClick={toggleTray}>
+                <Icon name="inbox" />
+                <span>{t('calendar.tray.title')}</span>
+                {ready.items.length > 0 && <span className="ops-count">{ready.items.length}</span>}
+              </button>
+            </Tip>
           )}
         </div>
       </div>

@@ -35,7 +35,7 @@
 .set-card-head p { margin: 4px 0 0; max-width: 75ch; }
 .set-card-sub { color: var(--muted); font-size: .8125rem; font-weight: 400; }
 .set-savebar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.set-inline-select { width: auto; height: 28px; min-height: 28px; padding-top: 0; padding-bottom: 0; padding-left: 10px; font-size: .8125rem; }
+.select-trigger.set-inline-select { width: auto; min-width: 132px; height: 28px; min-height: 28px; padding-left: 10px; font-size: .8125rem; }
 .set-num-input { max-width: 120px; }
 .set-hint { color: var(--muted); font-size: .8125rem; line-height: 1.5; margin: 0; max-width: 75ch; }
 .set-hint a, .set-callout a { display: inline-flex; align-items: center; gap: 3px; }
@@ -194,7 +194,7 @@
 .set-main td a:hover, .set-main .ent a:hover { text-decoration: underline; text-decoration-color: rgb(255 255 255 / 25%); text-underline-offset: 2px; }
 
 /* the settings forms: Frame.io's compact fields */
-.set-main input[type='text'], .set-main input[type='email'], .set-main input[type='number'], .set-main input[type='url'], .set-main input[type='time'], .set-main input[type='date'], .set-main select:not(.set-inline-select), .set-main textarea { font-size: .8125rem; }
+.set-main input[type='text'], .set-main input[type='email'], .set-main input[type='number'], .set-main input[type='url'], .set-main input[type='time'], .set-main input[type='date'], .set-main textarea, .set-main .select-trigger:not(.set-inline-select) { font-size: .8125rem; }
 .set-main .field-label { font-size: .75rem; color: var(--muted); }
 
 /* ───────────────────────────── your account ───────────────────────────── */

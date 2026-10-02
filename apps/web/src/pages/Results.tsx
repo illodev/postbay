@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { api, type BrandMetrics, type CommonMetrics, type MetricAge, type MetricSnapshot, type MetricsRow } from '../api';
 import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
-import { Chip, Dialog, ErrorBox, NetMark, Skeleton } from '../components/ui';
+import { Chip, Dialog, ErrorBox, NetMark, Select, Skeleton } from '../components/ui';
 import { getLocale, t, type Key } from '../i18n';
 import { fmtDateTime, NETWORK_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -170,12 +170,12 @@ function NetworkSection({ summary, rows, zone, onOpen }: {
 
 export function ResultsPage() {
   const { brand } = useSession();
-  const [network, setNetwork] = useState('');
+  const [network, setNetwork] = useState('all');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [open, setOpen] = useState<MetricsRow | null>(null);
   const query = new URLSearchParams();
-  if (network) query.set('network', network);
+  if (network !== 'all') query.set('network', network);
   if (from) query.set('from', from);
   if (to) query.set('to', to);
   const { data, error } = useQuery({
@@ -183,15 +183,18 @@ export function ResultsPage() {
     placeholderData: keepPreviousData,
     queryFn: () => api.get<BrandMetrics>(`/api/brands/${brand.id}/metrics?${query.toString()}`),
   });
-  const filtered = !!(network || from || to);
+  const filtered = network !== 'all' || !!from || !!to;
   return (
     <div className="ops rs">
       <PageBar crumbs={[{ label: t('results.title') }]} />
       <div className="rs-filters" role="group" aria-label={t('results.filters')}>
-        <select className="ops-select" aria-label={t('results.network')} value={network} onChange={(e) => setNetwork(e.target.value)}>
-          <option value="">{t('results.allNetworks')}</option>
-          {Object.keys(NETWORK_LABEL).map((k) => <option key={k} value={k}>{NETWORK_LABEL[k]}</option>)}
-        </select>
+        <Select
+          className="ops-select"
+          label={t('results.network')}
+          value={network}
+          onChange={setNetwork}
+          options={[{ value: 'all', label: t('results.allNetworks') }, ...Object.keys(NETWORK_LABEL).map((k) => ({ value: k, label: NETWORK_LABEL[k]!, icon: <NetMark network={k} size="xs" /> }))]}
+        />
         <div className="rs-range">
           <label>
             <span>{t('results.from')}</span>
@@ -204,7 +207,7 @@ export function ResultsPage() {
           </label>
         </div>
         {filtered ? (
-          <button className="btn btn-small btn-ghost" onClick={() => { setNetwork(''); setFrom(''); setTo(''); }}>
+          <button className="btn btn-small btn-ghost" onClick={() => { setNetwork('all'); setFrom(''); setTo(''); }}>
             <Icon name="x" />
             <span>{t('results.clear')}</span>
           </button>

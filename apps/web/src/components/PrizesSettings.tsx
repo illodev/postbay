@@ -4,7 +4,7 @@ import { api, type BrandSettings, type Prize } from '../api';
 import { t } from '../i18n';
 import { fmtBytes } from '../lib/format';
 import { uploadPrizeFile, type Progress } from '../lib/upload';
-import { Chip, CopyButton, Empty, ErrorBox, errorMessage, Field, Spinner, Switch, useConfirm, useToast } from './ui';
+import { Chip, CopyButton, Empty, ErrorBox, errorMessage, Field, Select, Spinner, Switch, useConfirm, useToast } from './ui';
 
 function Settings({ brand }: { brand: BrandSettings }) {
   const qc = useQueryClient();
@@ -187,10 +187,7 @@ function Erase({ brandId }: { brandId: string }) {
       <p className="set-hint">{t('prizes.erase.hint')}</p>
       <div className="set-fields">
         <Field label={t('prizes.erase.by')}>
-          <select value={by} onChange={(e) => setBy(e.target.value as 'name' | 'personId')}>
-            <option value="name">{t('prizes.erase.byName')}</option>
-            <option value="personId">{t('prizes.erase.byId')}</option>
-          </select>
+          <Select label={t('prizes.erase.by')} value={by} onChange={setBy} options={[{ value: 'name', label: t('prizes.erase.byName') }, { value: 'personId', label: t('prizes.erase.byId') }]} />
         </Field>
         <Field label={by === 'name' ? t('prizes.erase.name') : t('prizes.erase.id')}>
           <input type="text" required maxLength={200} value={who} onChange={(e) => setWho(e.target.value)} />
