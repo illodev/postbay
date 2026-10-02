@@ -246,7 +246,7 @@ export const review = define({
     'review.pdf.page': 'PDF page {n}',
     'review.zone.label': 'Safe area',
     'review.zone.hint': "Shades what each network's interface covers: name, caption and buttons",
-    'review.zone.prompt': 'Show what the network covers',
+    'review.zone.prompt': 'What the network covers',
     'review.zone.off': 'Shade nothing',
     'review.video.label': 'Video. Comma and full stop step one frame; Space plays or pauses.',
     'review.video.clickToComment': 'Click to comment on this moment',

@@ -60,7 +60,8 @@
 .rv-media .stage-inner { position: relative; display: inline-block; line-height: 0; max-width: 100%; }
 .rv-media video, .rv-media img, .rv-media canvas { display: block; max-width: 100%; max-height: var(--rv-h); }
 .rv-media video.annotate { cursor: crosshair; }
-.rv-media.is-full, .rv-media:fullscreen { --rv-h: 100dvh; max-height: none; border-radius: 0; }
+.rv-player.is-full, .rv-stage.is-full { --rv-h: calc(100dvh - 200px); justify-content: center; padding: 16px; background: var(--bg); overflow: auto; }
+.rv-player.is-full .rv-media, .rv-stage.is-full .rv-media { flex: none; }
 .rv-nothing { color: var(--muted); font-size: .875rem; padding: 2rem 1rem; line-height: 1.5; }
 .rv-pdf-error { margin: 12px; line-height: 1.5; }
 

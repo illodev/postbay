@@ -332,7 +332,7 @@ interface VideoProps {
  */
 function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draft, onDraft, canAnnotate, focus, onFocus, jump, safeZone, tools }: VideoProps) {
   const ref = useRef<HTMLVideoElement>(null);
-  const media = useRef<HTMLDivElement>(null);
+  const player = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; moved: boolean } | null>(null);
   const [now, setT] = useState(0);
@@ -340,7 +340,8 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const width = useWidth(track);
-  const fs = useFullscreen(media);
+  // Full screen takes the player with its controls and timeline, so reviewing goes on there.
+  const fs = useFullscreen(player);
   const fps = asset.fps || 30;
 
   useEffect(() => {
@@ -445,7 +446,8 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
 
   return (
     <div
-      className="rv-player"
+      ref={player}
+      className={`rv-player ${fs.on ? 'is-full' : ''}`}
       onKeyDown={(e) => {
         if (typing(e, false)) return;
         if (e.key === ',') { e.preventDefault(); step(-1); }
@@ -453,7 +455,7 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
         if ((e.key === ' ' || e.key === 'k') && !typing(e)) { e.preventDefault(); toggle(); }
       }}
     >
-      <div ref={media} className={`rv-media ${fs.on ? 'is-full' : ''}`} tabIndex={0} aria-label={t('review.video.label')}>
+      <div className="rv-media" tabIndex={0} aria-label={t('review.video.label')}>
         <div className="stage-inner">
           <video
             ref={ref}
@@ -480,6 +482,7 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
             <button type="button" className="rv-ic" onClick={() => { const v = ref.current; if (v) v.muted = !v.muted; }} aria-label={muted ? t('review.video.unmute') : t('review.video.mute')}>
               {muted ? <IconMuted /> : <IconSound />}
             </button>
+            <FullscreenButton fs={fs} />
             <span className="rv-tc" aria-live="off">
               <b>{timecode(now)}</b> / {timecode(dur)}
               <span className="rv-frame" title={t('review.video.frameHint', { fps })}>f{Math.floor(now * fps + 1e-3)}</span>
@@ -497,7 +500,6 @@ function VideoPlayer({ asset, poster, threads, numbers, firstVideoPosition, draf
               </>
             )}
             {tools}
-            <FullscreenButton fs={fs} />
           </div>
         </div>
 
@@ -664,8 +666,8 @@ export function Stage(p: StageProps) {
   const firstVideoPosition = primaries.find((a) => a.kind === 'video')?.position ?? 0;
   const [page, setPage] = useState(1);
   const [pdfPages, setPdfPages] = useState(0);
-  const media = useRef<HTMLDivElement>(null);
-  const fs = useFullscreen(media);
+  const stage = useRef<HTMLDivElement>(null);
+  const fs = useFullscreen(stage);
   const count = pdf ? pdfPages : primaries.length;
 
   useEffect(() => {
@@ -695,7 +697,8 @@ export function Stage(p: StageProps) {
 
   return (
     <div
-      className="rv-stage"
+      ref={stage}
+      className={`rv-stage ${fs.on ? 'is-full' : ''}`}
       onKeyDown={(e) => {
         if (count <= 1 || (typing(e) && !(e.target as HTMLElement).closest('.rv-tile')) || current?.kind === 'video') return;
         if (e.key === 'ArrowLeft') { e.preventDefault(); go(page - 1); }
@@ -704,7 +707,7 @@ export function Stage(p: StageProps) {
     >
       {pdf ? (
         <>
-          <div ref={media} className={`rv-media rv-paper ${fs.on ? 'is-full' : ''}`} tabIndex={-1}>
+          <div className="rv-media rv-paper" tabIndex={-1}>
             <div className="stage-inner">
               <PdfCanvas url={pdf.url} page={page} onPages={setPdfPages} />
               <RegionLayer {...regionProps} />
@@ -734,7 +737,7 @@ export function Stage(p: StageProps) {
         </>
       ) : current ? (
         <>
-          <div ref={media} className={`rv-media ${fs.on ? 'is-full' : ''}`} tabIndex={-1}>
+          <div className="rv-media" tabIndex={-1}>
             <div className="stage-inner">
               <img src={current.url} alt={current.name} draggable={false} />
               <SafeZoneOverlay zone={p.safeZone} />
