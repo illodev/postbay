@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
+import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { FileProfile } from '../connectors/profiles.js';
 
@@ -52,12 +53,15 @@ export function videoArgs(src: string, dest: string, p: Extract<FileProfile, { k
   return args;
 }
 
-export function imageArgs(src: string, dest: string, p: Extract<FileProfile, { kind: 'image' }>): string[] {
+/** JPEG quality steps (ffmpeg's -q:v, lower is better): the first is used unless the result is over the profile's size. */
+export const IMAGE_QUALITY_LADDER = [2, 5, 9, 14, 20, 28];
+
+export function imageArgs(src: string, dest: string, p: Extract<FileProfile, { kind: 'image' }>, quality = IMAGE_QUALITY_LADDER[0]!): string[] {
   return [
     '-y', '-v', 'error', '-i', src,
     '-frames:v', '1',
     '-vf', `scale=w='min(iw,${p.maxWidth})':h=-2`,
-    '-q:v', '2', '-pix_fmt', 'yuvj420p',
+    '-q:v', String(quality), '-pix_fmt', 'yuvj420p',
     dest,
   ];
 }
@@ -128,8 +132,15 @@ export function createMedia(log?: { warn: (o: object, m?: string) => void }): Me
     },
 
     async transcode(src, dest, profile, probe) {
-      const args = profile.kind === 'video' ? videoArgs(src, dest, profile, probe) : imageArgs(src, dest, profile);
-      await runFfmpeg(args, profile.kind === 'video' ? 45 * 60_000 : 2 * 60_000);
+      if (profile.kind === 'video') {
+        await runFfmpeg(videoArgs(src, dest, profile, probe), 45 * 60_000);
+        return;
+      }
+      // Best quality first; only when the picture is still too large for the network does it get worse, step by step.
+      for (const q of IMAGE_QUALITY_LADDER) {
+        await runFfmpeg(imageArgs(src, dest, profile, q), 2 * 60_000);
+        if ((await stat(dest)).size <= profile.maxBytes) return;
+      }
     },
   };
 }

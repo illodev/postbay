@@ -16,6 +16,8 @@ import * as webhooks from '../services/webhooks.js';
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
+const providerParam = z.enum(['meta', 'google', 'threads', 'tiktok', 'linkedin', 'x', 'pinterest', 'bluesky']);
+
 export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   const P = (req: FastifyRequest) => requirePrincipal(req);
   const params = <T extends string>(req: FastifyRequest, ...names: T[]) =>
@@ -98,9 +100,15 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/brands/:brandId/integrations', async (req) => connections.integrations(ctx, P(req), params(req, 'brandId').brandId));
   app.post('/api/brands/:brandId/connections/:provider', async (req) => {
     const { brandId } = params(req, 'brandId');
-    const provider = z.enum(['meta', 'google']).parse((req.params as { provider: string }).provider);
+    const provider = providerParam.parse((req.params as { provider: string }).provider);
     const { reconnectAccountId } = z.object({ reconnectAccountId: z.string().uuid().optional() }).parse(req.body ?? {});
     return connections.startConnection(ctx, P(req), brandId, provider, reconnectAccountId);
+  });
+  // Sign-in by credentials the person types (Bluesky's app password): ends in the same picker as the sign-in pages.
+  app.post('/api/brands/:brandId/connections/:provider/credentials', async (req) => {
+    const { brandId } = params(req, 'brandId');
+    const provider = providerParam.parse((req.params as { provider: string }).provider);
+    return connections.connectWithCredentials(ctx, P(req), brandId, provider, req.body);
   });
   app.get('/api/brands/:brandId/connections/:pendingId', async (req) => {
     const { brandId, pendingId } = params(req, 'brandId', 'pendingId');

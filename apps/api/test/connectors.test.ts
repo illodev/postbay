@@ -83,7 +83,7 @@ async function expectError(p: Promise<unknown>, cls: string): Promise<ConnectorE
 
 describe('Meta sign-in', () => {
   it('builds the Facebook Login address with the scopes publishing needs and the state it was given', () => {
-    const u = new URL(set.provider('meta')!.authorizeUrl('state-123', redirect));
+    const u = new URL(set.provider('meta')!.authorizeUrl!('state-123', redirect));
     expect(u.searchParams.get('client_id')).toBe('app');
     expect(u.searchParams.get('state')).toBe('state-123');
     expect(u.searchParams.get('redirect_uri')).toBe(redirect);
@@ -92,7 +92,7 @@ describe('Meta sign-in', () => {
   });
 
   it('turns one sign-in into a Facebook Page and its Instagram account, with a token that does not expire', async () => {
-    const found = await set.provider('meta')!.exchange('code-1', redirect);
+    const found = await set.provider('meta')!.exchange!('code-1', redirect);
     expect(found.map((c) => [c.network, c.externalId, c.displayName])).toEqual([
       ['facebook', '111', 'Lumen Coffee'],
       ['instagram', '222', '@lumen.coffee'],
@@ -108,7 +108,7 @@ describe('Meta sign-in', () => {
   it('flags the permissions the person did not grant', async () => {
     meta.grantedScopes = ['pages_show_list', 'pages_read_engagement', 'instagram_basic'];
     try {
-      const found = await set.provider('meta')!.exchange('code-2', redirect);
+      const found = await set.provider('meta')!.exchange!('code-2', redirect);
       expect(found[0]!.providerData.missingScopes).toEqual(['pages_manage_posts']);
       expect(found[1]!.providerData.missingScopes).toEqual(['instagram_content_publish']);
     } finally {
@@ -117,11 +117,11 @@ describe('Meta sign-in', () => {
   });
 
   it('says so plainly when the code is refused or no Page can be published to', async () => {
-    await expectError(set.provider('meta')!.exchange('bad', redirect), 'file_rejected');
+    await expectError(set.provider('meta')!.exchange!('bad', redirect), 'file_rejected');
     const saved = meta.pages;
     meta.pages = [];
     try {
-      const e = await expectError(set.provider('meta')!.exchange('code-3', redirect), 'auth');
+      const e = await expectError(set.provider('meta')!.exchange!('code-3', redirect), 'auth');
       expect(e.message).toMatch(/Page/);
     } finally {
       meta.pages = saved;
@@ -379,7 +379,7 @@ describe('Facebook Page', () => {
 
 describe('Google sign-in', () => {
   it('asks for offline access and a forced consent screen so a refresh token comes back', () => {
-    const u = new URL(set.provider('google')!.authorizeUrl('s1', redirect));
+    const u = new URL(set.provider('google')!.authorizeUrl!('s1', redirect));
     expect(u.searchParams.get('access_type')).toBe('offline');
     expect(u.searchParams.get('prompt')).toBe('consent');
     expect(u.searchParams.get('scope')).toContain('youtube.upload');
@@ -387,7 +387,7 @@ describe('Google sign-in', () => {
   });
 
   it('finds the channel and keeps both tokens', async () => {
-    const found = await set.provider('google')!.exchange('good', redirect);
+    const found = await set.provider('google')!.exchange!('good', redirect);
     expect(found).toHaveLength(1);
     expect(found[0]).toMatchObject({ network: 'youtube', externalId: 'UC-lumen', displayName: 'Lumen Coffee TV' });
     expect(found[0]!.token.refreshToken).toBe('refresh-1');
@@ -396,9 +396,9 @@ describe('Google sign-in', () => {
   });
 
   it('refuses a sign-in without a refresh token, and a bad code', async () => {
-    const e1 = await expectError(set.provider('google')!.exchange('norefresh', redirect), 'auth');
+    const e1 = await expectError(set.provider('google')!.exchange!('norefresh', redirect), 'auth');
     expect(e1.message).toMatch(/refresh token/);
-    await expectError(set.provider('google')!.exchange('bad', redirect), 'auth');
+    await expectError(set.provider('google')!.exchange!('bad', redirect), 'auth');
   });
 
   it('refreshes, and says reconnect when Google revoked the grant', async () => {
@@ -420,7 +420,7 @@ describe('YouTube', () => {
   let token: string;
   const bytes = randomBytes(300_000);
   beforeEach(async () => {
-    token = (await set.provider('google')!.exchange('good', redirect))[0]!.token.accessToken;
+    token = (await set.provider('google')!.exchange!('good', redirect))[0]!.token.accessToken;
   });
   const files = { 'k/reel.mp4': bytes };
   const vid = (over: Partial<PublishInput> = {}) => input({ placement: 'video', media: [media({ bytes: bytes.length })], ...over });

@@ -56,6 +56,41 @@ const schema = z.object({
    * cloud metadata services are never allowed. Default: allowed in development, refused in production.
    */
   WEBHOOK_ALLOW_PRIVATE_NETWORKS: z.enum(['true', 'false', '1', '0', '']).optional(),
+
+  // The rest of the networks (phase 4). Each is on when its credentials are set; Bluesky needs none (a person gives an app password).
+  THREADS_APP_ID: z.string().optional(),
+  THREADS_APP_SECRET: z.string().optional(),
+  THREADS_OAUTH_URL: z.string().default('https://threads.net/oauth/authorize'),
+  THREADS_GRAPH_URL: z.string().default('https://graph.threads.net'),
+  TIKTOK_CLIENT_KEY: z.string().optional(),
+  TIKTOK_CLIENT_SECRET: z.string().optional(),
+  TIKTOK_OAUTH_URL: z.string().default('https://www.tiktok.com/v2/auth/authorize/'),
+  TIKTOK_API_URL: z.string().default('https://open.tiktokapis.com'),
+  LINKEDIN_CLIENT_ID: z.string().optional(),
+  LINKEDIN_CLIENT_SECRET: z.string().optional(),
+  LINKEDIN_OAUTH_URL: z.string().default('https://www.linkedin.com/oauth/v2/authorization'),
+  LINKEDIN_TOKEN_URL: z.string().default('https://www.linkedin.com/oauth/v2/accessToken'),
+  LINKEDIN_API_URL: z.string().default('https://api.linkedin.com'),
+  /** Every LinkedIn API version lives about a year and goes in a monthly header (YYYYMM): this has to be moved forward by hand. */
+  LINKEDIN_VERSION: z.string().regex(/^\d{6}$/, 'LINKEDIN_VERSION is YYYYMM').default('202604'),
+  X_CLIENT_ID: z.string().optional(),
+  X_CLIENT_SECRET: z.string().optional(),
+  X_OAUTH_URL: z.string().default('https://x.com/i/oauth2/authorize'),
+  X_API_URL: z.string().default('https://api.x.com'),
+  PINTEREST_APP_ID: z.string().optional(),
+  PINTEREST_APP_SECRET: z.string().optional(),
+  PINTEREST_OAUTH_URL: z.string().default('https://www.pinterest.com/oauth/'),
+  PINTEREST_API_URL: z.string().default('https://api.pinterest.com'),
+  BLUESKY_PDS_URL: z.string().default('https://bsky.social'),
+  BLUESKY_VIDEO_URL: z.string().default('https://video.bsky.app'),
+
+  // Metrics and prizes (phase 4)
+  /** Token Meta sends back when the comment webhook is set up in the app dashboard. Without it the webhook endpoint stays closed. */
+  META_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
+  /** How often the worker looks for metric snapshots that are due. */
+  METRICS_SWEEP_SECONDS: z.coerce.number().int().min(1).default(120),
+  /** How often the comments of posts with a prize are read, for the networks that do not push them (and while Meta has not reviewed the app). */
+  PRIZE_POLL_SECONDS: z.coerce.number().int().min(1).default(180),
 });
 
 export type Config = z.infer<typeof schema> & {
@@ -63,6 +98,8 @@ export type Config = z.infer<typeof schema> & {
   isProd: boolean;
   metaEnabled: boolean;
   googleEnabled: boolean;
+  /** Which sign-in providers this deployment has credentials for. */
+  enabled: Record<'meta' | 'google' | 'threads' | 'tiktok' | 'linkedin' | 'x' | 'pinterest' | 'bluesky', boolean>;
   /** Resolved from WEBHOOK_ALLOW_PRIVATE_NETWORKS and the environment. */
   webhookAllowPrivate: boolean;
 };
@@ -84,9 +121,24 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   }
   const metaEnabled = !!(c.META_APP_ID && c.META_APP_SECRET);
   const googleEnabled = !!(c.GOOGLE_CLIENT_ID && c.GOOGLE_CLIENT_SECRET);
-  if ((metaEnabled || googleEnabled) && !c.TOKEN_KEY) {
+  const enabled = {
+    meta: metaEnabled,
+    google: googleEnabled,
+    threads: !!(c.THREADS_APP_ID && c.THREADS_APP_SECRET),
+    tiktok: !!(c.TIKTOK_CLIENT_KEY && c.TIKTOK_CLIENT_SECRET),
+    linkedin: !!(c.LINKEDIN_CLIENT_ID && c.LINKEDIN_CLIENT_SECRET),
+    x: !!(c.X_CLIENT_ID && c.X_CLIENT_SECRET),
+    pinterest: !!(c.PINTEREST_APP_ID && c.PINTEREST_APP_SECRET),
+    // No developer app to register: a person gives an app password. It still needs the key that seals it.
+    bluesky: !!c.TOKEN_KEY,
+  };
+  const anyCredentials = Object.entries(enabled).some(([k, v]) => v && k !== 'bluesky');
+  if (anyCredentials && !c.TOKEN_KEY) {
     throw new Error('Invalid configuration: connecting accounts needs TOKEN_KEY, the key that seals their tokens');
   }
+  if (c.META_WEBHOOK_VERIFY_TOKEN && !metaEnabled) {
+    throw new Error('Invalid configuration: META_WEBHOOK_VERIFY_TOKEN needs META_APP_ID and META_APP_SECRET (the webhook is signed with the app secret)');
+  }
   const webhookAllowPrivate = c.WEBHOOK_ALLOW_PRIVATE_NETWORKS ? ['true', '1'].includes(c.WEBHOOK_ALLOW_PRIVATE_NETWORKS) : !isProd;
-  return { ...c, isProd, devLogin: c.AUTH_DEV_LOGIN && !isProd, metaEnabled, googleEnabled, webhookAllowPrivate };
+  return { ...c, isProd, devLogin: c.AUTH_DEV_LOGIN && !isProd, metaEnabled, googleEnabled, enabled, webhookAllowPrivate };
 }

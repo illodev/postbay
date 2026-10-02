@@ -20,9 +20,10 @@ export async function accountToken(ctx: Ctx, accountId: string): Promise<TokenSe
   if (!row?.token_encrypted) throw new ConnectorError('auth', 'This account is not connected to its network');
   if (row.status === 'reconnect_required') throw new ConnectorError('auth', 'This account has to be reconnected before it can publish');
   const token = ctx.vault.open<TokenSet>(row.token_encrypted, `account:${accountId}`);
-  const soon = token.expiresAt && new Date(token.expiresAt).getTime() - ctx.now().getTime() < 120_000;
-  if (!soon) return token;
   const provider = ctx.connectors.providerOf(row.network);
+  const windowMs = (provider?.refreshWindowSec ?? 120) * 1000;
+  const soon = token.expiresAt && new Date(token.expiresAt).getTime() - ctx.now().getTime() < windowMs;
+  if (!soon) return token;
   if (!provider?.refresh) return token;
 
   try {
@@ -30,7 +31,7 @@ export async function accountToken(ctx: Ctx, accountId: string): Promise<TokenSe
       // Someone else may have refreshed it while we waited for the lock.
       const locked = (await db.one('select token_encrypted from social_account where id = $1 for update', [accountId]))!;
       const current = ctx.vault!.open<TokenSet>(locked.token_encrypted, `account:${accountId}`);
-      if (current.expiresAt && new Date(current.expiresAt).getTime() - ctx.now().getTime() >= 120_000) return current;
+      if (current.expiresAt && new Date(current.expiresAt).getTime() - ctx.now().getTime() >= windowMs) return current;
       const fresh = await provider.refresh!(current);
       await db.query('update social_account set token_encrypted = $2, token_expires_at = $3 where id = $1', [
         accountId, ctx.vault!.seal(fresh, `account:${accountId}`), fresh.expiresAt ?? null,

@@ -45,6 +45,20 @@ export const PROFILES: Record<string, FileProfile> = {
   'fb-reel': video('fb-reel', 1080, 1920, 60, 25_000, 1024 * MB),
   'fb-photo': { kind: 'image', id: 'fb-photo', format: 'jpeg', maxWidth: 2048, maxBytes: 10 * MB },
   'yt-video': video('yt-video', 3840, 2160, 60, 50_000, 8 * 1024 * MB),
+  // Phase 4. As above, every figure is the networks' public guidance as the specification recorded it: check before relying on it.
+  'th-video': video('th-video', 1080, 1920, 60, 25_000, 1024 * MB),
+  'th-image': { kind: 'image', id: 'th-image', format: 'jpeg', maxWidth: 1440, maxBytes: 8 * MB },
+  'tt-video': video('tt-video', 1080, 1920, 60, 25_000, 4 * 1024 * MB),
+  'tt-photo': { kind: 'image', id: 'tt-photo', format: 'jpeg', maxWidth: 1080, maxBytes: 20 * MB },
+  'li-video': video('li-video', 1920, 1920, 60, 30_000, 5 * 1024 * MB),
+  'li-image': { kind: 'image', id: 'li-image', format: 'jpeg', maxWidth: 4096, maxBytes: 8 * MB },
+  'x-video': video('x-video', 1920, 1200, 60, 25_000, 512 * MB),
+  'x-image': { kind: 'image', id: 'x-image', format: 'jpeg', maxWidth: 4096, maxBytes: 5 * MB },
+  'pin-video': video('pin-video', 1920, 1920, 60, 25_000, 2 * 1024 * MB),
+  'pin-image': { kind: 'image', id: 'pin-image', format: 'jpeg', maxWidth: 2000, maxBytes: 20 * MB },
+  // Bluesky takes a picture as a blob of under about 1 MB, so the conversion trades quality for size until it fits.
+  'bsky-video': video('bsky-video', 1920, 1920, 60, 12_000, 100 * MB),
+  'bsky-image': { kind: 'image', id: 'bsky-image', format: 'jpeg', maxWidth: 2000, maxBytes: 950_000 },
 };
 
 export function profileOf(id: string): FileProfile {

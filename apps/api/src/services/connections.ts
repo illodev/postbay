@@ -9,7 +9,17 @@ import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.j
 import { audit } from './audit.js';
 
 const STATE_TTL_MINUTES = 15;
-const PROVIDERS: ProviderId[] = ['meta', 'google'];
+export const PROVIDER_INFO: Record<ProviderId, { label: string; networks: string[] }> = {
+  meta: { label: 'Facebook and Instagram', networks: ['facebook', 'instagram'] },
+  google: { label: 'YouTube', networks: ['youtube'] },
+  threads: { label: 'Threads', networks: ['threads'] },
+  tiktok: { label: 'TikTok', networks: ['tiktok'] },
+  linkedin: { label: 'LinkedIn', networks: ['linkedin'] },
+  x: { label: 'X', networks: ['x'] },
+  pinterest: { label: 'Pinterest', networks: ['pinterest'] },
+  bluesky: { label: 'Bluesky', networks: ['bluesky'] },
+};
+const PROVIDERS = Object.keys(PROVIDER_INFO) as ProviderId[];
 
 export const redirectUri = (ctx: Ctx) => `${ctx.config.APP_URL}/api/oauth/callback`;
 
@@ -19,11 +29,8 @@ export async function integrations(ctx: Ctx, p: Principal, brandId: string) {
   return {
     providers: PROVIDERS.map((id) => {
       const provider = ctx.connectors.provider(id);
-      const labels: Record<ProviderId, { label: string; networks: string[] }> = {
-        meta: { label: 'Facebook and Instagram', networks: ['facebook', 'instagram'] },
-        google: { label: 'YouTube', networks: ['youtube'] },
-      };
-      return { id, ...labels[id], configured: provider !== null };
+      // A provider that signs in by credentials shows a form instead of sending the person to the network.
+      return { id, ...PROVIDER_INFO[id], configured: provider !== null, signIn: provider?.credentials ? 'credentials' : 'redirect', fields: provider?.credentials?.fields ?? [] };
     }),
     capabilities: allCapabilities(ctx.config),
   };
@@ -33,8 +40,9 @@ export async function integrations(ctx: Ctx, p: Principal, brandId: string) {
 export async function startConnection(ctx: Ctx, p: Principal, brandId: string, providerId: ProviderId, reconnectAccountId?: string) {
   const provider = ctx.connectors.provider(providerId);
   if (!provider || !ctx.vault) {
-    throw new AppError(503, 'provider_not_configured', `${providerId === 'meta' ? 'Facebook and Instagram' : 'YouTube'} is not set up on this server (see docs/phase-2.md)`);
+    throw new AppError(503, 'provider_not_configured', `${PROVIDER_INFO[providerId].label} is not set up on this server (see docs/phase-2.md and docs/phase-4.md)`);
   }
+  if (!provider.authorizeUrl) throw badRequest('credentials_required', `${PROVIDER_INFO[providerId].label} is connected with an app password, not through a sign-in page`);
   if (p.kind !== 'user') throw forbidden('Only people can connect accounts');
   const state = randomBytes(24).toString('base64url');
   await ctx.db.tx(async (db) => {
@@ -50,11 +58,13 @@ export async function startConnection(ctx: Ctx, p: Principal, brandId: string, p
       [brandId, p.userId, providerId, sha256Hex(state), reconnectAccountId ?? null, new Date(ctx.now().getTime() + STATE_TTL_MINUTES * 60_000)],
     );
   });
-  return { url: provider.authorizeUrl(state, redirectUri(ctx)) };
+  // Only what the brand uses is asked for: the permission to send private messages is asked only if prizes are on.
+  const brand = await ctx.db.one('select prizes from brand where id = $1', [brandId]);
+  return { url: provider.authorizeUrl(state, redirectUri(ctx), { prizes: brand?.prizes?.enabled === true }) };
 }
 
 /** Keys of provider data that are safe to show the person choosing; nothing that could be a secret. */
-const SAFE_DATA = ['missingScopes', 'username', 'audited', 'pageId', 'channelId'];
+const SAFE_DATA = ['missingScopes', 'username', 'audited', 'pageId', 'channelId', 'boardId', 'organizationId', 'handle'];
 const safe = (d: Record<string, unknown>) => Object.fromEntries(Object.entries(d).filter(([k]) => SAFE_DATA.includes(k)));
 
 /**
@@ -79,13 +89,13 @@ export async function finishOAuth(
     return { brandId: pending.brand_id, error: q.error_description || q.error || 'The sign-in was cancelled' };
   }
   const provider = ctx.connectors.provider(pending.provider);
-  if (!provider || !ctx.vault) {
+  if (!provider?.exchange || !ctx.vault) {
     await done();
     return { brandId: pending.brand_id, error: 'This network is not set up on the server' };
   }
   let candidates: Candidate[];
   try {
-    candidates = await provider.exchange(q.code, redirectUri(ctx));
+    candidates = await provider.exchange(q.code, redirectUri(ctx), q.state);
   } catch (err) {
     await done();
     if (err instanceof ConnectorError) return { brandId: pending.brand_id, error: err.message };
@@ -98,6 +108,52 @@ export async function finishOAuth(
     ctx.vault.seal(candidates, `pending:${pending.id}`),
   ]);
   return { brandId: pending.brand_id, pendingId: pending.id };
+}
+
+const credentialsInput = z.object({
+  values: z.record(z.string(), z.string().max(500)),
+  reconnectAccountId: z.string().uuid().optional(),
+});
+
+/**
+ * Sign-in by credentials the person types, for a network with no sign-in page (Bluesky). It ends where the other flow does:
+ * a pending attempt holding the accounts that were found, sealed, for the person to choose from.
+ */
+export async function connectWithCredentials(ctx: Ctx, p: Principal, brandId: string, providerId: ProviderId, raw: unknown) {
+  const input = credentialsInput.parse(raw);
+  const provider = ctx.connectors.provider(providerId);
+  if (!provider || !ctx.vault) {
+    throw new AppError(503, 'provider_not_configured', `${PROVIDER_INFO[providerId].label} is not set up on this server (see docs/phase-4.md)`);
+  }
+  if (!provider.credentials) throw badRequest('redirect_required', `${PROVIDER_INFO[providerId].label} is connected through a sign-in page`);
+  if (p.kind !== 'user') throw forbidden('Only people can connect accounts');
+  for (const f of provider.credentials.fields) {
+    if (f.required !== false && !input.values[f.key]?.trim()) throw badRequest('missing_field', `${f.label} is needed`);
+  }
+  await authorize(ctx.db, p, brandId, 'brand.manage');
+  if (input.reconnectAccountId) {
+    const acc = await ctx.db.one('select network from social_account where id = $1 and brand_id = $2', [input.reconnectAccountId, brandId]);
+    if (!acc) throw notFound('Account');
+    if (!provider.networks.includes(acc.network)) throw badRequest('wrong_provider', 'That account is on a different network');
+  }
+  let candidates: Candidate[];
+  try {
+    candidates = await provider.credentials.connect(Object.fromEntries(Object.entries(input.values).map(([k, v]) => [k, v.trim()])));
+  } catch (err) {
+    if (err instanceof ConnectorError) throw badRequest('sign_in_failed', err.message);
+    throw err;
+  }
+  const id = randomUUID();
+  await ctx.db.query(
+    `insert into oauth_pending (id, brand_id, user_id, provider, state_hash, reconnect_of, candidates, secrets_encrypted, expires_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [
+      id, brandId, p.userId, providerId, sha256Hex(randomBytes(24).toString('base64url')), input.reconnectAccountId ?? null,
+      JSON.stringify(candidates.map((c) => ({ key: c.key, network: c.network, externalId: c.externalId, displayName: c.displayName, providerData: safe(c.providerData) }))),
+      ctx.vault.seal(candidates, `pending:${id}`), new Date(ctx.now().getTime() + STATE_TTL_MINUTES * 60_000),
+    ],
+  );
+  return { pendingId: id };
 }
 
 export async function getPending(ctx: Ctx, p: Principal, brandId: string, pendingId: string) {
@@ -198,7 +254,7 @@ export async function disconnectAccount(ctx: Ctx, p: Principal, brandId: string,
 }
 
 export const accountSettings = z.object({
-  /** Whether Google has audited the project, so videos can be published as public. Set by an admin once it has. */
+  /** Whether the network has approved the app (Google's audit for YouTube, TikTok's audit, Pinterest's Standard access), so posts can be public. Set by an admin once it has. */
   audited: z.boolean().optional(),
 });
 
@@ -209,7 +265,7 @@ export async function updateAccountSettings(ctx: Ctx, p: Principal, brandId: str
     const acc = await db.one('select * from social_account where id = $1 and brand_id = $2 for update', [accountId, brandId]);
     if (!acc) throw notFound('Account');
     if (input.audited !== undefined) {
-      if (acc.network !== 'youtube') throw badRequest('not_applicable', 'Only YouTube accounts have an audit status');
+      if (!['youtube', 'tiktok', 'pinterest'].includes(acc.network)) throw badRequest('not_applicable', 'Only YouTube, TikTok and Pinterest accounts have an approval status');
       await db.query(`update social_account set provider_data = provider_data || jsonb_build_object('audited', $2::boolean) where id = $1`, [accountId, input.audited]);
       await audit(db, p, brandId, 'account.audit_status', 'social_account', accountId, { audited: acc.provider_data?.audited ?? false }, { audited: input.audited });
     }

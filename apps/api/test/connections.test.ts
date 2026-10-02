@@ -226,11 +226,14 @@ describe('disconnecting', () => {
 describe('integrations', () => {
   it('lists what this server can connect to and what each network accepts', async () => {
     const r = await env.call(env.users.reader, 'GET', brandUrl('/integrations'));
-    expect(r.body.providers).toEqual([
-      { id: 'meta', label: 'Facebook and Instagram', networks: ['facebook', 'instagram'], configured: true },
-      { id: 'google', label: 'YouTube', networks: ['youtube'], configured: true },
-    ]);
-    expect(Object.keys(r.body.capabilities).sort()).toEqual(['facebook', 'instagram', 'youtube']);
+    const by = Object.fromEntries(r.body.providers.map((p: any) => [p.id, p]));
+    expect(by.meta).toMatchObject({ label: 'Facebook and Instagram', networks: ['facebook', 'instagram'], configured: true, signIn: 'redirect' });
+    expect(by.google).toMatchObject({ label: 'YouTube', networks: ['youtube'], configured: true, signIn: 'redirect' });
+    // The others need credentials this test server does not have; Bluesky needs none, only the key that seals its password.
+    for (const id of ['threads', 'tiktok', 'linkedin', 'x', 'pinterest']) expect(by[id].configured, id).toBe(false);
+    expect(by.bluesky).toMatchObject({ configured: true, signIn: 'credentials' });
+    expect(by.bluesky.fields.map((f: any) => f.key)).toEqual(['handle', 'appPassword', 'server']);
+    expect(Object.keys(r.body.capabilities).sort()).toEqual(['bluesky', 'facebook', 'instagram', 'linkedin', 'pinterest', 'threads', 'tiktok', 'x', 'youtube']);
     expect(r.body.capabilities.instagram.text.maxChars).toBe(2200);
     expect(r.body.capabilities.instagram.placements.find((p: any) => p.id === 'reel').safeZones).toBeDefined();
   });

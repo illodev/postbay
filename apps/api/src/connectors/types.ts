@@ -2,7 +2,7 @@ import type { Readable } from 'node:stream';
 import type { Config } from '../config.js';
 
 export type Network = 'instagram' | 'facebook' | 'youtube' | 'tiktok' | 'linkedin' | 'x' | 'threads' | 'pinterest' | 'bluesky';
-export type ProviderId = 'meta' | 'google';
+export type ProviderId = 'meta' | 'google' | 'threads' | 'tiktok' | 'linkedin' | 'x' | 'pinterest' | 'bluesky';
 
 export interface TokenSet {
   accessToken: string;
@@ -10,6 +10,8 @@ export interface TokenSet {
   /** ISO time the access token stops working; absent for tokens that do not expire (a Facebook Page token). */
   expiresAt?: string;
   scopes?: string[];
+  /** Whatever else a provider needs to keep with the credentials (Bluesky: the server and the app password, to start a new session). */
+  extra?: Record<string, string>;
 }
 
 // ───────────────────────────── errors ─────────────────────────────
@@ -49,6 +51,28 @@ export interface Issue {
   field?: 'text' | 'firstComment' | 'media' | 'schedule' | 'placement';
 }
 
+/**
+ * A setting a network asks for that is its own (TikTok's privacy, a Pinterest board's link). The schedule dialog is drawn from
+ * these, so a network can ask for what it needs without the screens knowing about it.
+ */
+export interface OptionField {
+  key: string;
+  label: string;
+  type: 'text' | 'url' | 'select' | 'checkbox';
+  /** A required field with no default has to be chosen by a person: nothing is filled in for them. */
+  required?: boolean;
+  help?: string;
+  maxLength?: number;
+  choices?: { value: string; label: string }[];
+  default?: string | boolean;
+  /** Only for these placements; absent means all. */
+  placements?: string[];
+  /** Only shown while this other checkbox is ticked. */
+  showWhen?: string;
+  /** Text the network obliges the app to show next to the field, word for word. */
+  notice?: string;
+}
+
 /** One way of posting on a network: a Reel, a feed photo, a Short… */
 export interface PlacementSpec {
   id: string;
@@ -74,6 +98,8 @@ export interface Capabilities {
   placements: PlacementSpec[];
   text: {
     maxChars: number;
+    /** What maxChars counts. Most networks count characters; Bluesky counts graphemes (what a person sees as one character). */
+    unit?: 'chars' | 'graphemes';
     maxHashtags?: number;
     maxMentions?: number;
     /** Where the feed cuts the text off behind a "more" link, for the preview. */
@@ -83,6 +109,8 @@ export interface Capabilities {
   };
   /** The network has a way to flag AI-generated content. */
   aiLabel: boolean;
+  /** Settings of its own the person is asked for when scheduling. */
+  options?: OptionField[];
   /** Earliest and latest the network itself will schedule ahead, if it can. */
   nativeScheduling: { minLeadMinutes: number; maxLeadDays: number } | null;
 }
@@ -158,6 +186,40 @@ export interface HealthResult {
   note?: string;
 }
 
+// ───────────────────────────── what came of a post ─────────────────────────────
+
+/**
+ * The numbers every network can be asked for, under one name each. Networks count a "view" their own way, so these are only
+ * compared within the same network. Whatever a network does not give is left out, never written as zero.
+ */
+export interface CommonMetrics {
+  views?: number;
+  reach?: number;
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  saves?: number;
+  /** Average time watched, in seconds. */
+  avgWatchSeconds?: number;
+}
+
+export interface MetricsResult {
+  common: CommonMetrics;
+  /** The network's whole answer, with anything secret removed. */
+  raw: unknown;
+  /** Why something is missing or late, for the person reading the numbers. */
+  note?: string;
+}
+
+export interface NetworkComment {
+  id: string;
+  /** The network's id for the person, and a name to show. Personal data: kept only as long as the brand allows. */
+  authorId: string;
+  authorName: string;
+  text: string;
+  createdAt: string;
+}
+
 export interface ConnectorEnv {
   /** Credentials, refreshed first if they are about to expire. */
   token(): Promise<TokenSet>;
@@ -186,6 +248,12 @@ export interface Connector {
    * replaced or failed. Only needed where the network itself would otherwise still publish it at the scheduled time.
    */
   discard?(account: Account, handle: Handle, env: ConnectorEnv): Promise<void>;
+  /** The numbers for a published post. Not every network gives every number (see CommonMetrics). */
+  fetchMetrics?(account: Account, externalId: string, handle: Handle, env: ConnectorEnv, post: { publishedAt: Date; placement: string }): Promise<MetricsResult>;
+  /** The comments on a post since a moment, oldest first. Only where the network lets the app read them. */
+  listComments?(account: Account, externalId: string, handle: Handle, env: ConnectorEnv, since: Date): Promise<NetworkComment[]>;
+  /** One private message to the author of a comment, in reply to it. Only where the network has an official way to. */
+  privateReply?(account: Account, commentId: string, text: string, env: ConnectorEnv): Promise<{ messageId?: string }>;
 }
 
 // ───────────────────────────── signing in with a network ─────────────────────────────
@@ -204,14 +272,33 @@ export interface Candidate {
  * One sign-in with a provider can yield several accounts: a Facebook login finds Pages and the Instagram accounts linked
  * to them. So OAuth lives here, one level above the per-network connectors.
  */
+/** What the brand uses, so a sign-in asks for only the permissions that need: messages are asked for only if prizes are on. */
+export interface SignInFeatures {
+  prizes?: boolean;
+}
+
+export interface CredentialField {
+  key: string;
+  label: string;
+  type: 'text' | 'password';
+  help?: string;
+  required?: boolean;
+}
+
 export interface OAuthProvider {
   id: ProviderId;
   label: string;
   networks: Network[];
-  authorizeUrl(state: string, redirectUri: string): string;
-  exchange(code: string, redirectUri: string): Promise<Candidate[]>;
+  /** Sign-in by a page on the network (most of them). */
+  authorizeUrl?(state: string, redirectUri: string, features?: SignInFeatures): string;
+  /** `state` is passed back so a provider that needs a per-attempt secret (PKCE) can derive it from it instead of storing it. */
+  exchange?(code: string, redirectUri: string, state?: string): Promise<Candidate[]>;
+  /** Sign-in by credentials the person types (Bluesky's app password): no page to be sent to. */
+  credentials?: { fields: CredentialField[]; connect(values: Record<string, string>): Promise<Candidate[]> };
   /** New credentials for an account whose access token is expiring. Providers whose tokens do not expire leave it out. */
   refresh?(token: TokenSet): Promise<TokenSet>;
+  /** How long before an access token runs out it is renewed (default two minutes): a token that lasts months is renewed days ahead. */
+  refreshWindowSec?: number;
 }
 
 export interface ConnectorSet {

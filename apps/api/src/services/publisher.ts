@@ -89,7 +89,8 @@ export async function buildInput(
   const assets = await ctx.db.query('select * from asset where version_id = $1 order by position, kind', [d.versionId]);
   const media: MediaItem[] = [];
   for (const a of assets) {
-    if (a.kind !== 'video' && a.kind !== 'image' && a.kind !== 'cover') continue;
+    // Pictures, videos, covers, and PDFs (a LinkedIn document); subtitles are not sent anywhere yet.
+    if (a.kind !== 'video' && a.kind !== 'image' && a.kind !== 'cover' && a.kind !== 'pdf') continue;
     let key = a.storage_key, mime = a.mime, bytes = a.bytes, width = a.width, height = a.height, durationMs = a.duration_ms;
     let url = '';
     if (forSending) {
