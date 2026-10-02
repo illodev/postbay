@@ -23,7 +23,7 @@ network, so it can be built and used while those paperwork steps run.
 | Assisted publishing: warn the person responsible with files and text ready; they mark it published | Done |
 | Notifications when a version arrives, someone comments, something waits for approval, a post is due | Done in the app and by email. Not Slack or push |
 | Append-only audit log | Done, enforced in the database |
-| API for producers (create piece, variant, signed uploads, close version, open comments, reply, empty slots) | Done. No webhooks (phase 3) |
+| API for producers (create piece, variant, signed uploads, close version, open comments, reply, empty slots) | Done. Webhooks and the agent runner came in phase 3 ([docs/phase-3.md](phase-3.md)) |
 | Tokens: hashed, shown once, expiring, valid for one brand | Done |
 | Signed upload URLs; files never pass through the app; private bucket; separate media domain | Done. Local driver tested; S3 driver written but see below |
 | Subtitles shown beside the video and commented line by line | Not yet. Subtitle files can be uploaded and are part of the fingerprint |

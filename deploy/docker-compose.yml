@@ -26,6 +26,9 @@ x-app-env: &app-env
   META_APP_SECRET: ${META_APP_SECRET:-}
   GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
   GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+  # Webhooks (docs/phase-3.md) need TOKEN_KEY above to seal their secrets. In production they go to public addresses over https only;
+  # set this to true to let them reach private ones (a runner on the same network, for example). Never needed for a public receiver.
+  WEBHOOK_ALLOW_PRIVATE_NETWORKS: ${WEBHOOK_ALLOW_PRIVATE_NETWORKS:-}
 
 services:
   db:

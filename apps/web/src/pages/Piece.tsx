@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type PieceDetail, type PublicationRow, type Variant, type BrandSettings } from '../api';
 import { AttemptsDialog, MarkPublishedDialog, MoveDialog, PackDialog, PublicationBadges, PublicationNote, RescheduleDialog, RetryDialog } from '../components/publications';
+import { PieceAgentCard } from '../components/PieceAgentCard';
 import { UploadDialog } from '../components/UploadDialog';
 import { Chip, Dialog, Empty, ErrorBox, Field, Spinner, useToast, errorMessage } from '../components/ui';
 import { fmtDateTime, fmtDay, fmtShort, NETWORK_LABEL } from '../lib/format';
@@ -93,7 +94,7 @@ function VariantCard({ variant, canUpload, onUpload }: { variant: Variant; canUp
           <strong>v{v.number}</strong>
           <Chip state={v.review_state} />
           {v.open_comments > 0 && v.review_state !== 'superseded' && <span className="badge-count">{v.open_comments} open</span>}
-          <span className="muted small grow">{v.author} · {fmtShort(v.created_at)}{v.notes && <> · “{v.notes.slice(0, 80)}{v.notes.length > 80 ? '…' : ''}”</>}</span>
+          <span className="muted small grow">{v.author}{v.by_agent && <span className="chip" style={{ marginLeft: 6 }} title="Uploaded by an agent, not a person">agent</span>} · {fmtShort(v.created_at)}{v.notes && <> · “{v.notes.slice(0, 80)}{v.notes.length > 80 ? '…' : ''}”</>}</span>
           <Link className="btn btn-small" to={`/review/${v.id}`}>{v.review_state === 'in_review' ? 'Review' : 'Open'}</Link>
         </div>
       ))}
@@ -243,6 +244,9 @@ export function PiecePage() {
           ))}
         </div>
       )}
+      <div style={{ marginTop: '1rem' }}>
+        <PieceAgentCard pieceId={piece.id} />
+      </div>
       <div style={{ marginTop: '1rem' }}>
         <PublicationsTable piece={piece} brand={settings} zone={settings?.timezone ?? brand.timezone} />
       </div>

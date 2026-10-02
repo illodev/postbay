@@ -91,7 +91,7 @@ export async function getPiece(ctx: Ctx, p: Principal, pieceId: string) {
        (select coalesce(json_agg(json_build_object(
           'id', ver.id, 'number', ver.number, 'review_state', ver.review_state, 'created_at', ver.created_at,
           'notes', ver.notes, 'fingerprint', ver.fingerprint,
-          'author', coalesce(u.name, u.email, t.name),
+          'author', coalesce(u.name, u.email, t.name), 'by_agent', (ver.author_token_id is not null),
           'open_comments', (select count(*)::int from comment c where c.version_id = ver.id and c.parent_id is null and c.status = 'open')
         ) order by ver.number), '[]'::json)
         from version ver

@@ -1,10 +1,12 @@
 # One image runs the API and serves the built web app. ffmpeg is there to measure uploads and grab the frame
-# a comment points at.
+# a comment points at. The agent runner (apps/runner) is not in this image: it runs where the agent's command is installed
+# (see apps/runner/README.md). It is built here with the rest of the workspace, so its manifest is copied for `npm ci`.
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
+COPY apps/runner/package.json apps/runner/
 RUN npm ci
 COPY tsconfig.base.json ./
 COPY apps ./apps
@@ -19,6 +21,7 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
+COPY apps/runner/package.json apps/runner/
 RUN npm ci --omit=dev -w @estudio/api
 COPY --from=build /app/apps/api/dist apps/api/dist
 COPY --from=build /app/apps/web/dist apps/web/dist

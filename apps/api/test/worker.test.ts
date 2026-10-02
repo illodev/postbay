@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startWorker, type Worker } from '../src/worker.js';
+import { emit } from '../src/services/events.js';
 import { createEnv, type Env } from './helpers.js';
+import { Receiver } from './receiver.js';
 
 // The worker with the real queue (pg-boss on the same PostgreSQL) and the real clock: it must carry a publication from
 // "scheduled" to "published" on its own, with nothing but the sweep and the queue driving it.
@@ -65,4 +67,22 @@ describe('the queue worker', () => {
     const jobs = await env.db.query(`select count(*)::int as n from pgboss.job where name = 'publication.advance' and state = 'created'`);
     expect(jobs[0]!.n).toBeLessThanOrEqual(1);
   });
+
+  it('delivers webhooks by itself, and retries until the receiver answers', async () => {
+    const rx = await new Receiver().start();
+    try {
+      rx.responder = (_r, n) => (n === 1 ? { status: 500 } : { status: 200 });
+      const w = await env.call(env.users.admin, 'POST', `/api/brands/${env.brandId}/webhooks`, { url: rx.url, events: ['version.approved'] });
+      expect(w.status).toBe(201);
+      await env.db.tx((db) => emit(env.ctx, db, env.brandId, 'version.approved', { hello: 'world' }));
+      const done = await waitFor(async () => {
+        const d = await env.db.one('select status, attempts from webhook_delivery where webhook_id = $1', [w.body.id]);
+        return d?.status === 'delivered' ? d : false;
+      }, 40_000);
+      expect(done.attempts).toBe(2);
+      expect(rx.requests.map((r) => r.json.data)).toEqual([{ hello: 'world' }, { hello: 'world' }]);
+    } finally {
+      await rx.stop();
+    }
+  }, 60_000);
 });

@@ -1,6 +1,6 @@
 # End-to-end tests
 
-Two browser runs: [phase 1's flow](#phase-1-smoke-test) and [phase 2's publishing against fake networks](#phase-2-publishing-against-fake-networks).
+Three browser runs: [phase 1's flow](#phase-1-smoke-test), [phase 2's publishing against fake networks](#phase-2-publishing-against-fake-networks) and [phase 3's agent loop](#phase-3-the-agent-loop).
 
 ## Phase 1 smoke test
 
@@ -67,3 +67,39 @@ the calendar and Publish page; and a phone-sized screen.
 Run it against an empty database each time (the script makes one). To drive it by hand, run `node --import tsx e2e/fakes.mts`,
 export the variables it prints before starting the API, and run `node e2e/phase2.mjs` with `BASE_URL`, `FAKES_URL` and
 `DATABASE_URL` set.
+
+## Phase 3: the agent loop
+
+Drives a comment all the way to a new version, in a real browser, with the real API and worker, the real runner (started by the test
+from what an admin makes in *Settings*), real ffmpeg and a real PostgreSQL. The agent is, by default, **a scripted stand-in**
+(`apps/runner/test/fake-agent.mjs`), so the run is fast and the same every time; with `AGENT=claude` it is **real Claude Code**.
+
+```sh
+npm install && npm run build && npm run e2e:assets          # once
+TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres npm run e2e:phase3
+```
+
+`e2e/phase3.sh` creates a clean database (`estudio_e2e_phase3`), bootstraps a brand, starts the API with its worker (port 3200),
+runs `e2e/phase3.mjs`, and stops everything. The runner listens on 8788 (`RUNNER_PORT`). Screenshots land in `e2e/shots-phase3`
+(override with `SHOTS`); a failed step also saves what every open page looked like (`fail-NN-<user>.png`). The scripted run takes
+about a minute.
+
+It covers: budgets that must be set before the agent starts; a producer token and a webhook made in the screens, each secret shown
+once and never again; the runner connecting with them; *Send a test* arriving; a reviewer commenting on a frame and adding a note for
+people only; version 2 appearing with nobody's hands, marked as the agent's, with cost, checks and a reply on every comment; the
+comment resolved in v2 while the note for people only is untouched; the round cap sending the piece to a person and the bell telling
+the approver; the hand-back and version 3; approval blocked until the note for people only is dealt with; the webhook's deliveries
+and attempts; and a phone-sized screen.
+
+### With real Claude Code
+
+```sh
+AGENT=claude npm run e2e:phase3
+```
+
+**This costs money**: about 0.07 USD per run of the agent in a normal pass (the brand's budget per piece is set to 2 USD in this mode,
+and Claude Code is given what is left of it as a hard stop). It needs the `claude` command, signed in the way your environment signs
+it in. The test passes the runner only `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL` if they
+are set (the agent never gets the runner's whole environment), and in this mode the requests are ones a real agent can always do
+(brighten, change the colours), so the run does not depend on what a model decides about text it cannot edit. A model is not
+deterministic: a pass shows the loop works with a real agent, not that every edit will be good.

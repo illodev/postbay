@@ -4,6 +4,5 @@ node_modules
 .data
 .env
 .git
-e2e/shots
 e2e/assets
-e2e/shots-phase2
+e2e/shots*

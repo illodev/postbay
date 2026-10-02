@@ -195,6 +195,11 @@ export async function closeVersion(ctx: Ctx, p: Principal, variantId: string, ra
     await db.query('update upload set consumed_at = now() where id = any($1)', [ids]);
 
     if (input.resolves.length) {
+      // An agent leaves the comments marked for people alone, even if it claims to have fixed them.
+      if (a.token) {
+        const mine = await db.one('select 1 from comment where id = any($1) and people_only', [input.resolves]);
+        if (mine) throw badRequest('people_only', 'A comment marked for people only cannot be resolved by an agent');
+      }
       const done = await db.query(
         `update comment set status = 'resolved', resolved_in_version_id = $2, resolved_by_user_id = $3, resolved_at = now()
          where id = any($1) and parent_id is null and status = 'open'
@@ -263,7 +268,7 @@ export async function getVersion(ctx: Ctx, p: Principal, versionId: string) {
   return {
     id: version.id, number: version.number, notes: version.notes, fingerprint: version.fingerprint,
     review_state: version.review_state, created_at: version.created_at, author: author?.name ?? null,
-    author_user_id: version.author_user_id,
+    author_user_id: version.author_user_id, by_agent: version.author_token_id !== null,
     variant: { id: variant.id, format: variant.format, style: variant.style, piece_id: variant.piece_id },
     piece: await ctx.db.one('select id, title, kind, brief, ai_generated, review_state from piece where id = $1', [version.piece_id]),
     brand, assets: withUrls, approvals, versions: siblings,

@@ -14,6 +14,9 @@ const SUBJECTS: Record<string, string> = {
   'publication.private': 'A video was uploaded but is private: a person has to make it public',
   'account.reconnect': 'An account needs to be reconnected',
   'account.expiring': 'An account connection is about to expire',
+  'webhook.failing': 'A webhook is failing: events are not reaching its receiver',
+  'agent.needs_person': 'The agent has handed a piece back to a person',
+  'agent.failed': 'An agent run failed',
 };
 
 /** Emails the notifications that have not been sent yet. Without SMTP they end up in the server log. */

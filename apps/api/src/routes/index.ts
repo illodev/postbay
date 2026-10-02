@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requirePrincipal, setSessionCookie, SESSION_COOKIE } from '../http.js';
 import type { Ctx } from '../context.js';
 import { badRequest, forbidden, unauthorized } from '../errors.js';
+import * as agent from '../services/agent.js';
 import * as approvals from '../services/approvals.js';
 import * as authSvc from '../services/auth.js';
 import * as brand from '../services/brand.js';
@@ -11,6 +12,7 @@ import * as connections from '../services/connections.js';
 import * as pieces from '../services/pieces.js';
 import * as pubs from '../services/publications.js';
 import * as versions from '../services/versions.js';
+import * as webhooks from '../services/webhooks.js';
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -59,6 +61,8 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/api/me', async (req) => authSvc.me(ctx, userOnly(req).userId));
+  // What a producer token needs to find its way: which brand it belongs to.
+  app.get('/api/token', async (req) => authSvc.tokenInfo(ctx, P(req)));
 
   // ───────────────────────────── brand settings ─────────────────────────────
 
@@ -138,6 +142,35 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
     return brand.revokeToken(ctx, P(req), brandId, tokenId);
   });
 
+  // ───────────────────────────── the agent ─────────────────────────────
+
+  app.get('/api/brands/:brandId/agent', async (req) => agent.brandAgent(ctx, P(req), params(req, 'brandId').brandId));
+  app.get('/api/brands/:brandId/requirements', async (req) => agent.requirements(ctx, P(req), params(req, 'brandId').brandId));
+  app.post('/api/brands/:brandId/agent-runs', async (req, reply) =>
+    reply.code(201).send(await agent.startRun(ctx, P(req), { brandId: params(req, 'brandId').brandId }, req.body)));
+  app.post('/api/pieces/:id/agent-runs', async (req, reply) =>
+    reply.code(201).send(await agent.startRun(ctx, P(req), { pieceId: params(req, 'id').id }, req.body)));
+  app.get('/api/pieces/:id/agent', async (req) => agent.pieceAgent(ctx, P(req), params(req, 'id').id));
+  app.post('/api/pieces/:id/agent/reset', async (req) => agent.resetRounds(ctx, P(req), params(req, 'id').id));
+  app.post('/api/agent-runs/:id/heartbeat', async (req) => agent.heartbeat(ctx, P(req), params(req, 'id').id));
+  app.post('/api/agent-runs/:id/finish', async (req) => agent.finishRun(ctx, P(req), params(req, 'id').id, req.body));
+
+  // ───────────────────────────── webhooks ─────────────────────────────
+
+  app.get('/api/brands/:brandId/webhooks', async (req) => webhooks.listWebhooks(ctx, P(req), params(req, 'brandId').brandId));
+  app.post('/api/brands/:brandId/webhooks', async (req, reply) =>
+    reply.code(201).send(await webhooks.createWebhook(ctx, P(req), params(req, 'brandId').brandId, req.body)));
+  app.patch('/api/webhooks/:id', async (req) => webhooks.updateWebhook(ctx, P(req), params(req, 'id').id, req.body));
+  app.delete('/api/webhooks/:id', async (req) => webhooks.deleteWebhook(ctx, P(req), params(req, 'id').id));
+  app.post('/api/webhooks/:id/rotate-secret', async (req) => webhooks.rotateSecret(ctx, P(req), params(req, 'id').id));
+  app.post('/api/webhooks/:id/test', async (req) => webhooks.testWebhook(ctx, P(req), params(req, 'id').id));
+  app.get('/api/webhooks/:id/deliveries', async (req) => {
+    const q = z.object({ status: z.enum(['pending', 'delivered', 'failed']).optional() }).parse(req.query);
+    return webhooks.listDeliveries(ctx, P(req), params(req, 'id').id, q);
+  });
+  app.get('/api/webhook-deliveries/:id', async (req) => webhooks.getDelivery(ctx, P(req), params(req, 'id').id));
+  app.post('/api/webhook-deliveries/:id/redeliver', async (req) => webhooks.redeliver(ctx, P(req), params(req, 'id').id));
+
   app.get('/api/brands/:brandId/campaigns', async (req) => brand.listCampaigns(ctx, P(req), params(req, 'brandId').brandId));
   app.post('/api/brands/:brandId/campaigns', async (req, reply) =>
     reply.code(201).send(await brand.createCampaign(ctx, P(req), params(req, 'brandId').brandId, req.body)));
@@ -146,8 +179,9 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
     const { brandId } = params(req, 'brandId');
     const q = z.object({ status: z.enum(['empty']).optional(), from: date.optional(), to: date.optional() }).parse(req.query);
     if (q.status === 'empty') {
-      if (!q.from || !q.to) throw badRequest('invalid_range', 'status=empty needs from and to');
-      return pubs.emptySlots(ctx, P(req), brandId, q.from, q.to);
+      // Without a range: from today to a month ahead, which is what an agent looking for work wants.
+      const range = await brand.defaultRange(ctx, brandId, q.from, q.to);
+      return pubs.emptySlots(ctx, P(req), brandId, range.from, range.to);
     }
     return brand.listSlots(ctx, P(req), brandId);
   });
@@ -213,6 +247,8 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
     reply.code(201).send(await comments.replyToComment(ctx, P(req), params(req, 'id').id, req.body)));
   app.post('/api/comments/:id/resolve', async (req) => comments.resolveComment(ctx, P(req), params(req, 'id').id));
   app.post('/api/comments/:id/reopen', async (req) => comments.reopenComment(ctx, P(req), params(req, 'id').id));
+  app.post('/api/comments/:id/people-only', async (req) =>
+    comments.setPeopleOnly(ctx, P(req), params(req, 'id').id, (req.body as { value?: unknown } | null)?.value));
 
   // ───────────────────────────── publications and calendar ─────────────────────────────
 

@@ -1,0 +1,37 @@
+{
+  "listen": { "host": "0.0.0.0", "port": 8787 },
+  "workspaceRoot": "/var/lib/studio-runner",
+  "maxConcurrentRuns": 1,
+  "brands": {
+    "lumen": {
+      "api": "https://studio.example.com",
+      "token": "${LUMEN_TOKEN}",
+      "webhookSecret": "${LUMEN_WEBHOOK_SECRET}",
+      "templates": {
+        "version.changes_requested": "templates/changes-requested.md",
+        "slot.needs_content": "templates/slot-needs-content.md"
+      },
+      "agent": {
+        "command": [
+          "claude", "-p", "--output-format", "json",
+          { "if": "maxBudget", "args": ["--max-budget-usd", "{{maxBudget}}"] },
+          "--add-dir", "{{pieceDir}}",
+          "--permission-mode", "acceptEdits",
+          "--allowedTools", "Read", "Write", "Edit", "Glob", "Grep", "Bash(ffmpeg:*)", "Bash(ffprobe:*)", "Bash(ls:*)", "Bash(mkdir:*)", "Bash(cp:*)", "Bash(mv:*)"
+        ],
+        "input": "stdin",
+        "env": { "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}" },
+        "cost": { "from": "stdout-json", "path": "total_cost_usd" },
+        "killGraceSeconds": 10
+      },
+      "checks": {
+        "requireNetworks": [],
+        "loudness": { "min": -23, "max": -9 },
+        "truePeakMax": -1,
+        "minShortSide": 720,
+        "coveredZones": "warn"
+      },
+      "checkRetries": 1
+    }
+  }
+}

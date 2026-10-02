@@ -179,8 +179,8 @@ th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color:
 .frame-thumb { width: 100%; max-width: 220px; border-radius: 6px; border: 1px solid var(--border); display: block; margin: .35rem 0; cursor: zoom-in; }
 .reply { border-left: 3px solid var(--border); padding-left: .6rem; margin-top: .5rem; }
 .reply.agent { border-left-color: var(--accent); }
-.tabs { display: flex; gap: .25rem; border-bottom: 1px solid var(--border); margin-bottom: .75rem; }
-.tabs button { appearance: none; font: inherit; background: none; border: 0; padding: .5rem .8rem; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-weight: 600; }
+.tabs { display: flex; gap: .25rem; border-bottom: 1px solid var(--border); margin-bottom: .75rem; overflow-x: auto; }
+.tabs button { appearance: none; font: inherit; background: none; border: 0; padding: .5rem .8rem; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-weight: 600; white-space: nowrap; flex: none; }
 .tabs button[aria-selected='true'] { color: var(--accent); border-bottom-color: var(--accent); }
 .compare { display: grid; gap: .75rem; grid-template-columns: 1fr 1fr; }
 .compare h3 { margin-bottom: .35rem; }
@@ -243,3 +243,7 @@ th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color:
 .safe-label { position: absolute; top: 4px; left: 6px; font-size: 11px; line-height: 1.2; color: #fff; background: rgb(0 0 0 / 60%); padding: 2px 5px; border-radius: 4px; }
 
 .auto-dot { opacity: .75; }
+
+/* phase 3 */
+.chip-needs_person { background: var(--bad-soft); color: var(--bad); }
+progress { accent-color: var(--accent); height: .6rem; }

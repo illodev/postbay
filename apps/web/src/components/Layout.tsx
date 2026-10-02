@@ -19,6 +19,9 @@ const KIND_TEXT: Record<string, string> = {
   'publication.private': 'A video is private: it needs making public',
   'account.reconnect': 'An account needs reconnecting',
   'account.expiring': 'An account connection is about to expire',
+  'webhook.failing': 'A webhook is failing',
+  'agent.needs_person': 'The agent handed a piece back to a person',
+  'agent.failed': 'An agent run failed',
 };
 
 function Bell() {

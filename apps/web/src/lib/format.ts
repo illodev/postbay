@@ -99,3 +99,40 @@ export const ERROR_CLASS_LABEL: Record<string, string> = {
   missed_window: 'Missed its hour',
   unknown: 'Unknown error',
 };
+
+export const OUTCOME_LABEL: Record<string, string> = {
+  uploaded: 'Sent a new version',
+  needs_people: 'Left it to people',
+  failed: 'Failed',
+  checks_failed: 'Did not pass the checks',
+  timeout: 'Ran out of time',
+  aborted: 'Stopped',
+  blocked: 'Not started',
+};
+
+export const BLOCK_REASON_LABEL: Record<string, string> = {
+  budget_not_set: 'No budget set',
+  rounds_exhausted: 'Rounds used up',
+  piece_budget_reached: 'Piece budget reached',
+  monthly_budget_reached: 'Monthly budget reached',
+};
+
+export const TRIGGER_LABEL: Record<string, string> = {
+  'version.changes_requested': 'Changes requested',
+  'slot.needs_content': 'Empty slot',
+};
+
+export const EVENT_LABEL: Record<string, string> = {
+  'version.changes_requested': 'Changes requested',
+  'version.approved': 'Version approved',
+  'version.rejected': 'Version rejected',
+  'comment.created': 'Comment',
+  'slot.needs_content': 'Slot needs content',
+  'publication.published': 'Post published',
+  'publication.failed': 'Post failed',
+  ping: 'Test',
+};
+
+export function fmtMoney(n: number, currency: string): string {
+  return `${n.toFixed(2).replace(/\.00$/, '')} ${currency}`;
+}

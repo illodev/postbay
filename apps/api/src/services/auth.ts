@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Ctx } from '../context.js';
 import type { Principal } from '../auth/principal.js';
+import { forbidden, unauthorized } from '../errors.js';
 import { hashToken } from './brand.js';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -83,4 +84,19 @@ export async function me(ctx: Ctx, userId: string) {
     [userId],
   );
   return { user, brands };
+}
+
+/** For a producer token: which brand it belongs to, so a script needs nothing but the address and the token. */
+export async function tokenInfo(ctx: Ctx, p: Principal) {
+  if (p.kind !== 'token') throw forbidden('This is for producer tokens: signed-in people use /api/me');
+  const row = await ctx.db.one(
+    `select t.id, t.name, t.expires_at, b.id as brand_id, b.name as brand_name, b.timezone, w.name as workspace
+     from api_token t join brand b on b.id = t.brand_id join workspace w on w.id = b.workspace_id where t.id = $1`,
+    [p.tokenId],
+  );
+  if (!row) throw unauthorized();
+  return {
+    token: { id: row.id, name: row.name, expires_at: row.expires_at },
+    brand: { id: row.brand_id, name: row.brand_name, timezone: row.timezone, workspace: row.workspace },
+  };
 }

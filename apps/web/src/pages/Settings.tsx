@@ -5,8 +5,10 @@ import { api, type Account, type BrandSettings, type Integrations, type PendingC
 import { CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, Spinner, useToast } from '../components/ui';
 import { fmtDateTime, fmtShort, NETWORK_LABEL, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
+import { AgentTab } from '../components/AgentTab';
+import { Webhooks } from '../components/Webhooks';
 
-type Tab = 'general' | 'members' | 'accounts' | 'schedule' | 'tokens' | 'audit';
+type Tab = 'general' | 'members' | 'accounts' | 'schedule' | 'tokens' | 'webhooks' | 'agent' | 'audit';
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const ROLES: Role[] = ['admin', 'approver', 'reviewer', 'producer', 'reader'];
@@ -496,6 +498,8 @@ export function SettingsPage() {
     ['accounts', 'Accounts', can('manage')],
     ['schedule', 'Slots & dates', can('manage')],
     ['tokens', 'API tokens', can('manage')],
+    ['webhooks', 'Webhooks', can('manage')],
+    ['agent', 'Agent', can('manage')],
     ['audit', 'Audit log', can('audit')],
   ];
   const visible = tabs.filter((t) => t[2]);
@@ -506,14 +510,19 @@ export function SettingsPage() {
   return (
     <>
       <div className="page-head"><div><h1>Settings</h1><p className="muted">{brand.name}</p></div></div>
-      <div className="tabs" role="tablist" style={{ overflowX: 'auto' }}>
-        {visible.map(([k, label]) => <button key={k} role="tab" aria-selected={current === k} onClick={() => setTab(k)}>{label}</button>)}
+      <div className="tabs" role="tablist">
+        {visible.map(([k, label]) => (
+          // On a narrow screen the strip scrolls sideways: keep the open tab in view.
+          <button key={k} role="tab" aria-selected={current === k} onClick={() => setTab(k)} ref={(el) => { if (el && current === k) el.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }); }}>{label}</button>
+        ))}
       </div>
       {current === 'general' && <General brandId={brand.id} />}
       {current === 'members' && <Members brandId={brand.id} />}
       {current === 'accounts' && <Accounts brandId={brand.id} />}
       {current === 'schedule' && <Schedule brandId={brand.id} />}
       {current === 'tokens' && <Tokens brandId={brand.id} />}
+      {current === 'webhooks' && <Webhooks brandId={brand.id} />}
+      {current === 'agent' && <AgentTab brandId={brand.id} />}
       {current === 'audit' && <Audit brandId={brand.id} zone={brand.timezone} />}
     </>
   );

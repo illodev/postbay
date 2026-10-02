@@ -7,6 +7,7 @@ import { DateTime } from 'luxon';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { audit } from './audit.js';
 import { effectiveApproval } from './approvals.js';
+import { emitPublication } from './events.js';
 import { loadBrand, loadVersion, rulesOf } from './loaders.js';
 import { notifyRoles } from './notify.js';
 import { planPublication, type Plan } from './publisher.js';
@@ -403,6 +404,7 @@ export async function markPublished(ctx: Ctx, p: Principal, pubId: string, raw: 
       [pubId, userId, input.url ?? null, input.externalId ?? null],
     ))!;
     await audit(db, p, pub.brand_id, 'publication.published', 'publication', pubId, { status: 'scheduled' }, { status: 'published', url: input.url ?? null });
+    await emitPublication(ctx, db, pub.brand_id, pubId, 'publication.published');
     return row;
   });
 }
@@ -462,6 +464,11 @@ export interface CalendarSlot {
  */
 export async function calendar(ctx: Ctx, p: Principal, brandId: string, from: string, to: string) {
   await authorize(ctx.db, p, brandId, 'brand.view');
+  return calendarData(ctx, brandId, from, to);
+}
+
+/** The same, without asking who is looking: for the app's own jobs. */
+export async function calendarData(ctx: Ctx, brandId: string, from: string, to: string) {
   const brand = await loadBrand(ctx.db, brandId);
   const days = daysBetween(from, to);
   if (days.length === 0 || days.length > 366) throw badRequest('invalid_range', 'The range must cover between 1 and 366 days');

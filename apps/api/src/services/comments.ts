@@ -6,6 +6,7 @@ import type { Queryable } from '../db.js';
 import { anchorSchema, type Anchor } from '../domain/anchors.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { audit } from './audit.js';
+import { commentRef, emit } from './events.js';
 import { loadBrand, loadVersion } from './loaders.js';
 import { notifyUsers } from './notify.js';
 
@@ -14,6 +15,8 @@ const LIVE = ['in_review', 'changes_requested', 'approved'];
 export const commentInput = z.object({
   body: z.string().trim().min(1).max(5000),
   anchor: anchorSchema.nullish(),
+  /** For people only: something an agent must leave alone. */
+  peopleOnly: z.boolean().default(false),
 });
 export const replyInput = z.object({
   body: z.string().trim().min(1).max(5000),
@@ -85,14 +88,15 @@ export async function createComment(ctx: Ctx, p: Principal, versionId: string, r
   const a = actorCols(p);
   return ctx.db.tx(async (db) => {
     const row = (await db.one(
-      `insert into comment (id, version_id, author_user_id, author_token_id, body, anchor, frame_key)
-       values ($1,$2,$3,$4,$5,$6,$7) returning *`,
-      [id, versionId, a.user, a.token, input.body, anchor ? JSON.stringify(anchor) : null, frameKey],
+      `insert into comment (id, version_id, author_user_id, author_token_id, body, anchor, frame_key, people_only)
+       values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+      [id, versionId, a.user, a.token, input.body, anchor ? JSON.stringify(anchor) : null, frameKey, input.peopleOnly],
     ))!;
     const piece = await db.one('select created_by_user from piece where id = $1', [version.piece_id]);
     await audit(db, p, version.brand_id, 'comment.created', 'comment', id, null, { version_id: versionId, anchor });
     await notifyUsers(db, version.brand_id, [version.author_user_id, piece?.created_by_user], 'comment.created',
       { versionId, pieceId: version.piece_id, commentId: id }, a.user);
+    await emitComment(ctx, db, version.brand_id, id);
     return row;
   });
 }
@@ -103,6 +107,7 @@ export async function replyToComment(ctx: Ctx, p: Principal, commentId: string, 
   await authorize(ctx.db, p, parent.brand_id, 'comment.reply');
   if (parent.parent_id) throw badRequest('invalid_reply', 'Only the comment that opens a thread can be replied to');
   if (parent.discarded_at) throw conflict('piece_discarded', 'The piece is discarded');
+  if (parent.people_only && p.kind === 'token') throw forbidden('This comment is for people only: an agent leaves it alone');
   const a = actorCols(p);
   return ctx.db.tx(async (db) => {
     const row = (await db.one(
@@ -113,6 +118,7 @@ export async function replyToComment(ctx: Ctx, p: Principal, commentId: string, 
     await audit(db, p, parent.brand_id, 'comment.replied', 'comment', row.id, null, { parent_id: commentId, kind: input.kind ?? null });
     await notifyUsers(db, parent.brand_id, [parent.author_user_id], 'comment.created',
       { versionId: parent.version_id, pieceId: parent.piece_id, commentId: row.id, replyKind: input.kind ?? null }, a.user);
+    await emitComment(ctx, db, parent.brand_id, row.id);
     return row;
   });
 }
@@ -122,6 +128,7 @@ export async function resolveComment(ctx: Ctx, p: Principal, commentId: string) 
     const c = await loadComment(db, commentId);
     await authorize(db, p, c.brand_id, 'comment.resolve');
     if (c.parent_id) throw badRequest('invalid_comment', 'Resolve the thread, not a reply');
+    if (c.people_only && p.kind === 'token') throw forbidden('This comment is for people only: an agent leaves it alone');
     if (c.status === 'resolved') return c;
     const a = actorCols(p);
     const row = (await db.one(
@@ -147,6 +154,26 @@ export async function reopenComment(ctx: Ctx, p: Principal, commentId: string) {
     await audit(db, p, c.brand_id, 'comment.reopened', 'comment', commentId, { status: 'resolved' }, { status: 'open' });
     return row;
   });
+}
+
+/** Marks a thread as for people only, or hands it back: reviewers and above, never an agent. */
+export async function setPeopleOnly(ctx: Ctx, p: Principal, commentId: string, value: unknown) {
+  const flag = z.boolean().parse(value);
+  return ctx.db.tx(async (db) => {
+    const c = await loadComment(db, commentId);
+    await authorize(db, p, c.brand_id, 'comment.create');
+    if (c.parent_id) throw badRequest('invalid_comment', 'Mark the thread, not a reply');
+    if (c.people_only === flag) return c;
+    const row = (await db.one('update comment set people_only = $2 where id = $1 returning *', [commentId, flag]))!;
+    await audit(db, p, c.brand_id, flag ? 'comment.people_only' : 'comment.agent_allowed', 'comment', commentId, { people_only: c.people_only }, { people_only: flag });
+    return row;
+  });
+}
+
+/** Announces a comment or reply to the webhooks. */
+async function emitComment(ctx: Ctx, db: Queryable, brandId: string, commentId: string) {
+  const ref = await commentRef(db, commentId);
+  if (ref) await emit(ctx, db, brandId, 'comment.created', ref);
 }
 
 /**
@@ -187,7 +214,7 @@ export async function listComments(ctx: Ctx, p: Principal, versionId: string, f:
   for (const r of roots) {
     out.push({
       id: r.id, version_id: r.version_id, version_number: r.version_number, body: r.body, anchor: r.anchor,
-      status: r.status, author: r.author, created_at: r.created_at, carried: r.carried,
+      status: r.status, author: r.author, created_at: r.created_at, carried: r.carried, people_only: r.people_only,
       resolved_in_number: r.resolved_in_number, resolved_by: r.resolved_by,
       frame_url: r.frame_key ? await ctx.storage.presignGet(r.frame_key, { expiresSec: 3600 }) : null,
       replies: replies.filter((x) => x.parent_id === r.id),

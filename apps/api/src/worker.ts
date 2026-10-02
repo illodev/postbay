@@ -2,9 +2,11 @@ import { PgBoss } from 'pg-boss';
 import { startBackground } from './background.js';
 import type { Ctx } from './context.js';
 import { accountsDueForHealth, checkHealth } from './services/connectors.js';
+import { scanSlotAlerts } from './services/slots.js';
+import { deliver, dueDeliveries, purgeOldEvents } from './services/webhooks.js';
 import { advance, dueForAttention, TIMING } from './services/publisher.js';
 
-export const QUEUE = { advance: 'publication.advance', health: 'account.health' } as const;
+export const QUEUE = { advance: 'publication.advance', health: 'account.health', deliver: 'webhook.deliver' } as const;
 
 export interface Worker {
   /** Looks for work and hands it to the queue. Returns how many publications needed a look. */
@@ -29,6 +31,7 @@ export async function startWorker(ctx: Ctx): Promise<Worker> {
   };
   await make(QUEUE.advance, 3, TIMING.leaseMinutes * 60 + 300);
   await make(QUEUE.health, 1, 300);
+  await make(QUEUE.deliver, 2, 180);
 
   await boss.work<{ id: string }>(QUEUE.advance, { pollingIntervalSeconds: 1, localConcurrency: 2 }, async (jobs) => {
     for (const job of jobs) {
@@ -40,6 +43,15 @@ export async function startWorker(ctx: Ctx): Promise<Worker> {
     for (const job of jobs) await checkHealth(ctx, job.data.id);
   });
 
+  await boss.work<{ id: string }>(QUEUE.deliver, { pollingIntervalSeconds: 1, localConcurrency: 4 }, async (jobs) => {
+    for (const job of jobs) {
+      const outcome = await deliver(ctx, job.data.id);
+      if (outcome !== 'skipped') ctx.log.info({ deliveryId: job.data.id, outcome }, 'webhook delivery attempted');
+    }
+  });
+
+  let lastPurge = 0;
+  let lastSlotScan = 0;
   let sweeping = false;
   const sweep = async (): Promise<number> => {
     if (sweeping) return 0;
@@ -48,6 +60,15 @@ export async function startWorker(ctx: Ctx): Promise<Worker> {
       const due = await dueForAttention(ctx);
       for (const d of due) await boss.send(QUEUE.advance, { id: d.id }, { singletonKey: d.id });
       for (const id of await accountsDueForHealth(ctx)) await boss.send(QUEUE.health, { id }, { singletonKey: id });
+      for (const id of await dueDeliveries(ctx)) await boss.send(QUEUE.deliver, { id }, { singletonKey: id });
+      if (Date.now() - lastSlotScan > 300_000) {
+        lastSlotScan = Date.now();
+        await scanSlotAlerts(ctx);
+      }
+      if (Date.now() - lastPurge > 6 * 3600_000) {
+        lastPurge = Date.now();
+        await purgeOldEvents(ctx);
+      }
       await ctx.db.query(`delete from oauth_pending where expires_at < now() - interval '1 day'`);
       return due.length;
     } catch (err) {

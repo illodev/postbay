@@ -8,12 +8,14 @@ It does not generate content, it orchestrates it. The producer can be an AI agen
 same kind of client (a producer token or a signed-in user). It serves one brand or several, and nothing in it is
 specific to any client: names, time zones, languages and review rules are configuration, never code.
 
-> **Status: phase 2 of 4.** Review, approval, calendar and assisted publishing work end to end (phase 1), and the app can
-> now publish by itself to Instagram, Facebook Pages and YouTube (phase 2). **Phase 2 was built and tested against fake
-> Meta and Google servers: no real network was reachable, so a first run with real accounts is still to do.** The agent
-> loop and the remaining networks are the next phases. See [docs/phase-1.md](docs/phase-1.md) and
-> [docs/phase-2.md](docs/phase-2.md) for exactly what is done, what is left out, and the decisions taken where the spec
-> left room.
+> **Status: phase 3 of 4.** Review, approval, calendar and assisted publishing work end to end (phase 1); the app can
+> publish by itself to Instagram, Facebook Pages and YouTube (phase 2); and a comment can now become a new version without
+> anyone's hands: signed webhooks, an agent runner with safeguards, and automatic checks (phase 3). **Phase 2 was built and
+> tested against fake Meta and Google servers: no real network was reachable, so a first run with real accounts is still to
+> do. Phase 3 was proven in a browser with a scripted agent and with real Claude Code on a few simple requests.** Metrics,
+> prizes and the remaining networks are the next phase. See [docs/phase-1.md](docs/phase-1.md),
+> [docs/phase-2.md](docs/phase-2.md) and [docs/phase-3.md](docs/phase-3.md) for exactly what is done, what is left out, and
+> the decisions taken where the spec left room.
 
 ## What phase 1 does
 
@@ -49,6 +51,24 @@ specific to any client: names, time zones, languages and review rules are config
 - **YouTube before Google's audit.** Uploads are private until the project passes the audit; the app treats that as a
   state, tells the team, and lets an admin flip the account once it passes.
 
+## What phase 3 adds
+
+- **Signed webhooks.** *Settings → Webhooks*: subscribe an address to events (changes requested, approved, rejected, a
+  comment, an empty slot, a post published or failed). Every delivery is signed (HMAC-SHA256, a secret per webhook, shown
+  once), carries a unique id, and is retried with growing waits for up to 24 hours. Every attempt can be inspected and sent
+  again.
+- **The agent runner** ([apps/runner](apps/runner/README.md)): a separate program that turns a request for changes into a new
+  version. It prepares a workspace with the comments, the frame each one points at, the last version and what each network
+  accepts; runs your agent's command (Claude Code, for example) on a template you write per brand; checks the result (length,
+  aspect ratio, loudness, weight, text under a network's interface); uploads it; and replies to every comment.
+- **Safeguards the studio enforces**, so no runner can skip them: a round cap per piece (3 by default, then a person), budgets
+  per piece and per month (the agent does not start until both are set), a longest run, one run per piece, comments marked
+  *only people* that the agent cannot answer or resolve, and a token that can never approve or schedule.
+- **A ledger.** Every run, its cost and what it did, in *Settings → Agent* and on the piece page, with the month's spending
+  against its budget. Approvers and admins are told when a piece goes to a person.
+- **Empty slots ask for content.** A slot still empty a few days before its date is announced, with the campaign's brief, so an
+  agent can fill it.
+
 ## Quick start
 
 You need Node 22, PostgreSQL 16 and ffmpeg.
@@ -82,10 +102,12 @@ apps/api    Node 22, TypeScript, Fastify, PostgreSQL (plain SQL), zod
   src/routes      thin HTTP layer
   src/storage     signed-URL storage: local disk for development, S3-compatible (MinIO, S3, R2) for real use
   src/connectors  one connector per network behind a common interface (Instagram, Facebook, YouTube), file profiles, validators
-  src/worker.ts   the queue (pg-boss): wakes the publisher; all state lives in ordinary rows
+  src/worker.ts   the queue (pg-boss): wakes the publisher and delivers webhooks; all state lives in ordinary rows
+  src/net.ts      the address policy for webhooks (checked after DNS resolution)
   src/migrations  SQL; the database itself refuses edits to versions, files, approvals and the audit log
 apps/web    React, Vite, TanStack Query; plain CSS, light and dark, works on a phone
-e2e         real-browser tests: phase 1's flow, and phase 2's publishing against fake networks
+apps/runner Node, TypeScript: the agent runner. Listens to webhooks, runs the agent's command, checks and uploads
+e2e         real-browser tests: phase 1's flow, phase 2's publishing against fake networks, phase 3's agent loop
 deploy      Docker Compose with PostgreSQL, MinIO, Caddy (TLS), the app and a worker
 ```
 
@@ -109,6 +131,10 @@ declared.
 | The approval is re-checked from the stored files right before anything is sent to a network | `services/publisher.ts` |
 | A post that would go out after its hour plus the tolerance is not sent late | `services/publisher.ts` |
 | Network tokens are sealed, bound to their account, and never returned, logged or stored in the attempt history | `crypto.ts`, `connectors/http.ts` |
+| An event is written in the same transaction as the change it describes | `services/events.ts` |
+| A webhook never reaches cloud metadata or link-local addresses, and in production only public ones over https (unless allowed) | `net.ts` |
+| The agent cannot start without both budgets, past its rounds, over a budget, or on a piece that already has a run | `services/agent.ts`, a unique index |
+| An agent token cannot answer, resolve or claim to fix a comment marked for people only | `services/comments.ts`, `services/versions.ts` |
 
 ### Roles
 
@@ -139,6 +165,12 @@ scripts use `Authorization: Bearer <producer token>`.
 | `POST /versions/:id/publications/validate` | How a post would go out, and what would block it, before scheduling |
 | `POST /brands/:id/connections/:provider` and the pending-connection routes | Connect, choose accounts, reconnect (`meta`, `google`) |
 | `POST /publications/:id/retry`, `/hand-over`, `/recheck`; `GET /publications/:id/attempts` | Act on a failed or private post; read every attempt |
+| `GET /brands/:id/requirements` | What each connected network accepts, for an agent that has to make the file |
+| `POST /pieces/:id/agent-runs`, `/agent-runs/:id/heartbeat`, `/agent-runs/:id/finish` | An agent asks to start, keeps its lease, and closes a run with its cost and outcome. The studio refuses past the limits |
+| `GET /brands/:id/webhooks`, `POST` and the routes under `/webhooks/:id` | Manage webhooks, send a test, rotate the secret, read deliveries and send one again |
+| `POST /comments/:id/people-only` | Mark a comment as for people only |
+
+[docs/phase-3.md](docs/phase-3.md) has the event payloads and how to verify a signature.
 
 ## Configuration
 
@@ -152,25 +184,28 @@ See [`.env.example`](.env.example). The ones that matter:
 | `STORAGE_DRIVER` | `local` for development, `s3` for MinIO, S3 or R2 (`S3_*` variables, and `S3_PUBLIC_ENDPOINT` when browsers reach the bucket on a different address than the app does) |
 | `SMTP_URL`, `MAIL_FROM` | Email; without it, messages go to the log |
 | `WEB_DIST` | Folder with the built web app, so the API serves it |
-| `TOKEN_KEY` | 32 bytes in base64 (`openssl rand -base64 32`). Seals network tokens; required once Meta or Google is set. **Keep a copy: losing it means connecting every account again** |
+| `TOKEN_KEY` | 32 bytes in base64 (`openssl rand -base64 32`). Seals network tokens and webhook secrets; required once Meta or Google is set, and for any webhook. **Keep a copy: losing it means connecting every account and replacing every webhook secret** |
+| `WEBHOOK_ALLOW_PRIVATE_NETWORKS` | Whether webhooks may point at loopback and private addresses. Default: yes in development, no in production |
 | `META_APP_ID`, `META_APP_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | The developer apps ([setup in docs/phase-2.md](docs/phase-2.md#setting-up-the-networks)). Without them accounts stay manual |
 | `RUN_WORKERS` | `true` (default) runs the queue inside the API process; `false` when a separate worker runs |
 
 ## Tests
 
 ```sh
-npm test                 # 180 tests against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
+npm test                 # 249 API tests and 51 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
 npm run typecheck
 ```
 
 The API tests create a throwaway database per file, so they need a PostgreSQL they can create databases in. Point
 `TEST_DATABASE_ADMIN_URL` at it (default `postgres://postgres@localhost:5433/postgres`). They cover the rules above, the
 database guarantees (by trying to break them), permissions, isolation between brands, sign-in, and the calendar across
-clock changes, and, for phase 2, the connectors against fake Meta and Google servers and the whole publishing state
-machine on a controlled clock.
+clock changes, for phase 2 the connectors against fake Meta and Google servers and the whole publishing state machine on a
+controlled clock, and for phase 3 signed delivery with every retry wait, the agent's limits, and the runner against a scripted
+agent (the runner's tests also need ffmpeg).
 
-The end-to-end tests drive the real app in a real browser, with real ffmpeg: phase 1's whole flow, and phase 2's
-connecting and publishing against fake networks. See [e2e/README.md](e2e/README.md).
+The end-to-end tests drive the real app in a real browser, with real ffmpeg: phase 1's whole flow, phase 2's connecting and
+publishing against fake networks, and phase 3's comment-to-new-version loop (with a scripted agent, or real Claude Code, which
+costs money). See [e2e/README.md](e2e/README.md).
 
 ## Deploying
 
@@ -182,7 +217,6 @@ be reachable from the internet, because Meta downloads the files it publishes fr
 
 ## Not yet
 
-The agent loop (webhooks, agent runner), TikTok, LinkedIn, X, Threads, Pinterest and Bluesky, metrics, and automatic
-prize delivery. Also not yet: SSO and two-factor sign-in, push and Slack notifications, and subtitle display. Details and
-reasons in [docs/phase-1.md](docs/phase-1.md) and [docs/phase-2.md](docs/phase-2.md), which also lists what could not be
-verified in phase 2.
+TikTok, LinkedIn, X, Threads, Pinterest and Bluesky, metrics, and automatic prize delivery. Also not yet: SSO and two-factor
+sign-in, push and Slack notifications, and subtitle display. Details and reasons in [docs/phase-1.md](docs/phase-1.md),
+[docs/phase-2.md](docs/phase-2.md) and [docs/phase-3.md](docs/phase-3.md), which also list what could not be verified.

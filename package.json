@@ -12,13 +12,15 @@
   "scripts": {
     "dev:api": "npm run dev -w @estudio/api",
     "dev:web": "npm run dev -w @estudio/web",
-    "build": "npm run build -w @estudio/api && npm run build -w @estudio/web",
-    "typecheck": "npm run typecheck -w @estudio/api && npm run typecheck -w @estudio/web",
-    "test": "npm run test -w @estudio/api",
+    "build": "npm run build -w @estudio/api && npm run build -w @estudio/web && npm run build -w @estudio/runner",
+    "typecheck": "npm run typecheck -w @estudio/api && npm run typecheck -w @estudio/web && npm run typecheck -w @estudio/runner",
+    "test": "npm run test -w @estudio/api && npm run test -w @estudio/runner",
     "bootstrap": "npm run bootstrap -w @estudio/api --",
     "e2e:assets": "sh e2e/make-assets.sh",
     "e2e": "node e2e/smoke.mjs",
-    "e2e:phase2": "sh e2e/phase2.sh"
+    "e2e:phase2": "sh e2e/phase2.sh",
+    "runner": "npm run dev -w @estudio/runner",
+    "e2e:phase3": "sh e2e/phase3.sh"
   },
   "devDependencies": {
     "playwright-core": "^1.63.0"

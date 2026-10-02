@@ -8,6 +8,7 @@ import {
 import type { Ctx } from '../context.js';
 import { audit } from './audit.js';
 import { effectiveApproval } from './approvals.js';
+import { emitPublication } from './events.js';
 import { connectorEnv, loadConnectorAccount, markReconnectRequired } from './connectors.js';
 import { notifyRoles, type NotifyKind } from './notify.js';
 import { fileFor } from './renditions.js';
@@ -167,6 +168,7 @@ async function fail(ctx: Ctx, L: Loaded, errorClass: string, message: string, at
   if (!ok) return 'changed';
   await audit(ctx.db, null, L.brandId, 'publication.failed', 'publication', L.pub.id, { status: L.pub.status }, { errorClass, message: message.slice(0, 300) });
   await tell(ctx, L, 'publication.failed', { errorClass, message: message.slice(0, 300) });
+  await emitPublication(ctx, ctx.db, L.brandId, L.pub.id, 'publication.failed', { error: { class: errorClass, message: message.slice(0, 500) } });
   return 'failed';
 }
 
@@ -339,6 +341,7 @@ async function verify(ctx: Ctx, L: Loaded): Promise<string> {
         if (!sameAsBefore) {
           await audit(ctx.db, null, L.brandId, 'publication.live', 'publication', pub.id, { visibility: pub.visibility }, { visibility: 'public', url: res.url ?? pub.url });
           await tell(ctx, L, 'publication.published', { url: res.url ?? pub.url });
+          await emitPublication(ctx, ctx.db, L.brandId, pub.id, 'publication.published');
         }
         return 'public';
       case 'private':

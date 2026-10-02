@@ -50,6 +50,12 @@ const schema = z.object({
   WORKER_SWEEP_SECONDS: z.coerce.number().int().min(1).default(15),
   // Extra origins the browser may load media from or upload to (space separated), e.g. a bucket host.
   MEDIA_ORIGINS: z.string().default(''),
+  // Webhooks (phase 3)
+  /**
+   * Whether webhooks may be sent to addresses on a private network (a runner on the same machine or LAN). Addresses used by
+   * cloud metadata services are never allowed. Default: allowed in development, refused in production.
+   */
+  WEBHOOK_ALLOW_PRIVATE_NETWORKS: z.enum(['true', 'false', '1', '0', '']).optional(),
 });
 
 export type Config = z.infer<typeof schema> & {
@@ -57,6 +63,8 @@ export type Config = z.infer<typeof schema> & {
   isProd: boolean;
   metaEnabled: boolean;
   googleEnabled: boolean;
+  /** Resolved from WEBHOOK_ALLOW_PRIVATE_NETWORKS and the environment. */
+  webhookAllowPrivate: boolean;
 };
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -79,5 +87,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if ((metaEnabled || googleEnabled) && !c.TOKEN_KEY) {
     throw new Error('Invalid configuration: connecting accounts needs TOKEN_KEY, the key that seals their tokens');
   }
-  return { ...c, isProd, devLogin: c.AUTH_DEV_LOGIN && !isProd, metaEnabled, googleEnabled };
+  const webhookAllowPrivate = c.WEBHOOK_ALLOW_PRIVATE_NETWORKS ? ['true', '1'].includes(c.WEBHOOK_ALLOW_PRIVATE_NETWORKS) : !isProd;
+  return { ...c, isProd, devLogin: c.AUTH_DEV_LOGIN && !isProd, metaEnabled, googleEnabled, webhookAllowPrivate };
 }

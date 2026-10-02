@@ -38,6 +38,11 @@ function Thread({ c, focus, canReply, canResolve, canReopen, onJump, onFocus, ve
     onSuccess: () => { setReply(''); setKind(''); refresh(); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
+  const mark = useMutation({
+    mutationFn: () => api.post(`/api/comments/${c.id}/people-only`, { value: !c.people_only }),
+    onSuccess: refresh,
+    onError: (e) => toast(errorMessage(e), 'error'),
+  });
   const toggle = useMutation({
     mutationFn: () => api.post(`/api/comments/${c.id}/${c.status === 'open' ? 'resolve' : 'reopen'}`),
     onSuccess: refresh,
@@ -57,6 +62,7 @@ function Thread({ c, focus, canReply, canResolve, canReopen, onJump, onFocus, ve
         )}
         <strong>{c.author}</strong>
         <span className="muted small">{fmtShort(c.created_at)}</span>
+        {c.people_only && <span className="chip chip-on_hold" title="An agent will not reply to this or resolve it">only people</span>}
         {c.carried && c.status === 'open' && <span className="chip chip-changes_requested" title="Raised on an earlier version and still open">still open from v{c.version_number}</span>}
         {c.status === 'resolved' && (
           <span className="chip chip-approved">{c.resolved_in_number ? `resolved in v${c.resolved_in_number}` : `resolved${c.resolved_by ? ` by ${c.resolved_by}` : ''}`}</span>
@@ -78,6 +84,11 @@ function Thread({ c, focus, canReply, canResolve, canReopen, onJump, onFocus, ve
           (c.status === 'open' && canResolve) || (c.status === 'resolved' && canReopen) ? (
             <button type="button" className="btn btn-small" onClick={() => toggle.mutate()} disabled={toggle.isPending}>{c.status === 'open' ? 'Resolve' : 'Reopen'}</button>
           ) : null;
+        const markBtn = c.status === 'open' && canReopen ? (
+          <button type="button" className="btn btn-small" onClick={() => mark.mutate()} disabled={mark.isPending} title="An agent leaves comments for people only alone: it will not reply to them or resolve them">
+            {c.people_only ? 'Let the agent see it' : 'Only people'}
+          </button>
+        ) : null;
         if (canReply && c.status === 'open') {
           return (
             <form className="row" style={{ marginTop: '.5rem' }} onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); if (reply.trim()) send.mutate(); }}>
@@ -90,10 +101,11 @@ function Thread({ c, focus, canReply, canResolve, canReopen, onJump, onFocus, ve
               </select>
               <button className="btn btn-small" disabled={!reply.trim() || send.isPending}>Send</button>
               {resolveBtn}
+              {markBtn}
             </form>
           );
         }
-        return resolveBtn && <div className="row" style={{ marginTop: '.5rem' }} onClick={(e) => e.stopPropagation()}>{resolveBtn}</div>;
+        return (resolveBtn || markBtn) && <div className="row" style={{ marginTop: '.5rem' }} onClick={(e) => e.stopPropagation()}>{resolveBtn}{markBtn}</div>;
       })()}
       {zoom && c.frame_url && (
         <Dialog title="Frame" onClose={() => setZoom(false)} wide>
@@ -122,10 +134,12 @@ export function CommentsPanel({ versionId, threads, draft, onClearDraft, canComm
   const qc = useQueryClient();
   const toast = useToast();
   const [body, setBody] = useState('');
+  const [peopleOnly, setPeopleOnly] = useState(false);
   const post = useMutation({
-    mutationFn: () => api.post(`/api/versions/${versionId}/comments`, { body, anchor: draft }),
+    mutationFn: () => api.post(`/api/versions/${versionId}/comments`, { body, anchor: draft, peopleOnly }),
     onSuccess: () => {
       setBody('');
+      setPeopleOnly(false);
       onClearDraft();
       qc.invalidateQueries({ queryKey: ['comments', versionId] });
       qc.invalidateQueries({ queryKey: ['version', versionId] });
@@ -158,6 +172,10 @@ export function CommentsPanel({ versionId, threads, draft, onClearDraft, canComm
             )}
           </div>
           <textarea aria-label="Comment" value={body} onChange={(e) => setBody(e.target.value)} placeholder="What should change?" />
+          <label className="check small">
+            <input type="checkbox" checked={peopleOnly} onChange={(e) => setPeopleOnly(e.target.checked)} />
+            <span>Only people <span className="muted">· an agent will not reply to this, resolve it or act on it</span></span>
+          </label>
           {post.error && <ErrorBox error={post.error} />}
           <button className="btn btn-primary" disabled={!body.trim() || post.isPending} onClick={() => post.error && toast('Retrying…')}>Post comment</button>
         </form>

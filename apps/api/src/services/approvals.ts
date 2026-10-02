@@ -5,6 +5,7 @@ import type { Queryable } from '../db.js';
 import { canTransition } from '../domain/review.js';
 import { badRequest, conflict, forbidden } from '../errors.js';
 import { audit } from './audit.js';
+import { accountRef, actorOf, commentRef, emit, openComments, pieceRef, versionRef } from './events.js';
 import { openCommentCount } from './comments.js';
 import { loadBrand, loadVersion, rulesOf } from './loaders.js';
 import { notifyUsers } from './notify.js';
@@ -38,6 +39,18 @@ async function notifyAuthor(
     { versionId: version.id, pieceId: version.piece_id }, actorUserId);
 }
 
+/** What starts whoever produces: the open comments with their anchors and frames, and who asked. */
+export async function emitChangesRequested(
+  ctx: Ctx, db: Queryable, p: Principal, version: { id: string; brand_id: string; piece_id: string; variant_id: string },
+  reason: 'changes_requested' | 'rejected' | 'agent_reset', note: string | null,
+) {
+  const comments = await openComments(db, version.variant_id);
+  await emit(ctx, db, version.brand_id, 'version.changes_requested', {
+    reason, note, requested_by: await actorOf(db, p), piece: await pieceRef(db, version.piece_id), version: await versionRef(db, version.id),
+    comments, people_only_open: comments.filter((c) => c.people_only).length,
+  });
+}
+
 /**
  * A reviewer or approver asks for changes. There must be something to change: at least one open comment
  * (on this version or carried from earlier ones), or a note that becomes a general comment.
@@ -53,7 +66,9 @@ export async function requestChanges(ctx: Ctx, p: Principal, versionId: string, 
     }
     const a = actorCols(p);
     if (input.note) {
-      await db.query('insert into comment (version_id, author_user_id, author_token_id, body) values ($1,$2,$3,$4)', [versionId, a.user, a.token, input.note]);
+      const note = await db.one<{ id: string }>('insert into comment (version_id, author_user_id, author_token_id, body) values ($1,$2,$3,$4) returning id', [versionId, a.user, a.token, input.note]);
+      const ref = await commentRef(db, note!.id);
+      if (ref) await emit(ctx, db, version.brand_id, 'comment.created', ref);
     }
     const open = await openCommentCount(db, version.variant_id);
     if (open === 0) throw badRequest('no_comments', 'Add at least one comment (or a note) saying what should change');
@@ -62,6 +77,7 @@ export async function requestChanges(ctx: Ctx, p: Principal, versionId: string, 
     await audit(db, p, version.brand_id, 'version.changes_requested', 'version', versionId,
       { review_state: 'in_review' }, { review_state: 'changes_requested', open_comments: open });
     await notifyAuthor(db, version, 'version.changes_requested', a.user);
+    await emitChangesRequested(ctx, db, p, version, 'changes_requested', input.note || null);
     return { versionId, review_state: 'changes_requested', open_comments: open };
   });
 }
@@ -139,6 +155,20 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
     await audit(db, p, version.brand_id, `version.${input.decision === 'approve' ? 'approved' : 'rejected'}`, 'version', versionId,
       { review_state: 'in_review' }, { review_state: state, fingerprint, accounts: input.accountIds, note: input.note });
     if (state !== 'in_review') await notifyAuthor(db, version, state === 'approved' ? 'version.approved' : 'version.changes_requested', p.userId);
+    if (input.decision === 'reject') {
+      await emit(ctx, db, version.brand_id, 'version.rejected', {
+        piece: await pieceRef(db, version.piece_id), version: await versionRef(db, versionId), note: input.note, rejected_by: await actorOf(db, p),
+      });
+      // A rejection also sends the version back for changes, which is what starts whoever produces it.
+      await emitChangesRequested(ctx, db, p, version, 'rejected', input.note);
+    } else if (state === 'approved') {
+      const accounts = [];
+      for (const id of input.accountIds) accounts.push(await accountRef(db, id));
+      await emit(ctx, db, version.brand_id, 'version.approved', {
+        piece: await pieceRef(db, version.piece_id), version: await versionRef(db, versionId), accounts: accounts.filter(Boolean),
+        approvals: (await db.one<{ n: number }>(`select count(*)::int as n from approval where version_id = $1 and decision = 'approve' and approved_fingerprint = $2`, [versionId, fingerprint]))!.n,
+      });
+    }
     return { versionId, review_state: state, fingerprint };
   });
 }

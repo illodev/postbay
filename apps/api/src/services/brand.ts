@@ -5,7 +5,9 @@ import type { Ctx } from '../context.js';
 import { ROLES } from '../domain/roles.js';
 import { isValidZone } from '../domain/time.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
+import { DateTime } from 'luxon';
 import { audit } from './audit.js';
+import { agentOf, agentSettings } from './agent.js';
 import { loadBrand, rulesOf } from './loaders.js';
 
 export const NETWORKS = ['instagram', 'facebook', 'youtube', 'tiktok', 'linkedin', 'x', 'threads', 'pinterest', 'bluesky'] as const;
@@ -30,12 +32,13 @@ export const brandPatch = z.object({
   locale: z.string().trim().min(2).max(10).optional(),
   rules: rulesInput.partial().optional(),
   publishing: publishingInput.partial().optional(),
+  agent: agentSettings.partial().optional(),
 });
 
 export async function getBrand(ctx: Ctx, p: Principal, brandId: string) {
   const role = await authorize(ctx.db, p, brandId, 'brand.view');
   const b = await loadBrand(ctx.db, brandId);
-  return { id: b.id, name: b.name, timezone: b.timezone, locale: b.locale, paused: b.paused, rules: rulesOf(b), publishing: publishingOf(b as never), role };
+  return { id: b.id, name: b.name, timezone: b.timezone, locale: b.locale, paused: b.paused, rules: rulesOf(b), publishing: publishingOf(b as never), agent: agentOf(b), role };
 }
 
 export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: unknown) {
@@ -45,15 +48,16 @@ export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: 
     const before = await loadBrand(db, brandId);
     const rules = { ...rulesOf(before), ...(input.rules ?? {}) };
     const publishing = { ...publishingOf(before as never), ...(input.publishing ?? {}) };
+    const agent = { ...agentOf(before), ...(input.agent ?? {}) };
     await db.query(
-      'update brand set name = coalesce($2, name), timezone = coalesce($3, timezone), locale = coalesce($4, locale), approval_rules = $5, publishing = $6 where id = $1',
-      [brandId, input.name ?? null, input.timezone ?? null, input.locale ?? null, JSON.stringify(rules), JSON.stringify(publishing)],
+      'update brand set name = coalesce($2, name), timezone = coalesce($3, timezone), locale = coalesce($4, locale), approval_rules = $5, publishing = $6, agent = $7 where id = $1',
+      [brandId, input.name ?? null, input.timezone ?? null, input.locale ?? null, JSON.stringify(rules), JSON.stringify(publishing), JSON.stringify(agent)],
     );
     const after = await loadBrand(db, brandId);
     await audit(db, p, brandId, 'brand.updated', 'brand', brandId,
-      { name: before.name, timezone: before.timezone, rules: rulesOf(before), publishing: publishingOf(before as never) },
-      { name: after.name, timezone: after.timezone, rules: rulesOf(after), publishing: publishingOf(after as never) });
-    return { id: after.id, name: after.name, timezone: after.timezone, locale: after.locale, paused: after.paused, rules: rulesOf(after), publishing: publishingOf(after as never) };
+      { name: before.name, timezone: before.timezone, rules: rulesOf(before), publishing: publishingOf(before as never), agent: agentOf(before) },
+      { name: after.name, timezone: after.timezone, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after) });
+    return { id: after.id, name: after.name, timezone: after.timezone, locale: after.locale, paused: after.paused, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after) };
   });
 }
 
@@ -263,6 +267,14 @@ export const slotInput = z.object({
   localTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   label: z.string().max(120).default(''),
 });
+
+/** The range a calendar query uses when none is given: today (in the brand's zone) to 30 days ahead. */
+export async function defaultRange(ctx: Ctx, brandId: string, from?: string, to?: string) {
+  if (from && to) return { from, to };
+  const b = await loadBrand(ctx.db, brandId);
+  const today = DateTime.fromJSDate(ctx.now(), { zone: b.timezone as string });
+  return { from: from ?? today.toISODate()!, to: to ?? today.plus({ days: 30 }).toISODate()! };
+}
 
 export async function listSlots(ctx: Ctx, p: Principal, brandId: string) {
   await authorize(ctx.db, p, brandId, 'brand.view');

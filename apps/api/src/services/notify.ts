@@ -13,7 +13,10 @@ export type NotifyKind =
   | 'publication.failed'
   | 'publication.private'
   | 'account.reconnect'
-  | 'account.expiring';
+  | 'account.expiring'
+  | 'webhook.failing'
+  | 'agent.needs_person'
+  | 'agent.failed';
 
 /**
  * In-app notifications (and email if SMTP is configured, see background.ts).

@@ -29,7 +29,8 @@ Facebook Pages and YouTube.
 | Per-network text editor with counters, truncated feed preview, safe-zone overlays | Done. Safe-zone percentages are approximate |
 | Audit trail of every attempt | Done (`publication_attempt`, append-only, tokens removed) |
 | TikTok, LinkedIn, X, Threads, Pinterest, Bluesky | Not in this phase |
-| Metrics, agent runner, webhooks, prize delivery | Phases 3 and 4 |
+| Webhooks and the agent runner | Phase 3 ([docs/phase-3.md](phase-3.md)) |
+| Metrics, prize delivery | Phase 4 |
 
 ## How a post goes out
 

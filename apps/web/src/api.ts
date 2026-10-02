@@ -49,6 +49,16 @@ export interface BrandSettings {
   role: Role;
   rules: { required_approvals: number; reapprove_on_move: boolean; checklist: string[] };
   publishing: { prepare_lead_minutes: number; late_tolerance_minutes: number };
+  agent: AgentSettings;
+}
+
+export interface AgentSettings {
+  max_rounds: number;
+  max_cost_per_piece: number | null;
+  max_cost_per_month: number | null;
+  max_run_minutes: number;
+  slot_alert_days: number;
+  currency: string;
 }
 
 export interface PieceSummary {
@@ -71,6 +81,7 @@ export interface VersionSummary {
   notes: string;
   fingerprint: string;
   author: string | null;
+  by_agent?: boolean;
   open_comments: number;
 }
 
@@ -151,6 +162,7 @@ export interface VersionDetail {
   created_at: string;
   author: string | null;
   author_user_id: string | null;
+  by_agent: boolean;
   variant: { id: string; format: string; style: string; piece_id: string };
   piece: { id: string; title: string; kind: string; brief: string; ai_generated: boolean; review_state: PieceState };
   brand: { name: string; timezone: string; approval_rules: BrandSettings['rules']; paused: boolean };
@@ -185,6 +197,8 @@ export interface CommentThread {
   resolved_in_number: number | null;
   resolved_by: string | null;
   frame_url: string | null;
+  /** Something the agent must leave alone. */
+  people_only: boolean;
   replies: Reply[];
 }
 
@@ -297,4 +311,87 @@ export interface NotificationItem {
   brand: string;
   brand_id: string;
   piece_title: string | null;
+}
+
+
+// ───────────────────────────── webhooks and the agent ─────────────────────────────
+
+export interface WebhookEventType {
+  type: string;
+  description: string;
+}
+
+export interface Webhook {
+  id: string;
+  url: string;
+  description: string;
+  events: string[];
+  active: boolean;
+  disabled_reason: string | null;
+  secret_hint: string;
+  created_at: string;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  pending: number;
+  failed_24h: number;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  status: 'pending' | 'delivered' | 'failed';
+  type: string;
+  attempts: number;
+  next_attempt_at: string | null;
+  expires_at: string;
+  last_status: number | null;
+  last_error: string | null;
+  delivered_at: string | null;
+  created_at: string;
+}
+
+export interface WebhookDeliveryDetail {
+  id: string;
+  status: WebhookDelivery['status'];
+  type: string;
+  attempts: { at: string; http_status: number | null; error: string | null; duration_ms: number | null }[];
+}
+
+export type AgentOutcome = 'uploaded' | 'needs_people' | 'failed' | 'checks_failed' | 'timeout' | 'aborted' | 'blocked';
+
+export interface AgentRun {
+  id: string;
+  piece_id: string | null;
+  trigger: string;
+  status: 'running' | 'finished';
+  outcome: AgentOutcome | null;
+  blocked_reason: string | null;
+  started_at: string;
+  finished_at: string | null;
+  cost: number;
+  notes: string;
+  version_id: string | null;
+  version_number: number | null;
+  counted?: boolean;
+  piece_title?: string | null;
+  token_name?: string | null;
+  detail: { checks?: { errors?: number; warnings?: number; summary?: string[] } } & Record<string, unknown>;
+}
+
+export interface PieceAgent {
+  settings: AgentSettings;
+  rounds: number;
+  max_rounds: number;
+  spent_piece: number;
+  spent_month: number;
+  status: 'idle' | 'running' | 'needs_person';
+  blocked_reason: string | null;
+  blocked_message: string | null;
+  runs: AgentRun[];
+}
+
+export interface BrandAgent {
+  settings: AgentSettings;
+  month_start: string;
+  spent_month: number;
+  runs: AgentRun[];
 }
