@@ -22,6 +22,11 @@ const rulesInput = z.object({
   checklist: z.array(z.string().trim().min(1).max(200)).max(20),
   /** Put approved versions that are not scheduled yet into the free weekly slots (services/scheduling.ts). Off by default. */
   auto_fill_slots: z.boolean(),
+  /**
+   * The styles a variant of this brand can have ("Riso", "Collage"…), in the order people pick from. Each one trimmed, at most 40
+   * characters, no two alike (whatever their case). A variant's style stays free text: one made before, or outside the list, keeps it.
+   */
+  variant_styles: z.array(z.string().trim().min(1).max(40)).max(30),
 });
 
 /** When publishing starts before the hour, and how late the app will still publish by itself. */
@@ -54,6 +59,9 @@ export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: 
     await authorize(db, p, brandId, 'brand.manage');
     const before = await loadBrand(db, brandId);
     const rules = { ...rulesOf(before), ...(input.rules ?? {}) };
+    const styles = rules.variant_styles.map((s) => s.toLocaleLowerCase());
+    const twice = rules.variant_styles.find((s, i) => styles.indexOf(s.toLocaleLowerCase()) !== i);
+    if (twice) throw badRequest('duplicate_style', msg('brand.styles.duplicate', { style: twice }));
     // Filling free slots takes only what is approved from the moment it is switched on: switching it on does not suddenly put out
     // everything approved months ago and never scheduled.
     if (rules.auto_fill_slots && !rulesOf(before).auto_fill_slots) rules.auto_fill_since = ctx.now().toISOString();

@@ -658,8 +658,10 @@ describe('after a restart', () => {
 
 describe('an empty slot', () => {
   it('becomes a new piece, made by the agent, in review, against the campaign that is running', async () => {
-    const r = await rig({ mode: 'slotnew', webhookEvents: ['slot.needs_content'] });
+    const r = await rig({ mode: 'slotnew', webhookEvents: ['slot.needs_content'], agentExtra: { env: { FAKE_AGENT_MODE: 'slotnew', FAKE_STYLE: 'riso' } } });
     await env.db.query('delete from slot where brand_id = $1', [env.brandId]);
+    // The brand's styles: the agent is told them, and the one it picks is written as the brand writes it.
+    await env.call(env.users.admin, 'PATCH', `/api/brands/${env.brandId}`, { rules: { variant_styles: ['Riso', 'Collage'] } });
     const campaign = await env.call(env.users.admin, 'POST', `/api/brands/${env.brandId}/campaigns`, { name: 'Spring launch', objective: 'Make the new menu famous' });
     // A slot tomorrow at noon, in the brand's own time.
     const tomorrow = DateTime.now().setZone('Europe/Madrid').plus({ days: 1 });
@@ -683,6 +685,9 @@ describe('an empty slot', () => {
     const instr = readFileSync(path.join(runs, readdirSync(runs)[0]!, 'instructions.md'), 'utf8');
     expect(instr).toContain('Spring launch: Make the new menu famous');
     expect(instr).toContain('Reels');
+    expect(instr).toContain('- Riso\n- Collage');
+    expect((await env.db.one('select style from variant where piece_id = $1', [created.id]))!.style).toBe('Riso');
+    await env.call(env.users.admin, 'PATCH', `/api/brands/${env.brandId}`, { rules: { variant_styles: [] } });
     await env.db.query('delete from slot where brand_id = $1', [env.brandId]);
   });
 });

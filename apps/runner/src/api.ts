@@ -72,6 +72,8 @@ export interface Requirements {
     }[];
   }[];
   approval_checklist: string[];
+  /** The styles a variant of the brand can have (empty: any, or none). */
+  variant_styles?: string[];
 }
 
 export interface Calendar {
