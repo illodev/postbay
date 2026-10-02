@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { call, setTap, type Exchange } from '../src/connectors/http.js';
 import type { Ctx } from '../src/context.js';
 import {
-  TEST_TEXT, checkAccount, checkServer, formatChecks, publishTest, runChecks, versionAgeMonths, type CheckResult,
+  TEST_TEXT, checkAccount, checkServer, formatChecks, lifetimeOf, publishTest, runChecks, versionAgeMonths, type CheckResult,
 } from '../src/services/selfcheck.js';
 import { createEnv, type Env } from './helpers.js';
 
@@ -42,6 +42,18 @@ const snapshot = () => ({ media: new Set(env.meta.media.keys()), posts: new Set(
 const fresh = (before: ReturnType<typeof snapshot>) => ({
   media: [...env.meta.media.entries()].filter(([id]) => !before.media.has(id)).map(([, v]) => v),
   posts: [...env.meta.posts.entries()].filter(([id]) => !before.posts.has(id)).map(([, v]) => v),
+});
+
+describe('how long a token has left', () => {
+  it('is said in minutes, hours or days, whichever a person would use', () => {
+    expect(lifetimeOf(30_000)).toBe('1 minute');
+    expect(lifetimeOf(59 * 60_000)).toBe('59 minutes');
+    expect(lifetimeOf(89 * 60_000)).toBe('89 minutes');
+    expect(lifetimeOf(2 * 3600_000)).toBe('2 hours');
+    expect(lifetimeOf(47 * 3600_000)).toBe('47 hours');
+    expect(lifetimeOf(3 * 86_400_000)).toBe('3.0 days');
+    expect(lifetimeOf(40 * 86_400_000)).toBe('40 days');
+  });
 });
 
 describe('the server', () => {
@@ -145,7 +157,7 @@ describe('an account, read-only', () => {
     await seal(ig, { accessToken: 'page-token-111', expiresAt: new Date(Date.now() + 40 * DAY).toISOString() });
     const calm = pick((await checkAccount(env.ctx, ig)).results, 'token');
     expect(calm.status).toBe('pass');
-    expect(calm.detail).toMatch(/40 more days/);
+    expect(calm.detail).toMatch(/another 40 days/);
     await seal(ig, { accessToken: 'page-token-111' });
     // YouTube's token renews by itself, so a short life is not a warning.
     const tok = (await env.db.one('select token_encrypted from social_account where id = $1', [yt]))!;

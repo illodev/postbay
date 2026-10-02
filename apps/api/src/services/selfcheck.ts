@@ -186,6 +186,16 @@ async function latestPost(ctx: Ctx, accountId: string) {
   );
 }
 
+/** How long a token has left, in the unit a person would say it in: an hour-long token is not "0.0 days". */
+export function lifetimeOf(ms: number): string {
+  const minutes = ms / 60_000;
+  if (minutes < 90) return `${Math.max(1, Math.round(minutes))} minute${Math.round(minutes) === 1 ? '' : 's'}`;
+  const hours = minutes / 60;
+  if (hours < 48) return `${Math.round(hours)} hours`;
+  const days = hours / 24;
+  return `${days.toFixed(days < 10 ? 1 : 0)} days`;
+}
+
 const fmtMs = (ms: number) => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
 
 /** The checks that only read. Safe to run from the screen at any time. */
@@ -230,7 +240,7 @@ export async function checkAccount(ctx: Ctx, accountId: string): Promise<Account
     const renews = !!provider.refresh;
     if (days < 0) results.push(result('token', 'fail', 'Token lifetime', 'The token has expired.', 'Connect the account again.'));
     else if (days <= 7 && !renews) results.push(result('token', 'warn', 'Token lifetime', `The token runs out in ${days.toFixed(1)} days and this network gives no way to renew it.`, 'Connect the account again before then.'));
-    else results.push(result('token', 'pass', 'Token lifetime', `Valid for ${days.toFixed(days < 10 ? 1 : 0)} more days${renews ? ', and the app renews it by itself before it ends' : ''}.`));
+    else results.push(result('token', 'pass', 'Token lifetime', `Valid for another ${lifetimeOf(expires - ctx.now().getTime())}${renews ? ', and the app renews it by itself before it ends' : ''}.`));
   }
 
   // What was granted, against what the app needs for what this brand uses.
