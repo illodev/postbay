@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 
 /** An answer from the studio that was not a success, with the code the studio gave it. */
 export class StudioError extends Error {
@@ -157,12 +159,28 @@ export class Studio {
     });
   }
 
-  /** Downloads a signed URL to a file. */
+  /**
+   * Downloads a signed URL to a file, a piece at a time: a version's file can be gigabytes, and holding it in memory would take the
+   * runner down. It is written beside the destination and renamed when complete, so a broken download never looks like a file.
+   */
   async download(url: string, dest: string): Promise<void> {
-    const res = await this.fetchImpl(url, { signal: AbortSignal.timeout(10 * 60_000) });
-    if (!res.ok) throw new StudioError(res.status, 'download_failed', `Could not download ${path.basename(dest)} (${res.status})`);
+    const name = path.basename(dest);
+    let res: Response;
+    try {
+      res = await this.fetchImpl(url, { signal: AbortSignal.timeout(10 * 60_000) });
+    } catch (err) {
+      throw new StudioError(0, 'download_failed', `Could not download ${name}: ${(err as Error).message}`);
+    }
+    if (!res.ok || !res.body) throw new StudioError(res.status, 'download_failed', `Could not download ${name} (${res.status})`);
     await mkdir(path.dirname(dest), { recursive: true });
-    await writeFile(dest, Buffer.from(await res.arrayBuffer()));
+    const partial = `${dest}.part`;
+    try {
+      await pipeline(Readable.fromWeb(res.body as WebReadableStream<Uint8Array>), createWriteStream(partial));
+      await rename(partial, dest);
+    } catch (err) {
+      await rm(partial, { force: true });
+      throw new StudioError(0, 'download_failed', `Could not download ${name}: ${(err as Error).message}`);
+    }
   }
 }
 
