@@ -4,7 +4,7 @@ import { validateAgainst } from '../validate.js';
 import {
   ConnectorError,
   type Account, type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
-  type MediaItem, type PrepareResult, type Published, type PublishInput, type VerifyResult,
+  type MediaItem, type MetricsResult, type PrepareResult, type Published, type PublishInput, type VerifyResult,
 } from '../types.js';
 import { classifyGoogle, type GoogleClient } from './client.js';
 
@@ -222,6 +222,19 @@ export function createYouTube(client: GoogleClient, uploadUrl: (path: string) =>
         if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return; // already gone
         throw err;
       }
+    },
+
+    async fetchMetrics(_account, externalId, _handle, env): Promise<MetricsResult> {
+      const token = (await env.token()).accessToken;
+      const r = await client.get<{ items?: { statistics?: Record<string, string> }[] }>('/youtube/v3/videos', token, { part: 'statistics', id: externalId });
+      const s = r.items?.[0]?.statistics;
+      if (!s) throw new ConnectorError('file_rejected', 'YouTube does not return this video any more');
+      const n = (k: string) => (s[k] === undefined ? undefined : Number(s[k]));
+      return {
+        common: { views: n('viewCount'), likes: n('likeCount'), comments: n('commentCount') },
+        raw: r,
+        note: 'These are the figures of the Data API. Watch time and subscribers gained come from the YouTube Analytics API, which needs a permission this app does not ask for yet',
+      };
     },
 
     async health(_account, env): Promise<HealthResult> {

@@ -3,8 +3,8 @@ import { ConnectorError, type Candidate, type OAuthProvider } from '../types.js'
 import { classifyMeta, type MetaConfig } from './client.js';
 
 /**
- * Everything publishing needs on a Page and its Instagram account. Insights, comment replies and messages (phase 4)
- * will need more, and asking for them then is better than asking for them now: a brand only grants what is in use.
+ * What publishing and reading the numbers need on a Page and its Instagram account. A brand only grants what is in use:
+ * the permissions to message people and to read the comments on a Page's posts are asked for only if the brand has prizes on.
  */
 export const META_SCOPES = [
   'pages_show_list',
@@ -13,8 +13,13 @@ export const META_SCOPES = [
   'instagram_basic',
   'instagram_content_publish',
   'instagram_manage_comments',
+  'instagram_manage_insights',
+  'read_insights',
   'business_management',
 ];
+
+/** What sending the prize as a private reply, and hearing about the comments, need. These are the permissions Meta reviews the app for. */
+export const META_PRIZE_SCOPES = ['instagram_manage_messages', 'pages_messaging', 'pages_manage_metadata', 'pages_read_user_content'];
 
 export function createMetaOAuth(cfg: MetaConfig): OAuthProvider {
   const graph = (path: string) => `${cfg.graphUrl}/${cfg.version}/${path}`;
@@ -24,13 +29,13 @@ export function createMetaOAuth(cfg: MetaConfig): OAuthProvider {
     label: 'Facebook and Instagram',
     networks: ['facebook', 'instagram'],
 
-    authorizeUrl(state, redirectUri) {
+    authorizeUrl(state, redirectUri, features) {
       const u = new URL(`${cfg.oauthUrl}/${cfg.version}/dialog/oauth`);
       u.searchParams.set('client_id', cfg.appId);
       u.searchParams.set('redirect_uri', redirectUri);
       u.searchParams.set('state', state);
       u.searchParams.set('response_type', 'code');
-      u.searchParams.set('scope', META_SCOPES.join(','));
+      u.searchParams.set('scope', [...META_SCOPES, ...(features?.prizes ? META_PRIZE_SCOPES : [])].join(','));
       return u.toString();
     },
 

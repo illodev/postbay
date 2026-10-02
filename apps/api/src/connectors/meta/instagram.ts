@@ -2,7 +2,7 @@ import { validateAgainst } from '../validate.js';
 import {
   ConnectorError,
   type Account, type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
-  type MediaItem, type PrepareResult, type Published, type PublishInput, type VerifyResult,
+  type MediaItem, type MetricsResult, type NetworkComment, type PrepareResult, type Published, type PublishInput, type VerifyResult,
 } from '../types.js';
 import type { MetaClient } from './client.js';
 
@@ -208,6 +208,52 @@ export function createInstagram(client: MetaClient): Connector {
         if (err instanceof ConnectorError && err.errorClass === 'file_rejected') return { visibility: 'unknown', note: 'Instagram does not return this post any more' };
         throw err;
       }
+    },
+
+    /** The top-level comments on a post made after `since`, oldest first (Instagram lists them newest first, in pages). */
+    async listComments(_account, externalId, _handle, env, since): Promise<NetworkComment[]> {
+      const token = (await env.token()).accessToken;
+      const out: NetworkComment[] = [];
+      let after: string | undefined;
+      for (let page = 0; page < 5; page++) {
+        const r = await client.get<{ data?: { id: string; text?: string; timestamp: string; username?: string; from?: { id: string; username?: string }; parent_id?: string }[]; paging?: { cursors?: { after?: string }; next?: string } }>(
+          `${externalId}/comments`, token, { fields: 'id,text,timestamp,username,from{id,username},parent_id', limit: 50, ...(after ? { after } : {}) });
+        let reachedOlder = false;
+        for (const c of r.data ?? []) {
+          if (new Date(c.timestamp).getTime() <= since.getTime()) { reachedOlder = true; continue; }
+          if (c.parent_id) continue; // a reply to a comment, not a comment on the post
+          out.push({ id: c.id, authorId: c.from?.id ?? c.username ?? '', authorName: c.from?.username ?? c.username ?? '', text: c.text ?? '', createdAt: c.timestamp });
+        }
+        after = r.paging?.cursors?.after;
+        if (reachedOlder || !r.paging?.next || !after) break;
+      }
+      return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    },
+
+    /** One private message to the author of a comment, in reply to it. Instagram allows one per comment, within 7 days of it. */
+    async privateReply(account, commentId, text, env) {
+      const token = (await env.token()).accessToken;
+      const r = await client.postJson<{ message_id?: string }>(`${igUserId(account)}/messages`, token, { recipient: { comment_id: commentId }, message: { text } });
+      return { messageId: r.message_id };
+    },
+
+    async fetchMetrics(_account, externalId, _handle, env, post): Promise<MetricsResult> {
+      const token = (await env.token()).accessToken;
+      // Each kind of post offers its own metrics, and one it does not offer fails the whole call: ask only for what it has.
+      const metric = post.placement === 'reel' ? 'views,reach,likes,comments,saved,shares,ig_reels_avg_watch_time'
+        : post.placement === 'story' ? 'views,reach,replies,shares,navigation'
+        : 'views,reach,likes,comments,saved,shares';
+      const r = await client.get<{ data?: { name: string; values?: { value: number }[]; total_value?: { value: number } }[] }>(`${externalId}/insights`, token, { metric });
+      const v: Record<string, number> = {};
+      for (const m of r.data ?? []) v[m.name] = m.values?.[0]?.value ?? m.total_value?.value ?? 0;
+      return {
+        common: {
+          views: v.views, reach: v.reach, likes: v.likes, comments: v.comments ?? v.replies, shares: v.shares, saves: v.saved,
+          ...(v.ig_reels_avg_watch_time !== undefined ? { avgWatchSeconds: v.ig_reels_avg_watch_time / 1000 } : {}),
+        },
+        raw: r,
+        note: post.placement === 'story' ? "A story's figures can only be read for 24 hours" : 'Instagram can be up to 48 hours behind, and gives nothing per item of a carousel',
+      };
     },
 
     async health(account, env): Promise<HealthResult> {

@@ -9,7 +9,7 @@ import { Receiver } from './receiver.js';
 let env: Env;
 let worker: Worker;
 beforeAll(async () => {
-  env = await createEnv({}, { fakes: true });
+  env = await createEnv({ METRICS_SWEEP_SECONDS: '1' }, { fakes: true });
   worker = await startWorker(env.ctx);
 });
 afterAll(async () => {
@@ -49,6 +49,17 @@ describe('the queue worker', () => {
     expect(env.meta.callsTo(/media_publish/)).toHaveLength(1);
     const steps = (await env.db.query('select step from publication_attempt where publication_id = $1 order by id', [pub.body.id])).map((r) => r.step);
     expect(steps).toEqual(['prepare', 'publish', 'verify']);
+
+    // Once live, its numbers are scheduled, and the worker reads them as they fall due.
+    const rows = await env.db.query('select age, status from metric_snapshot where publication_id = $1 order by due_at', [pub.body.id]);
+    expect(rows.map((r) => [r.age, r.status])).toEqual([['1h', 'pending'], ['1d', 'pending'], ['7d', 'pending'], ['28d', 'pending']]);
+    await env.db.query(`update metric_snapshot set due_at = now() - interval '1 minute', next_attempt_at = now() - interval '1 minute' where publication_id = $1 and age = '1h'`, [pub.body.id]);
+    const read = await waitFor(async () => {
+      const r = await env.db.one(`select status, metrics from metric_snapshot where publication_id = $1 and age = '1h'`, [pub.body.id]);
+      return r?.status === 'ok' ? r : false;
+    });
+    expect(read.metrics.views).toBe(2000);
+    expect((await env.db.one(`select status from metric_snapshot where publication_id = $1 and age = '1d'`, [pub.body.id]))!.status).toBe('pending');
   });
 
   it('checks the connection health of accounts that are due', async () => {

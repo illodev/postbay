@@ -2,7 +2,7 @@ import { validateAgainst } from '../validate.js';
 import {
   ConnectorError,
   type Account, type Capabilities, type Connector, type ConnectorEnv, type Handle, type HealthResult, type Issue,
-  type MediaItem, type PrepareResult, type Published, type PublishInput, type VerifyResult,
+  type MediaItem, type MetricsResult, type NetworkComment, type PrepareResult, type Published, type PublishInput, type VerifyResult,
 } from '../types.js';
 import type { MetaClient } from './client.js';
 
@@ -213,6 +213,53 @@ export function createFacebook(client: MetaClient): Connector {
           throw err;
         }
       }
+    },
+
+    /** The top-level comments on a post or video made after `since`, oldest first. */
+    async listComments(_account, externalId, _handle, env, since): Promise<NetworkComment[]> {
+      const token = (await env.token()).accessToken;
+      const out: NetworkComment[] = [];
+      let after: string | undefined;
+      for (let page = 0; page < 5; page++) {
+        const r = await client.get<{ data?: { id: string; message?: string; created_time: string; from?: { id: string; name?: string } }[]; paging?: { cursors?: { after?: string }; next?: string } }>(
+          `${externalId}/comments`, token, { fields: 'id,message,created_time,from{id,name}', filter: 'toplevel', order: 'reverse_chronological', limit: 50, ...(after ? { after } : {}) });
+        let reachedOlder = false;
+        for (const c of r.data ?? []) {
+          if (new Date(c.created_time).getTime() <= since.getTime()) { reachedOlder = true; continue; }
+          out.push({ id: c.id, authorId: c.from?.id ?? '', authorName: c.from?.name ?? '', text: c.message ?? '', createdAt: new Date(c.created_time).toISOString() });
+        }
+        after = r.paging?.cursors?.after;
+        if (reachedOlder || !r.paging?.next || !after) break;
+      }
+      return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    },
+
+    /** One private message to the author of a comment on the Page's post, sent as the Page. */
+    async privateReply(account, commentId, text, env) {
+      const token = (await env.token()).accessToken;
+      const r = await client.postJson<{ message_id?: string }>(`${account.externalId}/messages`, token, { recipient: { comment_id: commentId }, message: { text } });
+      return { messageId: r.message_id };
+    },
+
+    async fetchMetrics(_account, externalId, handle, env): Promise<MetricsResult> {
+      const token = (await env.token()).accessToken;
+      const isVideo = handle.objectType === 'video';
+      const counts = await client.get<{ reactions?: { summary?: { total_count?: number } }; comments?: { summary?: { total_count?: number } }; shares?: { count?: number } }>(
+        externalId, token, { fields: 'reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),shares' });
+      // A video and a Reel are asked about as videos; a photo post is asked for the views of its media.
+      const insights = await client.get<{ data?: { name: string; values?: { value: number }[] }[] }>(
+        isVideo ? `${externalId}/video_insights` : `${externalId}/insights`, token,
+        { metric: isVideo ? 'total_video_views,total_video_avg_time_watched' : 'post_media_view' });
+      const v: Record<string, number> = {};
+      for (const m of insights.data ?? []) v[m.name] = m.values?.[0]?.value ?? 0;
+      return {
+        common: {
+          views: v.post_media_view ?? v.total_video_views, likes: counts.reactions?.summary?.total_count, comments: counts.comments?.summary?.total_count, shares: counts.shares?.count ?? 0,
+          ...(v.total_video_avg_time_watched !== undefined ? { avgWatchSeconds: v.total_video_avg_time_watched / 1000 } : {}),
+        },
+        raw: { counts, insights },
+        note: 'Facebook is withdrawing impression figures, so views are the views of the post or video; likes are all reactions',
+      };
     },
 
     async health(account, env): Promise<HealthResult> {

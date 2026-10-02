@@ -73,6 +73,11 @@ export class MetaClient {
     return this.check(await call(this.url(path), { method: 'POST', form: { ...form, access_token: token } }));
   }
 
+  /** The messaging endpoints take their arguments as JSON (a recipient object, a message object), not as a form. */
+  async postJson<T = any>(path: string, token: string, json: unknown): Promise<T> {
+    return this.check(await call(this.url(path), { method: 'POST', json, query: { access_token: token } }));
+  }
+
   async delete<T = any>(path: string, token: string): Promise<T> {
     return this.check(await call(this.url(path), { method: 'DELETE', query: { access_token: token } }));
   }

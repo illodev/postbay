@@ -89,6 +89,12 @@ describe('Meta sign-in', () => {
     expect(u.searchParams.get('redirect_uri')).toBe(redirect);
     expect(u.searchParams.get('scope')).toContain('instagram_content_publish');
     expect(u.searchParams.get('scope')).toContain('pages_manage_posts');
+    // Reading the numbers is always asked for; messaging people only when the brand has prizes on.
+    expect(u.searchParams.get('scope')).toContain('instagram_manage_insights');
+    expect(u.searchParams.get('scope')).not.toContain('messages');
+    const withPrizes = new URL(set.provider('meta')!.authorizeUrl!('state-xyz', redirect, { prizes: true }));
+    expect(withPrizes.searchParams.get('scope')).toContain('instagram_manage_messages');
+    expect(withPrizes.searchParams.get('scope')).toContain('pages_messaging');
   });
 
   it('turns one sign-in into a Facebook Page and its Instagram account, with a token that does not expire', async () => {

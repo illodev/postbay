@@ -9,6 +9,7 @@ import type { Ctx } from '../context.js';
 import { audit } from './audit.js';
 import { effectiveApproval } from './approvals.js';
 import { emitPublication } from './events.js';
+import { scheduleSnapshots } from './metrics.js';
 import { connectorEnv, loadConnectorAccount, markReconnectRequired } from './connectors.js';
 import { notifyRoles, type NotifyKind } from './notify.js';
 import { fileFor } from './renditions.js';
@@ -339,6 +340,8 @@ async function verify(ctx: Ctx, L: Loaded): Promise<string> {
     switch (res.visibility) {
       case 'public':
         await commit(ctx, pub.id, ['published'], { ...base, verify_attempts: 0, next_run_at: null });
+        // Its numbers are read at set ages from now on. Repeating this is harmless: what is already scheduled stays.
+        await scheduleSnapshots(ctx.db, { id: pub.id, placement: pub.placement, published_at: pub.published_at });
         if (!sameAsBefore) {
           await audit(ctx.db, null, L.brandId, 'publication.live', 'publication', pub.id, { visibility: pub.visibility }, { visibility: 'public', url: res.url ?? pub.url });
           await tell(ctx, L, 'publication.published', { url: res.url ?? pub.url });

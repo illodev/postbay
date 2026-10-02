@@ -8,6 +8,7 @@ import { badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { DateTime } from 'luxon';
 import { audit } from './audit.js';
 import { agentOf, agentSettings } from './agent.js';
+import { prizeSettings, prizesOf } from './prizes.js';
 import { loadBrand, rulesOf } from './loaders.js';
 
 export const NETWORKS = ['instagram', 'facebook', 'youtube', 'tiktok', 'linkedin', 'x', 'threads', 'pinterest', 'bluesky'] as const;
@@ -33,12 +34,13 @@ export const brandPatch = z.object({
   rules: rulesInput.partial().optional(),
   publishing: publishingInput.partial().optional(),
   agent: agentSettings.partial().optional(),
+  prizes: prizeSettings.partial().optional(),
 });
 
 export async function getBrand(ctx: Ctx, p: Principal, brandId: string) {
   const role = await authorize(ctx.db, p, brandId, 'brand.view');
   const b = await loadBrand(ctx.db, brandId);
-  return { id: b.id, name: b.name, timezone: b.timezone, locale: b.locale, paused: b.paused, rules: rulesOf(b), publishing: publishingOf(b as never), agent: agentOf(b), role };
+  return { id: b.id, name: b.name, timezone: b.timezone, locale: b.locale, paused: b.paused, rules: rulesOf(b), publishing: publishingOf(b as never), agent: agentOf(b), prizes: prizesOf(b), role };
 }
 
 export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: unknown) {
@@ -49,15 +51,16 @@ export async function updateBrand(ctx: Ctx, p: Principal, brandId: string, raw: 
     const rules = { ...rulesOf(before), ...(input.rules ?? {}) };
     const publishing = { ...publishingOf(before as never), ...(input.publishing ?? {}) };
     const agent = { ...agentOf(before), ...(input.agent ?? {}) };
+    const prizes = { ...prizesOf(before), ...(input.prizes ?? {}) };
     await db.query(
-      'update brand set name = coalesce($2, name), timezone = coalesce($3, timezone), locale = coalesce($4, locale), approval_rules = $5, publishing = $6, agent = $7 where id = $1',
-      [brandId, input.name ?? null, input.timezone ?? null, input.locale ?? null, JSON.stringify(rules), JSON.stringify(publishing), JSON.stringify(agent)],
+      'update brand set name = coalesce($2, name), timezone = coalesce($3, timezone), locale = coalesce($4, locale), approval_rules = $5, publishing = $6, agent = $7, prizes = $8 where id = $1',
+      [brandId, input.name ?? null, input.timezone ?? null, input.locale ?? null, JSON.stringify(rules), JSON.stringify(publishing), JSON.stringify(agent), JSON.stringify(prizes)],
     );
     const after = await loadBrand(db, brandId);
     await audit(db, p, brandId, 'brand.updated', 'brand', brandId,
-      { name: before.name, timezone: before.timezone, rules: rulesOf(before), publishing: publishingOf(before as never), agent: agentOf(before) },
-      { name: after.name, timezone: after.timezone, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after) });
-    return { id: after.id, name: after.name, timezone: after.timezone, locale: after.locale, paused: after.paused, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after) };
+      { name: before.name, timezone: before.timezone, rules: rulesOf(before), publishing: publishingOf(before as never), agent: agentOf(before), prizes: prizesOf(before) },
+      { name: after.name, timezone: after.timezone, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after), prizes: prizesOf(after) });
+    return { id: after.id, name: after.name, timezone: after.timezone, locale: after.locale, paused: after.paused, rules: rulesOf(after), publishing: publishingOf(after as never), agent: agentOf(after), prizes: prizesOf(after) };
   });
 }
 

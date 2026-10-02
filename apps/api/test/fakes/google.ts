@@ -22,6 +22,7 @@ export class FakeGoogle {
   /** Until Google audits the project, videos are forced private whatever is asked. */
   audited = false;
   revoked = false;
+  statistics: Record<string, number> = { viewCount: 1234, likeCount: 56, commentCount: 7, favoriteCount: 0 };
   /** When set, every video reports being rejected for this reason. */
   rejection: string | null = null;
   accessTokens = new Set<string>();
@@ -119,7 +120,9 @@ export class FakeGoogle {
     if (path === '/youtube/v3/videos' && req.method === 'GET') {
       const v = this.videos.get(String(req.query.id));
       if (!v) return reply.send({ items: [] });
-      return reply.send({ items: [{ id: v.id, status: this.statusOf(v) }] });
+      // Counts come back as strings, as the real API sends them.
+      const stats = String(req.query.part ?? '').includes('statistics') ? { statistics: Object.fromEntries(Object.entries(this.statistics).map(([k, n]) => [k, String(n)])) } : {};
+      return reply.send({ items: [{ id: v.id, status: this.statusOf(v), ...stats }] });
     }
     return reply.code(404).send({ error: { code: 404, message: `Unknown path ${path}`, errors: [{ reason: 'notFound' }] } });
   }

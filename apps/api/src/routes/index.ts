@@ -4,6 +4,8 @@ import { requirePrincipal, setSessionCookie, SESSION_COOKIE } from '../http.js';
 import type { Ctx } from '../context.js';
 import { badRequest, forbidden, unauthorized } from '../errors.js';
 import * as agent from '../services/agent.js';
+import * as metrics from '../services/metrics.js';
+import * as prizes from '../services/prizes.js';
 import * as approvals from '../services/approvals.js';
 import * as authSvc from '../services/auth.js';
 import * as brand from '../services/brand.js';
@@ -148,6 +150,45 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.delete('/api/brands/:brandId/tokens/:tokenId', async (req) => {
     const { brandId, tokenId } = params(req, 'brandId', 'tokenId');
     return brand.revokeToken(ctx, P(req), brandId, tokenId);
+  });
+
+  // ───────────────────────────── what came of the posts ─────────────────────────────
+
+  app.get('/api/brands/:brandId/metrics', async (req) => metrics.brandMetrics(ctx, P(req), params(req, 'brandId').brandId, req.query));
+  app.get('/api/publications/:id/metrics', async (req) => metrics.publicationMetrics(ctx, P(req), params(req, 'id').id));
+
+  // ───────────────────────────── prizes for commenting ─────────────────────────────
+
+  app.get('/api/brands/:brandId/prizes', async (req) => prizes.listPrizes(ctx, P(req), params(req, 'brandId').brandId));
+  app.post('/api/brands/:brandId/prizes', async (req, reply) =>
+    reply.code(201).send(await prizes.createPrize(ctx, P(req), params(req, 'brandId').brandId, req.body)));
+  app.post('/api/prizes/:id/complete', async (req) => prizes.completePrize(ctx, P(req), params(req, 'id').id));
+  app.post('/api/prizes/:id/archive', async (req) => prizes.archivePrize(ctx, P(req), params(req, 'id').id));
+  app.get('/api/publications/:id/prize', async (req) => prizes.getRule(ctx, P(req), params(req, 'id').id));
+  app.put('/api/publications/:id/prize', async (req) => prizes.setRule(ctx, P(req), params(req, 'id').id, req.body));
+  app.get('/api/publications/:id/prize/deliveries', async (req) => prizes.listDeliveries(ctx, P(req), params(req, 'id').id));
+  app.post('/api/brands/:brandId/prizes/erase', async (req) => prizes.erasePerson(ctx, P(req), params(req, 'brandId').brandId, req.body));
+
+  // What the person who commented opens. No sign-in: the link is the credential, and says nothing about who it was sent to.
+  const secretParam = (req: FastifyRequest) => z.string().min(16).max(80).parse((req.params as { token: string }).token);
+  app.get('/api/public/prizes/:token', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => prizes.publicPrize(ctx, secretParam(req)));
+  app.post('/api/public/prizes/:token/download', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => prizes.downloadPrize(ctx, secretParam(req)));
+  app.get('/api/public/data-deletion/:code', async (req) => prizes.deletionStatus(ctx, z.string().min(8).max(60).parse((req.params as { code: string }).code)));
+
+  // What Meta calls: its comment webhook (checked with the app secret on the raw body), and the data-deletion callback.
+  await app.register(async (meta) => {
+    meta.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
+    meta.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) => done(null, Object.fromEntries(new URLSearchParams(body as string))));
+    meta.get('/api/meta/webhook', async (req, reply) => reply.type('text/plain').send(prizes.verifyMetaWebhook(ctx, req.query as Record<string, string>)));
+    meta.post('/api/meta/webhook', async (req, reply) => {
+      const raw = req.body as Buffer;
+      if (!prizes.metaSignatureOk(ctx, raw, req.headers['x-hub-signature-256'] as string | undefined)) throw forbidden('The signature does not match');
+      let payload: unknown;
+      try { payload = JSON.parse(raw.toString('utf8')); } catch { throw badRequest('invalid_json', 'Not JSON'); }
+      await prizes.receiveMetaWebhook(ctx, payload);
+      return reply.send({ ok: true });
+    });
+    meta.post('/api/meta/data-deletion', async (req) => prizes.metaDataDeletion(ctx, z.string().min(10).max(4000).parse((req.body as { signed_request?: string })?.signed_request)));
   });
 
   // ───────────────────────────── the agent ─────────────────────────────

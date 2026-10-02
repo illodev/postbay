@@ -37,6 +37,18 @@ export class FakeMeta {
   /** Containers stay IN_PROGRESS for this many status reads before FINISHED. */
   processingPolls = 1;
   igQuota = { usage: 0, total: 50 };
+  /** Numbers Instagram gives back; a metric Instagram does not offer for that kind of post is refused, as it does. */
+  igInsights: Record<string, number> = { views: 2000, reach: 1500, likes: 120, comments: 14, saved: 30, shares: 22, replies: 5, navigation: 40, ig_reels_avg_watch_time: 6500 };
+  fbInsights: Record<string, number> = { post_media_view: 900, total_video_views: 700, total_video_avg_time_watched: 8200 };
+  fbCounts = { reactions: 41, comments: 6, shares: 3 };
+  /** False makes insights calls fail the way a connection made before they were asked for does. */
+  insightsPermission = true;
+  /** Comments on posts, by the id of the post (an Instagram media id or a Page post id). `at` is a time in ms. */
+  commentFeed: Record<string, { id: string; text: string; at: number; personId: string; username: string; parent_id?: string }[]> = {};
+  commentPageSize = 50;
+  /** Private replies sent, and the rules Meta applies to them: one per comment, within 7 days of it, and only with the permission. */
+  messages: { path: string; commentId: string; text: string; at: number }[] = [];
+  messagingPermission = true;
   /** The clock scheduled Page posts are judged against. */
   now = () => Date.now();
   failures: Failure[] = [];
@@ -98,6 +110,34 @@ export class FakeMeta {
     return reply.send(out ?? { error: { message: `Unknown path ${path}`, code: 2500 } });
   }
 
+  /** Comments on a post newest first, in pages, in the shape each network uses. */
+  private listComments(id: string, c: Call, kind: 'ig' | 'fb'): unknown {
+    const all = [...(this.commentFeed[id] ?? [])].sort((a, b) => b.at - a.at);
+    const start = Number(c.query.after ?? 0);
+    const size = Math.min(this.commentPageSize, Number(c.query.limit ?? 50));
+    const page = all.slice(start, start + size);
+    const next = start + page.length;
+    const data = page.map((x) => kind === 'ig'
+      ? { id: x.id, text: x.text, timestamp: new Date(x.at).toISOString(), username: x.username, from: { id: x.personId, username: x.username }, ...(x.parent_id ? { parent_id: x.parent_id } : {}) }
+      : { id: x.id, message: x.text, created_time: new Date(x.at).toISOString(), from: { id: x.personId, name: x.username } });
+    return { data, ...(next < all.length ? { paging: { cursors: { after: String(next) }, next: 'more' } } : {}) };
+  }
+
+  /** The rules Meta applies to a private reply to a comment. */
+  private privateReply(owner: string, c: Call): unknown {
+    const body = c.body as unknown as { recipient?: { comment_id?: string }; message?: { text?: string } };
+    const commentId = body.recipient?.comment_id;
+    if (!this.messagingPermission) return this.err(10, '(#10) This message is sent outside of allowed window or the app lacks permission');
+    if (!commentId || !body.message?.text) return this.err(100, '(#100) Param recipient[comment_id] and message[text] are required');
+    let found: { at: number } | undefined;
+    for (const list of Object.values(this.commentFeed)) found ??= list.find((x) => x.id === commentId);
+    if (!found) return this.err(100, '(#100) No matching comment found', { error_subcode: 2018108 });
+    if (this.messages.some((m) => m.commentId === commentId)) return this.err(100, '(#100) This comment already has a private reply', { error_subcode: 2018108 });
+    if (this.now() - found.at > 7 * 86_400_000) return this.err(100, '(#100) The comment is older than 7 days, so it can no longer be replied to privately', { error_subcode: 2018109 });
+    this.messages.push({ path: `${owner}/messages`, commentId, text: body.message.text, at: this.now() });
+    return { recipient_id: `user-of-${commentId}`, message_id: `mid-${this.messages.length}` };
+  }
+
   private param(c: Call, k: string) {
     return c.body[k] ?? c.query[k];
   }
@@ -149,14 +189,35 @@ export class FakeMeta {
       const state = cont.state === 'IN_PROGRESS' && cont.polls > this.processingPolls ? 'FINISHED' : cont.state;
       return { id: m[1], status_code: state, status: state === 'ERROR' ? 'Error: Media upload has failed with error code 2207026' : state };
     }
+    if ((m = /^(m-\d+)\/insights$/.exec(c.path))) {
+      const med = this.media.get(m[1]!);
+      if (!med) return this.err(100, 'Object does not exist');
+      if (!this.insightsPermission) return this.err(10, '(#10) Application does not have permission for this action');
+      const type = med.params.media_type;
+      const allowed = type === 'STORIES' ? ['views', 'reach', 'replies', 'shares', 'navigation']
+        : type === 'REELS' ? ['views', 'reach', 'likes', 'comments', 'saved', 'shares', 'ig_reels_avg_watch_time']
+        : ['views', 'reach', 'likes', 'comments', 'saved', 'shares'];
+      const wanted = String(c.query.metric ?? '').split(',');
+      const bad = wanted.find((n) => !allowed.includes(n));
+      if (bad) return this.err(100, `(#100) The following metrics are not supported for this media type: ${bad}`);
+      return { data: wanted.map((name) => ({ name, period: 'lifetime', values: [{ value: this.igInsights[name] ?? 0 }] })) };
+    }
+    if ((m = /^(\d+_\d+)\/insights$/.exec(c.path)) || (m = /^(v-\d+)\/video_insights$/.exec(c.path))) {
+      if (!this.posts.has(m[1]!)) return this.err(100, 'Object does not exist');
+      if (!this.insightsPermission) return this.err(10, '(#10) Application does not have permission for this action');
+      const wanted = String(c.query.metric ?? '').split(',');
+      return { data: wanted.filter((n) => n in this.fbInsights).map((name) => ({ name, period: 'lifetime', values: [{ value: this.fbInsights[name] }] })) };
+    }
     if ((m = /^(m-\d+)$/.exec(c.path))) {
       const med = this.media.get(m[1]!);
       return med ? { id: m[1], permalink: `https://www.instagram.com/p/${m[1]}/`, media_type: 'VIDEO' } : this.err(100, 'Object does not exist');
     }
+    if ((m = /^(m-\d+)\/comments$/.exec(c.path)) && c.method === 'GET') return this.listComments(m[1]!, c, 'ig');
     if ((m = /^(m-\d+)\/comments$/.exec(c.path))) {
       this.media.get(m[1]!)?.comments.push(c.body.message ?? '');
       return { id: this.id('cm-') };
     }
+    if ((m = /^(\d+)\/messages$/.exec(c.path)) && c.method === 'POST') return this.privateReply(m[1]!, c);
     // ── Facebook Pages ──
     if (c.method === 'DELETE' && (m = /^([\d_]+|v-\d+|ph-\d+)$/.exec(c.path))) {
       const existed = this.posts.delete(m[1]!);
@@ -199,6 +260,7 @@ export class FakeMeta {
       r.fileUrl = String(req.headers.file_url ?? '');
       return { success: true };
     }
+    if ((m = /^([\d_]+|v-\d+|ph-\d+)\/comments$/.exec(c.path)) && c.method === 'GET') return this.listComments(m[1]!, c, 'fb');
     if ((m = /^([\d_]+|v-\d+|ph-\d+)\/comments$/.exec(c.path))) {
       this.posts.get(m[1]!)?.comments.push(c.body.message ?? '');
       return { id: this.id('cm-') };
@@ -211,6 +273,11 @@ export class FakeMeta {
       const reel = this.reels.get(m[1]!);
       let videoStatus = 'ready';
       if (p.kind === 'video' && reel && reel.processingPolls > 0) { reel.processingPolls--; videoStatus = 'processing'; }
+      if (String(c.query.fields ?? '').includes('reactions')) {
+        return {
+          id: m[1], reactions: { summary: { total_count: this.fbCounts.reactions } }, comments: { summary: { total_count: this.fbCounts.comments } }, shares: { count: this.fbCounts.shares },
+        };
+      }
       return {
         id: m[1], is_published: live, published: live, permalink_url: `/${p.page}/posts/${m[1]}`,
         ...(scheduled > 0 ? { scheduled_publish_time: scheduled / 1000 } : {}),

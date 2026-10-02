@@ -2,6 +2,8 @@ import { PgBoss } from 'pg-boss';
 import { startBackground } from './background.js';
 import type { Ctx } from './context.js';
 import { accountsDueForHealth, checkHealth } from './services/connectors.js';
+import { scanMetrics } from './services/metrics.js';
+import { pollComments, purgePrizeData, scanPrizeDeliveries } from './services/prizes.js';
 import { scanSlotAlerts } from './services/slots.js';
 import { deliver, dueDeliveries, purgeOldEvents } from './services/webhooks.js';
 import { advance, dueForAttention, TIMING } from './services/publisher.js';
@@ -50,6 +52,9 @@ export async function startWorker(ctx: Ctx): Promise<Worker> {
     }
   });
 
+  let lastMetrics = 0;
+  let lastPoll = 0;
+  let lastPrizePurge = 0;
   let lastPurge = 0;
   let lastSlotScan = 0;
   let sweeping = false;
@@ -61,6 +66,20 @@ export async function startWorker(ctx: Ctx): Promise<Worker> {
       for (const d of due) await boss.send(QUEUE.advance, { id: d.id }, { singletonKey: d.id });
       for (const id of await accountsDueForHealth(ctx)) await boss.send(QUEUE.health, { id }, { singletonKey: id });
       for (const id of await dueDeliveries(ctx)) await boss.send(QUEUE.deliver, { id }, { singletonKey: id });
+      if (Date.now() - lastMetrics > ctx.config.METRICS_SWEEP_SECONDS * 1000) {
+        lastMetrics = Date.now();
+        await scanMetrics(ctx);
+      }
+      // Prizes: read the comments of posts that carry a rule, then send what is due. Sending is checked every sweep so a prize goes out within seconds.
+      if (Date.now() - lastPoll > ctx.config.PRIZE_POLL_SECONDS * 1000) {
+        lastPoll = Date.now();
+        await pollComments(ctx);
+      }
+      await scanPrizeDeliveries(ctx);
+      if (Date.now() - lastPrizePurge > 3600_000) {
+        lastPrizePurge = Date.now();
+        await purgePrizeData(ctx);
+      }
       if (Date.now() - lastSlotScan > 300_000) {
         lastSlotScan = Date.now();
         await scanSlotAlerts(ctx);
