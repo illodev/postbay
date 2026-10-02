@@ -1,4 +1,5 @@
 import { api } from '../api';
+import { t } from '../i18n';
 
 /**
  * Push messages in this browser. A person agrees (the browser asks), the browser makes a subscription at its own push service, and
@@ -21,9 +22,9 @@ export async function currentSubscription(): Promise<PushSubscription | null> {
 }
 
 export async function enablePush(): Promise<void> {
-  if (!pushSupported()) throw new Error('This browser cannot receive push messages');
+  if (!pushSupported()) throw new Error(t('account.push.unsupported'));
   const permission = await Notification.requestPermission();
-  if (permission !== 'granted') throw new Error('Notifications are blocked for this site: allow them in the browser\'s site settings, then try again');
+  if (permission !== 'granted') throw new Error(t('account.push.blocked'));
   const reg = await navigator.serviceWorker.register('/sw.js');
   await navigator.serviceWorker.ready;
   const { publicKey } = await api.get<{ publicKey: string }>('/api/push/key');

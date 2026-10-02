@@ -1,26 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, type Webhook, type WebhookDelivery, type WebhookDeliveryDetail, type WebhookEventType } from '../api';
+import { t, tMaybe } from '../i18n';
 import { EVENT_LABEL, fmtDateTime, fmtShort } from '../lib/format';
-import { CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, Spinner, useToast } from './ui';
+import { Chip, CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, Spinner, useToast } from './ui';
 
 interface List {
   items: Webhook[];
   eventTypes: WebhookEventType[];
 }
 
+const eventHelp = (e: WebhookEventType) => tMaybe(`settings.webhooks.eventHelp.${e.type}`, e.description);
+
 function SecretDialog({ secret, title, onClose }: { secret: string; title: string; onClose: () => void }) {
   return (
     <Dialog title={title} onClose={onClose}>
       <div className="stack">
-        <p className="muted" style={{ margin: 0 }}>
-          This is the only time the secret is shown. The receiver uses it to check that a delivery really comes from here: it computes an
-          HMAC-SHA256 of <span className="mono">timestamp.body</span> with this secret and compares it with the signature header.
-        </p>
-        <pre className="card mono" style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap', margin: 0 }}>{secret}</pre>
+        <p className="muted" style={{ margin: 0 }}>{t('settings.webhooks.secretHint')}</p>
+        <pre className="set-secret">{secret}</pre>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <CopyButton text={secret} label="Copy secret" />
-          <button className="btn btn-primary" onClick={onClose}>Done</button>
+          <CopyButton text={secret} label={t('settings.webhooks.copySecret')} />
+          <button className="btn btn-primary" onClick={onClose}>{t('settings.done')}</button>
         </div>
       </div>
     </Dialog>
@@ -55,52 +55,57 @@ function WebhookDialog({ brandId, eventTypes, hook, onClose, onSecret }: {
     setEvents(n);
   };
   return (
-    <Dialog title={hook ? 'Edit webhook' : 'Add a webhook'} onClose={onClose} wide>
+    <Dialog title={hook ? t('settings.webhooks.editTitle') : t('settings.webhooks.add')} onClose={onClose} wide>
       <form className="stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
-        <Field label="Address" hint="Where the events are sent, for example the runner: https://runner.example.com/webhooks/lumen">
+        <Field label={t('settings.webhooks.address')} hint={t('settings.webhooks.addressHint')}>
           <input type="url" required placeholder="https://" value={url} onChange={(e) => setUrl(e.target.value)} />
         </Field>
-        <Field label="Description (optional)">
+        <Field label={`${t('settings.webhooks.description')} ${t('common.optional')}`}>
           <input type="text" maxLength={200} value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
-        <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
-          <legend className="field-label">Events</legend>
-          {eventTypes.map((t) => (
-            <label key={t.type} className="check">
-              <input type="checkbox" checked={events.has(t.type)} onChange={() => toggle(t.type)} />
-              <span><strong>{EVENT_LABEL[t.type] ?? t.type}</strong> <span className="mono muted small">{t.type}</span><br /><span className="muted small">{t.description}</span></span>
+        <fieldset className="set-fieldset">
+          <legend className="set-legend">{t('settings.webhooks.events')}</legend>
+          {eventTypes.map((e) => (
+            <label key={e.type} className="check">
+              <input type="checkbox" checked={events.has(e.type)} onChange={() => toggle(e.type)} />
+              <span><strong style={{ fontWeight: 500 }}>{EVENT_LABEL[e.type] ?? e.type}</strong> <span className="mono muted">{e.type}</span><br /><span className="muted small">{eventHelp(e)}</span></span>
             </label>
           ))}
         </fieldset>
         {save.error && <ErrorBox error={save.error} />}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={save.isPending || events.size === 0 || !url}>{hook ? 'Save' : 'Add webhook'}</button>
+          <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
+          <button className="btn btn-primary" disabled={save.isPending || events.size === 0 || !url}>{hook ? t('common.save') : t('settings.webhooks.addShort')}</button>
         </div>
       </form>
     </Dialog>
   );
 }
 
-const STATUS_CHIP = { delivered: 'chip-approved', pending: 'chip-scheduled', failed: 'chip-failed' } as const;
-const STATUS_TEXT = { delivered: 'Delivered', pending: 'Waiting', failed: 'Failed' } as const;
+const STATUS_CHIP = { delivered: 'approved', pending: 'scheduled', failed: 'failed' } as const;
+const statusText = (s: WebhookDelivery['status']) => t(`settings.webhooks.status.${s}`);
 
 function AttemptsDialog({ id, onClose }: { id: string; onClose: () => void }) {
   const { data, error } = useQuery({ queryKey: ['delivery', id], queryFn: () => api.get<WebhookDeliveryDetail>(`/api/webhook-deliveries/${id}`) });
   return (
-    <Dialog title="Attempts" onClose={onClose}>
+    <Dialog title={t('settings.webhooks.attempts')} onClose={onClose}>
       {error && <ErrorBox error={error} />}
       {!data && !error && <Spinner />}
       {data && (
         <div className="table-wrap">
-          <table>
-            <thead><tr><th>When</th><th>Answer</th><th>Time</th></tr></thead>
+          <table className="set-table">
+            <thead><tr><th>{t('settings.webhooks.when')}</th><th>{t('settings.webhooks.answer')}</th><th className="num">{t('settings.webhooks.time')}</th></tr></thead>
             <tbody>
               {data.attempts.map((a, i) => (
                 <tr key={i}>
-                  <td className="small">{fmtDateTime(a.at, 'UTC')} UTC</td>
-                  <td>{a.http_status ? <span className={`chip ${a.http_status < 300 ? 'chip-approved' : 'chip-failed'}`}>{a.http_status}</span> : <span className="chip chip-failed">no answer</span>}{a.error && <div className="small muted">{a.error}</div>}</td>
-                  <td className="small">{a.duration_ms !== null ? `${a.duration_ms} ms` : ''}</td>
+                  <td className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(a.at, 'UTC')} UTC</td>
+                  <td data-label={t('settings.webhooks.answer')}>
+                    <div>
+                      {a.http_status ? <Chip state={a.http_status < 300 ? 'approved' : 'failed'} label={String(a.http_status)} /> : <Chip state="failed" label={t('settings.webhooks.noAnswer')} />}
+                      {a.error && <div className="small muted" style={{ overflowWrap: 'anywhere' }}>{a.error}</div>}
+                    </div>
+                  </td>
+                  <td className="num" data-label={t('settings.webhooks.time')}>{a.duration_ms !== null ? `${a.duration_ms} ms` : ''}</td>
                 </tr>
               ))}
             </tbody>
@@ -122,34 +127,45 @@ function DeliveriesDialog({ hook, onClose }: { hook: Webhook; onClose: () => voi
   });
   const again = useMutation({
     mutationFn: (id: string) => api.post(`/api/webhook-deliveries/${id}/redeliver`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['deliveries', hook.id] }); toast('Queued to be sent again'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['deliveries', hook.id] }); toast(t('settings.webhooks.queued')); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
   return (
-    <Dialog title="Deliveries" onClose={onClose} wide>
-      <p className="muted small" style={{ marginTop: 0 }}>{hook.url}. A failed delivery is retried with growing waits for up to 24 hours, then given up on.</p>
+    <Dialog title={t('settings.webhooks.deliveries')} onClose={onClose} wide>
+      <p className="muted small" style={{ margin: 0 }}><span className="mono" style={{ overflowWrap: 'anywhere' }}>{hook.url}</span> · {t('settings.webhooks.retryHint')}</p>
       {error && <ErrorBox error={error} />}
       {!data && !error && <Spinner />}
-      {data?.length === 0 && <Empty title="Nothing sent yet">Use “Send a test” to check the receiver.</Empty>}
+      {data?.length === 0 && <Empty title={t('settings.webhooks.nothingSent')}>{t('settings.webhooks.nothingSentHint')}</Empty>}
       {data && data.length > 0 && (
         <div className="table-wrap">
-          <table>
-            <thead><tr><th>When</th><th>Event</th><th>Result</th><th /></tr></thead>
+          <table className="set-table">
+            <thead>
+              <tr>
+                <th>{t('settings.webhooks.when')}</th>
+                <th>{t('settings.webhooks.event')}</th>
+                <th>{t('settings.webhooks.result')}</th>
+                <th className="set-actions"><span className="sr-only">{t('settings.actions')}</span></th>
+              </tr>
+            </thead>
             <tbody>
               {data.map((d) => (
                 <tr key={d.id}>
-                  <td className="small">{fmtShort(d.created_at)}</td>
-                  <td>{EVENT_LABEL[d.type] ?? d.type}</td>
-                  <td>
-                    <span className={`chip ${STATUS_CHIP[d.status]}`}>{STATUS_TEXT[d.status]}</span>
-                    <span className="muted small"> · {d.attempts} attempt{d.attempts === 1 ? '' : 's'}{d.last_status ? ` · ${d.last_status}` : ''}</span>
-                    {d.status === 'pending' && d.next_attempt_at && d.attempts > 0 && <div className="muted small">Next try {fmtShort(d.next_attempt_at)}</div>}
-                    {d.status !== 'delivered' && d.last_error && <div className="small" style={{ color: 'var(--bad)' }}>{d.last_error}</div>}
+                  <td className="small" style={{ whiteSpace: 'nowrap' }}>{fmtShort(d.created_at)}</td>
+                  <td data-label={t('settings.webhooks.event')}>{EVENT_LABEL[d.type] ?? d.type}</td>
+                  <td data-label={t('settings.webhooks.result')}>
+                    <div>
+                      <span className="row" style={{ gap: '.4rem' }}>
+                        <Chip state={STATUS_CHIP[d.status]} label={statusText(d.status)} />
+                        <span className="muted small mono">{t('settings.webhooks.attemptsN', { count: d.attempts })}{d.last_status ? ` · ${d.last_status}` : ''}</span>
+                      </span>
+                      {d.status === 'pending' && d.next_attempt_at && d.attempts > 0 && <div className="muted small">{t('settings.webhooks.nextTry', { when: fmtShort(d.next_attempt_at) })}</div>}
+                      {d.status !== 'delivered' && d.last_error && <div className="small set-bad" style={{ overflowWrap: 'anywhere' }}>{d.last_error}</div>}
+                    </div>
                   </td>
-                  <td>
+                  <td className="set-actions">
                     <div className="row">
-                      {d.attempts > 0 && <button className="btn btn-small" onClick={() => setDetail(d.id)}>Attempts</button>}
-                      {d.status !== 'pending' && <button className="btn btn-small" onClick={() => again.mutate(d.id)}>Send again</button>}
+                      {d.attempts > 0 && <button className="btn btn-small" onClick={() => setDetail(d.id)}>{t('settings.webhooks.attempts')}</button>}
+                      {d.status !== 'pending' && <button className="btn btn-small" onClick={() => again.mutate(d.id)}>{t('settings.webhooks.sendAgain')}</button>}
                     </div>
                   </td>
                 </tr>
@@ -161,6 +177,12 @@ function DeliveriesDialog({ hook, onClose }: { hook: Webhook; onClose: () => voi
       {detail && <AttemptsDialog id={detail} onClose={() => setDetail(null)} />}
     </Dialog>
   );
+}
+
+function HookState({ h }: { h: Webhook }) {
+  if (!h.active) return <Chip state="on_hold" label={t('settings.webhooks.disabled')} />;
+  if (h.failed_24h > 0) return <Chip state="failed" label={t('settings.webhooks.failing')} />;
+  return <Chip state="approved" label={t('settings.webhooks.active')} />;
 }
 
 export function Webhooks({ brandId }: { brandId: string }) {
@@ -179,68 +201,67 @@ export function Webhooks({ brandId }: { brandId: string }) {
   const remove = useMutation({ mutationFn: (id: string) => api.del(`/api/webhooks/${id}`), onSuccess: refresh, onError: (e) => toast(errorMessage(e), 'error') });
   const rotate = useMutation({
     mutationFn: (id: string) => api.post<{ secret: string }>(`/api/webhooks/${id}/rotate-secret`),
-    onSuccess: (r) => { refresh(); setSecret({ secret: r.secret, title: 'New secret' }); },
+    onSuccess: (r) => { refresh(); setSecret({ secret: r.secret, title: t('settings.webhooks.newSecretTitle') }); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
   const test = useMutation({
     mutationFn: (h: Webhook) => api.post(`/api/webhooks/${h.id}/test`).then(() => h),
-    onSuccess: (h) => { toast('Test event sent'); setDeliveries(h); },
+    onSuccess: (h) => { toast(t('settings.webhooks.testSent')); setDeliveries(h); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
 
   return (
-    <div className="stack">
-      <div className="notice notice-info">
-        Webhooks tell other systems what happens here: for example a runner that starts an agent when changes are requested, or a script that posts to chat.
-        Every delivery is signed with the webhook&rsquo;s secret.
-      </div>
+    <>
       {error && <ErrorBox error={error} />}
-      <div className="card">
-        <div className="card-head"><h2>Webhooks</h2><button className="btn btn-primary" onClick={() => setEditing('new')}>Add a webhook</button></div>
+      <section className="card">
+        <div className="card-head">
+          <h3>{data && data.items.length > 0 ? t('settings.webhooks.count', { count: data.items.length }) : t('settings.webhooks.title')}</h3>
+          <button className="btn btn-primary" onClick={() => setEditing('new')} disabled={!data}>{t('settings.webhooks.add')}</button>
+        </div>
         {!data && !error && <Spinner />}
-        {data?.items.length === 0 && <Empty title="No webhooks yet">Add one to let a runner or a script react to what happens here.</Empty>}
+        {data?.items.length === 0 && <Empty title={t('settings.webhooks.empty')}>{t('settings.webhooks.emptyHint')}</Empty>}
         {data && data.items.length > 0 && (
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Address</th><th>Events</th><th>State</th><th /></tr></thead>
-              <tbody>
-                {data.items.map((h) => (
-                  <tr key={h.id}>
-                    <td style={{ maxWidth: 320, overflowWrap: 'anywhere' }}>
-                      {h.url}
-                      {h.description && <div className="muted small">{h.description}</div>}
-                      <div className="muted small">Secret ending {h.secret_hint}</div>
-                    </td>
-                    <td className="small">{h.events.map((e) => EVENT_LABEL[e] ?? e).join(', ')}</td>
-                    <td>
-                      {h.active ? <span className="chip chip-approved">Active</span> : <span className="chip chip-on_hold">Disabled</span>}
-                      {h.disabled_reason && <div className="small muted">{h.disabled_reason}</div>}
-                      {h.failed_24h > 0 && <div className="small" style={{ color: 'var(--bad)' }}>{h.failed_24h} failed in the last day</div>}
-                      {h.pending > 0 && <div className="small muted">{h.pending} waiting</div>}
-                      {h.last_success_at && <div className="small muted">Last delivered {fmtShort(h.last_success_at)}</div>}
-                    </td>
-                    <td>
-                      <div className="row">
-                        <button className="btn btn-small" disabled={!h.active || test.isPending} onClick={() => test.mutate(h)}>Send a test</button>
-                        <button className="btn btn-small" onClick={() => setDeliveries(h)}>Deliveries</button>
-                        <button className="btn btn-small" onClick={() => setEditing(h)}>Edit</button>
-                        <button className="btn btn-small" onClick={() => patch.mutate({ id: h.id, body: { active: !h.active } })}>{h.active ? 'Disable' : 'Enable'}</button>
-                        <button className="btn btn-small" onClick={() => confirm('Make a new secret? The old one stops working at once: update the receiver straight away.') && rotate.mutate(h.id)}>New secret</button>
-                        <button className="btn btn-small btn-danger" onClick={() => confirm(`Delete this webhook and its delivery history?\n${h.url}`) && remove.mutate(h.id)}>Delete</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ul className="ent-list">
+            {data.items.map((h) => (
+              <li key={h.id} className="ent ent-wide">
+                <div className="ent-main">
+                  <div className="ent-title"><span className="mono" style={{ fontSize: '.875rem' }}>{h.url}</span></div>
+                  {h.description && <div className="ent-sub">{h.description}</div>}
+                  <div className="ent-tags">{h.events.map((e) => <span key={e} className="tag">{EVENT_LABEL[e] ?? e}</span>)}</div>
+                </div>
+                <div className="ent-side"><HookState h={h} /></div>
+                <div className="ent-notes">
+                  <span className="muted">
+                    {t('settings.webhooks.secretEnding', { hint: h.secret_hint })}
+                    {h.last_success_at && <> · {t('settings.webhooks.lastDelivered', { when: fmtShort(h.last_success_at) })}</>}
+                    {h.pending > 0 && <> · {t('settings.webhooks.waiting', { count: h.pending })}</>}
+                  </span>
+                  {h.failed_24h > 0 && <span className="set-bad">{t('settings.webhooks.failedDay', { count: h.failed_24h })}</span>}
+                  {h.disabled_reason && <span className="set-warn">{h.disabled_reason}</span>}
+                </div>
+                <div className="ent-bar">
+                  <div className="ent-actions" style={{ justifyContent: 'flex-start' }}>
+                    <button className="btn btn-small" disabled={!h.active || test.isPending} onClick={() => test.mutate(h)}>{t('settings.webhooks.test')}</button>
+                    <button className="btn btn-small" onClick={() => setDeliveries(h)}>{t('settings.webhooks.deliveries')}</button>
+                    <button className="btn btn-small" onClick={() => setEditing(h)}>{t('common.edit')}</button>
+                  </div>
+                  <div className="ent-actions">
+                    <button className="btn btn-small btn-ghost" onClick={() => patch.mutate({ id: h.id, body: { active: !h.active } })}>{h.active ? t('settings.webhooks.disable') : t('settings.webhooks.enable')}</button>
+                    <button className="btn btn-small btn-ghost" onClick={() => confirm(t('settings.webhooks.rotateConfirm')) && rotate.mutate(h.id)}>{t('settings.webhooks.rotate')}</button>
+                    <span className="ent-sep" aria-hidden="true" />
+                    <button className="btn btn-small btn-danger set-quiet" onClick={() => confirm(t('settings.webhooks.deleteConfirm', { url: h.url })) && remove.mutate(h.id)}>{t('common.delete')}</button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
         )}
-      </div>
+      </section>
       {editing && data && (
-        <WebhookDialog brandId={brandId} eventTypes={data.eventTypes} hook={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSecret={(s) => setSecret({ secret: s, title: 'Copy the secret now' })} />
+        <WebhookDialog brandId={brandId} eventTypes={data.eventTypes} hook={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSecret={(s) => setSecret({ secret: s, title: t('settings.webhooks.copySecretTitle') })} />
       )}
       {deliveries && <DeliveriesDialog hook={deliveries} onClose={() => setDeliveries(null)} />}
       {secret && <SecretDialog secret={secret.secret} title={secret.title} onClose={() => setSecret(null)} />}
-    </div>
+    </>
   );
 }

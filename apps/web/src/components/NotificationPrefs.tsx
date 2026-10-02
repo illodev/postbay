@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, type NotificationPreferences } from '../api';
+import { t, tMaybe } from '../i18n';
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../lib/push';
-import { ErrorBox, errorMessage, Spinner, useToast } from './ui';
+import { Chip, ErrorBox, errorMessage, Spinner, useToast } from './ui';
 
 /** What each person is told, and where: by email, and by push in the browsers they have turned it on in. */
 export function NotificationPrefs() {
@@ -15,16 +16,16 @@ export function NotificationPrefs() {
 
   const save = useMutation({
     mutationFn: () => api.put<NotificationPreferences>('/api/notifications/preferences', { emailKinds: [...edit!.email], pushKinds: [...edit!.push] }),
-    onSuccess: () => { setEdit(null); refresh(); toast('Saved'); },
+    onSuccess: () => { setEdit(null); refresh(); toast(t('settings.saved')); },
   });
   const toggle = useMutation({
     mutationFn: async () => { if (here) await disablePush(); else await enablePush(); },
-    onSuccess: () => { refresh(); toast(here ? 'Push is off in this browser' : 'Push is on in this browser'); },
+    onSuccess: () => { refresh(); toast(here ? t('account.push.offToast') : t('account.push.onToast')); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
   const test = useMutation({
     mutationFn: () => api.post<{ devices: number; reached: number }>('/api/push/test'),
-    onSuccess: (r) => toast(r.reached ? `Sent to ${r.reached} browser${r.reached === 1 ? '' : 's'}` : r.devices ? 'The push service did not take it: try again in a moment' : 'No browser has push turned on', r.reached ? 'ok' : 'error'),
+    onSuccess: (r) => toast(r.reached ? t('account.push.sentTo', { count: r.reached }) : r.devices ? t('account.push.notTaken') : t('account.push.noBrowser'), r.reached ? 'ok' : 'error'),
     onError: (e) => toast(errorMessage(e), 'error'),
   });
 
@@ -37,43 +38,55 @@ export function NotificationPrefs() {
     if (next[which].has(kind)) next[which].delete(kind); else next[which].add(kind);
     setEdit(next);
   };
+  const supported = pushSupported();
   return (
-    <section className="card stack" aria-label="Notifications">
-      <h2>Notifications</h2>
-      <p className="muted" style={{ margin: 0 }}>The bell always shows everything. Choose what also comes to you by email, and by push to this and your other browsers.</p>
-
-      <div className="row-between" data-testid="push-here">
+    <section className="card stack acct-full" aria-label={t('account.notify.title')}>
+      <div className="set-card-head">
         <div>
-          <strong>Push in this browser</strong>
+          <h2>{t('account.notify.title')}</h2>
+          <p className="set-hint">{t('account.notify.hint')}</p>
+        </div>
+      </div>
+
+      <div className="acct-push" data-testid="push-here">
+        <div>
+          <div className="row" style={{ gap: '.6rem' }}>
+            <strong style={{ fontWeight: 500 }}>{t('account.push.here')}</strong>
+            {!supported ? <Chip state="draft" label={t('account.push.unsupportedChip')} /> : here ? <Chip state="approved" label={t('account.push.on')} /> : <Chip state="draft" label={t('account.push.off')} />}
+          </div>
           <div className="muted small">
-            {!pushSupported() ? 'This browser cannot receive push messages.' : here ? 'On.' : 'Off.'}
-            {data.pushDevices > 0 && ` You have push on in ${data.pushDevices} browser${data.pushDevices === 1 ? '' : 's'}.`}
+            {!supported ? t('account.push.unsupported') : here ? t('account.push.onHint') : t('account.push.offHint')}
+            {data.pushDevices > 0 && ` ${t('account.push.devices', { count: data.pushDevices })}`}
           </div>
         </div>
         <div className="row">
-          {pushSupported() && <button className="btn" onClick={() => toggle.mutate()} disabled={toggle.isPending}>{here ? 'Turn off here' : 'Turn on here'}</button>}
-          {data.pushDevices > 0 && <button className="btn" onClick={() => test.mutate()} disabled={test.isPending}>Send a test</button>}
+          {supported && <button className="btn" onClick={() => toggle.mutate()} disabled={toggle.isPending}>{here ? t('account.push.turnOff') : t('account.push.turnOn')}</button>}
+          {data.pushDevices > 0 && <button className="btn" onClick={() => test.mutate()} disabled={test.isPending}>{t('account.push.test')}</button>}
         </div>
       </div>
 
       <div className="table-wrap">
-        <table>
-          <thead><tr><th>Tell me when…</th><th style={{ width: 80 }}>Email</th><th style={{ width: 80 }}>Push</th></tr></thead>
+        <table className="acct-prefs">
+          <thead><tr><th>{t('account.notify.when')}</th><th>{t('account.notify.email')}</th><th>{t('account.notify.push')}</th></tr></thead>
           <tbody>
-            {data.kinds.map((k) => (
-              <tr key={k.kind}>
-                <td>{k.label}</td>
-                <td><input type="checkbox" aria-label={`Email: ${k.label}`} checked={email.has(k.kind)} onChange={() => flip('email', k.kind)} /></td>
-                <td><input type="checkbox" aria-label={`Push: ${k.label}`} checked={push.has(k.kind)} onChange={() => flip('push', k.kind)} /></td>
-              </tr>
-            ))}
+            {data.kinds.map((k) => {
+              const label = tMaybe(`account.kind.${k.kind}`, k.label);
+              return (
+                <tr key={k.kind}>
+                  <td>{label}</td>
+                  <td><input type="checkbox" aria-label={t('account.notify.emailFor', { what: label })} checked={email.has(k.kind)} onChange={() => flip('email', k.kind)} /></td>
+                  <td><input type="checkbox" aria-label={t('account.notify.pushFor', { what: label })} checked={push.has(k.kind)} onChange={() => flip('push', k.kind)} /></td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
       {save.error && <ErrorBox error={save.error} />}
-      <div className="row">
-        <button className="btn btn-primary" disabled={!edit || save.isPending} onClick={() => save.mutate()}>Save</button>
-        {edit && <button className="btn" onClick={() => setEdit(null)}>Discard changes</button>}
+      <div className="set-savebar">
+        <button className="btn btn-primary" disabled={!edit || save.isPending} onClick={() => save.mutate()}>{t('common.save')}</button>
+        {edit && <button className="btn btn-ghost" onClick={() => setEdit(null)}>{t('settings.discard')}</button>}
+        {edit && <span className="muted small">{t('settings.unsaved')}</span>}
       </div>
     </section>
   );

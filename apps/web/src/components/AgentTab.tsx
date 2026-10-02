@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type AgentRun, type AgentSettings, type BrandAgent } from '../api';
+import { t } from '../i18n';
 import { BLOCK_REASON_LABEL, fmtMoney, fmtShort, OUTCOME_LABEL, TRIGGER_LABEL } from '../lib/format';
 import { ErrorBox, Field, Spinner, useToast } from './ui';
 
@@ -11,8 +12,8 @@ const OUTCOME_CHIP: Record<string, string> = {
 };
 
 export function OutcomeChip({ run }: { run: Pick<AgentRun, 'status' | 'outcome' | 'blocked_reason'> }) {
-  if (run.status === 'running') return <span className="chip chip-publishing">Working</span>;
-  const label = run.outcome === 'blocked' ? (BLOCK_REASON_LABEL[run.blocked_reason ?? ''] ?? 'Not started') : (OUTCOME_LABEL[run.outcome ?? ''] ?? run.outcome);
+  if (run.status === 'running') return <span className="chip chip-agent">{t('settings.agent.working')}</span>;
+  const label = run.outcome === 'blocked' ? (BLOCK_REASON_LABEL[run.blocked_reason ?? ''] ?? t('settings.agent.notStarted')) : (OUTCOME_LABEL[run.outcome ?? ''] ?? run.outcome);
   return <span className={`chip ${OUTCOME_CHIP[run.outcome ?? ''] ?? ''}`}>{label}</span>;
 }
 
@@ -41,7 +42,7 @@ export function AgentTab({ brandId }: { brandId: string }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['brand-agent', brandId] });
       qc.invalidateQueries({ queryKey: ['brand', brandId] });
-      toast('Saved');
+      toast(t('settings.saved'));
     },
   });
 
@@ -51,69 +52,108 @@ export function AgentTab({ brandId }: { brandId: string }) {
   const budgetsSet = s.max_cost_per_piece !== null && s.max_cost_per_month !== null;
   const pct = s.max_cost_per_month ? Math.min(100, (data.spent_month / s.max_cost_per_month) * 100) : 0;
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
+  const currency = form.currency || 'USD';
+  const finished = data.runs.filter((r) => r.status === 'finished');
+  const uploaded = finished.filter((r) => r.outcome === 'uploaded').length;
 
   return (
-    <div className="stack">
-      <div className="notice notice-info">
-        The agent turns a request for changes into a new version without anyone passing it on. It runs in a separate program (the runner), listens
-        to a webhook and signs in with a producer token (API tokens tab). It can never approve or schedule. These limits are checked here, so no
-        runner can skip them.
-      </div>
+    <>
       {!budgetsSet && (
-        <div className="notice notice-warn" role="status">The agent will not start until both budgets are set: spending is a decision, not a default.</div>
+        <div className="notice notice-warn" role="status" style={{ margin: 0 }}>{t('settings.agent.noBudget')}</div>
       )}
+
+      <section className="card stack" aria-label={t('settings.agent.month')}>
+        <h3>{t('settings.agent.month')}</h3>
+        <div className="set-stats">
+          <div>
+            <div className="set-stat-label">{t('settings.agent.spent')}</div>
+            <div className="set-stat-value">{fmtMoney(data.spent_month, s.currency)}</div>
+          </div>
+          <div>
+            <div className="set-stat-label">{t('settings.agent.monthBudget')}</div>
+            <div className="set-stat-value">{s.max_cost_per_month !== null ? fmtMoney(s.max_cost_per_month, s.currency) : <span className="set-stat-none">{t('settings.agent.noLimit')}</span>}</div>
+          </div>
+          <div>
+            <div className="set-stat-label">{t('settings.agent.recentRuns')}</div>
+            <div className="set-stat-value">{data.runs.length}</div>
+            {data.runs.length > 0 && <div className="set-stat-note">{t('settings.agent.uploadedOf', { count: uploaded })}</div>}
+          </div>
+        </div>
+        {s.max_cost_per_month !== null && (
+          <>
+            <div className="set-meter" data-level={pct >= 100 ? 'full' : pct >= 80 ? 'high' : 'ok'} role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} aria-label={t('settings.agent.share')}>
+              <span style={{ width: `${pct}%` }} />
+            </div>
+            <p className="set-hint">{t('settings.agent.spentOf', { spent: fmtMoney(data.spent_month, s.currency), budget: fmtMoney(s.max_cost_per_month, s.currency) })}</p>
+          </>
+        )}
+      </section>
+
       <form className="card stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
-        <h3>Limits</h3>
-        <div className="row">
-          <div className="grow"><Field label="Rounds per piece" hint="After this many rounds the piece goes to a person instead of to the agent again."><input type="number" min={1} max={10} required value={form.rounds} onChange={set('rounds')} /></Field></div>
-          <div className="grow"><Field label="Longest run (minutes)" hint="The runner stops the agent after this long."><input type="number" min={1} max={240} required value={form.minutes} onChange={set('minutes')} /></Field></div>
+        <div className="set-card-head">
+          <div>
+            <h3>{t('settings.agent.limits')}</h3>
+            <p className="set-hint">{t('settings.agent.limitsHint')}</p>
+          </div>
         </div>
-        <div className="row">
-          <div className="grow"><Field label={`Budget per piece (${form.currency || 'USD'})`} hint="What the agent may spend on one piece, in total."><input type="number" min={0} step="0.01" value={form.piece} onChange={set('piece')} /></Field></div>
-          <div className="grow"><Field label={`Budget per month (${form.currency || 'USD'})`} hint="What it may spend across the whole brand each calendar month."><input type="number" min={0} step="0.01" value={form.month} onChange={set('month')} /></Field></div>
-          <div style={{ width: 110 }}><Field label="Currency"><input type="text" maxLength={8} value={form.currency} onChange={set('currency')} /></Field></div>
+        <div className="set-fields">
+          <Field label={t('settings.agent.rounds')} hint={t('settings.agent.roundsHint')}><input type="number" min={1} max={10} required value={form.rounds} onChange={set('rounds')} /></Field>
+          <Field label={t('settings.agent.minutes')} hint={t('settings.agent.minutesHint')}><input type="number" min={1} max={240} required value={form.minutes} onChange={set('minutes')} /></Field>
         </div>
-        <div className="row">
-          <div className="grow"><Field label="Ask for content for an empty slot (days ahead)" hint="A calendar slot still empty this many days before its date is announced as an event. 0 turns it off."><input type="number" min={0} max={30} required value={form.slots} onChange={set('slots')} /></Field></div>
+        <div className="set-fields">
+          <Field label={t('settings.agent.budgetPiece', { currency })} hint={t('settings.agent.budgetPieceHint')}><input type="number" min={0} step="0.01" value={form.piece} onChange={set('piece')} /></Field>
+          <Field label={t('settings.agent.budgetMonth', { currency })} hint={t('settings.agent.budgetMonthHint')}><input type="number" min={0} step="0.01" value={form.month} onChange={set('month')} /></Field>
+          <Field label={t('settings.agent.currency')}><input type="text" maxLength={8} value={form.currency} onChange={set('currency')} style={{ maxWidth: 120 }} /></Field>
         </div>
+        <Field label={t('settings.agent.slots')} hint={t('settings.agent.slotsHint')}>
+          <input className="set-num-input" type="number" min={0} max={30} required value={form.slots} onChange={set('slots')} />
+        </Field>
         {save.error && <ErrorBox error={save.error} />}
-        <div><button className="btn btn-primary" disabled={save.isPending}>Save</button></div>
+        <div><button className="btn btn-primary" disabled={save.isPending}>{save.isPending ? t('common.saving') : t('common.save')}</button></div>
       </form>
 
-      <div className="card stack">
-        <h3>This month</h3>
-        <p style={{ margin: 0 }}>
-          Spent <strong>{fmtMoney(data.spent_month, s.currency)}</strong>
-          {s.max_cost_per_month !== null && <> of {fmtMoney(s.max_cost_per_month, s.currency)}</>}
-        </p>
-        {s.max_cost_per_month !== null && <progress value={pct} max={100} aria-label="Share of the monthly budget spent" style={{ width: '100%' }} />}
-      </div>
-
-      <div className="card">
-        <div className="card-head"><h3>Recent runs</h3></div>
-        {data.runs.length === 0 && <p className="muted">The agent has not run yet.</p>}
+      <section className="card">
+        <div className="card-head"><h3>{t('settings.agent.runs')}</h3></div>
+        {data.runs.length === 0 && <p className="muted small" style={{ margin: 0 }}>{t('settings.agent.noRuns')}</p>}
         {data.runs.length > 0 && (
           <div className="table-wrap">
-            <table>
-              <thead><tr><th>When</th><th>Piece</th><th>Started by</th><th>Result</th><th>Cost</th></tr></thead>
+            <table className="set-table">
+              <thead>
+                <tr>
+                  <th>{t('settings.agent.when')}</th>
+                  <th>{t('settings.agent.piece')}</th>
+                  <th>{t('settings.agent.startedBy')}</th>
+                  <th>{t('settings.agent.result')}</th>
+                  <th className="num">{t('settings.agent.cost')}</th>
+                </tr>
+              </thead>
               <tbody>
                 {data.runs.map((r) => (
                   <tr key={r.id}>
-                    <td className="small">{fmtShort(r.started_at)}</td>
-                    <td>{r.piece_id ? <Link to={`/pieces/${r.piece_id}`}>{r.piece_title ?? 'Piece'}</Link> : <span className="muted">New piece</span>}{r.version_id && r.version_number && <> · <Link to={`/review/${r.version_id}`}>v{r.version_number}</Link></>}</td>
-                    <td className="small">{TRIGGER_LABEL[r.trigger] ?? r.trigger}{r.token_name && <div className="muted">{r.token_name}</div>}</td>
-                    <td>
-                      <OutcomeChip run={r} />
-                      {r.notes && <div className="small muted" style={{ maxWidth: 360, overflowWrap: 'anywhere' }}>{r.notes.slice(0, 160)}</div>}
+                    <td className="small" style={{ whiteSpace: 'nowrap' }}>{fmtShort(r.started_at)}</td>
+                    <td data-label={t('settings.agent.piece')}>
+                      <span>
+                        {r.piece_id ? <Link to={`/pieces/${r.piece_id}`}>{r.piece_title ?? t('settings.agent.pieceFallback')}</Link> : <span className="muted">{t('settings.agent.newPiece')}</span>}
+                        {r.version_id && r.version_number && <> <Link className="tag tag-agent" to={`/review/${r.version_id}`}>v{r.version_number}</Link></>}
+                      </span>
                     </td>
-                    <td className="small">{r.outcome === 'blocked' ? '' : fmtMoney(r.cost, s.currency)}</td>
+                    <td className="small" data-label={t('settings.agent.startedBy')}>
+                      <span>{TRIGGER_LABEL[r.trigger] ?? r.trigger}{r.token_name && <span className="muted"> · {r.token_name}</span>}</span>
+                    </td>
+                    <td data-label={t('settings.agent.result')}>
+                      <div>
+                        <OutcomeChip run={r} />
+                        {r.notes && <div className="small muted" style={{ maxWidth: 360, overflowWrap: 'anywhere' }}>{r.notes.slice(0, 160)}</div>}
+                      </div>
+                    </td>
+                    <td className="num" data-label={t('settings.agent.cost')}>{r.outcome === 'blocked' ? '—' : fmtMoney(r.cost, s.currency)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </div>
-    </div>
+      </section>
+    </>
   );
 }
