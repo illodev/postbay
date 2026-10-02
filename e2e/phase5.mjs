@@ -689,7 +689,8 @@ await step('readiness: the command checks a real publish end to end, writes a tr
   const text = readFileSync(path.join(dir, files[0]), 'utf8');
   const transcript = JSON.parse(text);
   assert(transcript.exchanges.length > 3, 'the transcript should hold the calls');
-  const leak = /.{0,60}(page-token|access_token=|client_secret|e2e-secret).{0,60}/.exec(text);
+  // What must be gone is the VALUES: a field called access_token whose value says [removed] is how the transcript shows it was there.
+  const leak = /.{0,60}(page-token|e2e-secret|access_token=(?!\[removed\])|"(?:client_secret|access_token|refresh_token)":\s*"(?!\[removed\])|access-\d+|refresh-\d+).{0,60}/.exec(text);
   assert(!leak, `the transcript must not hold a token or a secret: …${leak?.[0]}…`);
 });
 
