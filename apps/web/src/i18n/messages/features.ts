@@ -80,6 +80,19 @@ export const features = define({
     'fx.approve.notScheduled': 'Aprobada, sin programar',
     'fx.approve.counted': 'Tu aprobación cuenta',
     'fx.approve.seeCalendar': 'Ver en el calendario',
+
+    // Prizes from a piece of the studio.
+    'fx.prizes.kindPiece': 'Pieza del estudio',
+    'fx.prizes.addPiece': 'Pieza del estudio',
+    'fx.prizes.piece': 'Pieza',
+    'fx.prizes.pieceHint': 'Se entrega el archivo principal de su última versión aprobada en el momento de la descarga.',
+    'fx.prizes.choosePiece': 'Elige una pieza',
+    'fx.prizes.noPieces': 'No hay piezas todavía',
+    'fx.prizes.notApprovedYet': 'sin aprobar',
+    'fx.prizes.handsOut': 'v{n} · {file} · aprobada el {date}',
+    'fx.prizes.noApproved': 'Sin versión aprobada',
+    'fx.prizes.unavailable': 'No disponible',
+    'prizes.public.error.no_approved_version': 'Este premio no está disponible ahora mismo. Vuelve a intentarlo más tarde.',
   },
   en: {
     'members.deactivate': 'Deactivate',
@@ -150,5 +163,17 @@ export const features = define({
     'fx.approve.notScheduled': 'Approved, not scheduled',
     'fx.approve.counted': 'Your approval counts',
     'fx.approve.seeCalendar': 'See it in the calendar',
+
+    'fx.prizes.kindPiece': 'Studio piece',
+    'fx.prizes.addPiece': 'Studio piece',
+    'fx.prizes.piece': 'Piece',
+    'fx.prizes.pieceHint': 'Whoever downloads it gets the main file of its latest approved version at that moment.',
+    'fx.prizes.choosePiece': 'Choose a piece',
+    'fx.prizes.noPieces': 'No pieces yet',
+    'fx.prizes.notApprovedYet': 'not approved',
+    'fx.prizes.handsOut': 'v{n} · {file} · approved {date}',
+    'fx.prizes.noApproved': 'No approved version',
+    'fx.prizes.unavailable': 'Not available',
+    'prizes.public.error.no_approved_version': 'This prize is not available right now. Try again later.',
   },
 });

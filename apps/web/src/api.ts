@@ -627,7 +627,13 @@ export interface BrandMetrics {
 export interface Prize {
   id: string;
   name: string;
-  kind: 'file' | 'link';
+  /** A piece of the studio (what is handed out is its latest approved version's main file), a file kept here, or a link. */
+  kind: 'piece' | 'file' | 'link';
+  /** For a piece prize: the piece, and the version it would hand out now (null: it has no approved version). */
+  piece?: { id: string; title: string | null } | null;
+  version?: { id: string; number: number; format: string; approved_at: string; file_name: string; mime: string } | null;
+  /** Why it cannot be used now, in the reader's language ("Sin versión aprobada"). */
+  unavailable_reason?: string | null;
   file_name: string | null;
   file_bytes: number | null;
   url: string | null;

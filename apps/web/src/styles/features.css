@@ -52,3 +52,6 @@
 .ops .oc-slot.fx-slot-btn:hover, .ops .oc-slot.fx-slot-btn:focus-visible { background: var(--accent-soft); color: var(--text); }
 .ops .oc-slot.fx-slot-btn:hover .oc-time, .ops .oc-slot.fx-slot-btn:focus-visible .oc-time { color: var(--muted); }
 .fx-slot-for { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: .8125rem; }
+
+/* Prizes: the kind of prize, as a small segmented choice that keeps its own width. */
+.fx-kind { display: flex; }
