@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { api, type Prize, type PrizeDelivery, type PublicationPrize, type PublicationRow } from '../api';
 import { t, tMaybe } from '../i18n';
 import { fmtDateTime, NETWORK_LABEL } from '../lib/format';
-import { Chip, CopyButton, Dialog, ErrorBox, Field, Spinner, useToast } from './ui';
+import { Chip, CopyButton, Dialog, ErrorBox, Field, Select, Spinner, Switch, useToast } from './ui';
 import '../styles/settings.css';
 
 /**
@@ -65,9 +65,12 @@ function RuleForm({ pub, info, prizes, onClose }: { pub: PublicationRow; info: P
         <div className="notice notice-warn" style={{ margin: 0 }}>{t('prizes.rule.noPrize')} {settingsLink}.</div>
       ) : (
         <Field label={t('prizes.rule.prize')}>
-          <select value={prizeId} onChange={(e) => setPrizeId(e.target.value)} required>
-            {usable.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.kind === 'file' ? t('prizes.kind.file') : t('prizes.kind.link')})</option>)}
-          </select>
+          <Select
+            label={t('prizes.rule.prize')}
+            value={prizeId || undefined}
+            onChange={setPrizeId}
+            options={usable.map((p) => ({ value: p.id, label: `${p.name} (${p.kind === 'file' ? t('prizes.kind.file') : t('prizes.kind.link')})` }))}
+          />
         </Field>
       )}
       {priv && (
@@ -107,10 +110,7 @@ function RuleForm({ pub, info, prizes, onClose }: { pub: PublicationRow; info: P
           <span className="muted small" style={{ display: 'block' }}>{t('prizes.rule.confirmHint', { notice: info.auto_notice })}</span>
         </span>
       </label>
-      <label className="check">
-        <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
-        <span>{t('prizes.rule.running')} <span className="muted small">{t('prizes.rule.runningHint')}</span></span>
-      </label>
+      <Switch label={t('prizes.rule.running')} hint={t('prizes.rule.runningHint')} checked={active} onChange={setActive} />
       {save.error && <ErrorBox error={save.error} />}
       <div className="row" style={{ justifyContent: 'flex-end' }}>
         <button type="button" className="btn" onClick={onClose}>{t('common.close')}</button>

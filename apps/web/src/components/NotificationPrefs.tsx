@@ -42,10 +42,7 @@ export function NotificationPrefs() {
   return (
     <section className="card stack acct-full" aria-label={t('account.notify.title')}>
       <div className="set-card-head">
-        <div>
-          <h2>{t('account.notify.title')}</h2>
-          <p className="set-hint">{t('account.notify.hint')}</p>
-        </div>
+        <h2 title={t('account.notify.hint')}>{t('account.notify.title')}</h2>
       </div>
 
       <div className="acct-push" data-testid="push-here">

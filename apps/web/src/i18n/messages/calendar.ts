@@ -4,7 +4,7 @@ import { define } from './define';
 export const calendar = define({
   es: {
     'calendar.title': 'Calendario',
-    'calendar.subtitle': 'Horas en {zone}, la zona horaria de {brand}.',
+    'calendar.zoneHint': 'Todas las horas están en la zona horaria de {brand}.',
     'calendar.block': 'Bloquear un día',
     'calendar.blockHint': 'Ese día no se podrá programar nada: un festivo, una crisis, un día tranquilo.',
     'calendar.blockDay': 'Día',
@@ -35,7 +35,18 @@ export const calendar = define({
     'calendar.byHand': 'a mano',
     'calendar.automatic': 'automática',
     'calendar.moved': 'Movida al {day}',
-    'calendar.dragHint': 'Arrastra una publicación programada a otro día para moverla: conserva su hora.',
+    'calendar.dragHint': 'Arrastra una publicación a otro día para moverla (conserva su hora), o una pieza de «Sin programar» a un día para programarla.',
+    'calendar.dropHere': 'Suelta aquí',
+    'calendar.todayEmpty': 'Hoy no sale nada.',
+
+    'calendar.tray.title': 'Sin programar',
+    'calendar.tray.hint': 'Arrastra una pieza a un día para programarla, o haz clic para elegir cuándo.',
+    'calendar.tray.hintTap': 'Toca una pieza para elegir cuándo sale.',
+    'calendar.tray.empty': 'Todo lo aprobado tiene fecha.',
+    'calendar.tray.scheduleLabel': 'Programar «{title}»',
+    'calendar.tray.paused': 'Con la marca en pausa no se puede programar.',
+    'calendar.tray.show': 'Mostrar lo aprobado sin programar',
+    'calendar.tray.hide': 'Ocultar lo aprobado sin programar',
     'calendar.paused': 'En pausa',
     'calendar.pausedHint': 'Con la marca en pausa no sale nada de lo programado y no se puede mover.',
 
@@ -43,8 +54,7 @@ export const calendar = define({
     'calendar.legend.slot': 'Hueco libre',
     'calendar.legend.blocked': 'Día bloqueado',
 
-    'calendar.empty': 'Nada en estas fechas',
-    'calendar.emptyHint': 'Las publicaciones se programan desde la página de cada pieza aprobada.',
+    'calendar.empty': 'Nada en estas fechas.',
     'calendar.live': { zero: 'Sin publicaciones entre el {from} y el {to}', one: '{count} publicación entre el {from} y el {to}', other: '{count} publicaciones entre el {from} y el {to}' },
 
     // Network short names, in the monospaced tags of the calendar, the publish page and the results.
@@ -60,7 +70,7 @@ export const calendar = define({
   },
   en: {
     'calendar.title': 'Calendar',
-    'calendar.subtitle': 'Times are in {zone}, the time zone of {brand}.',
+    'calendar.zoneHint': 'Every time is in the time zone of {brand}.',
     'calendar.block': 'Block a date',
     'calendar.blockHint': 'Nothing can be scheduled on a blocked date: a bank holiday, a crisis, a quiet day.',
     'calendar.blockDay': 'Date',
@@ -91,7 +101,18 @@ export const calendar = define({
     'calendar.byHand': 'by hand',
     'calendar.automatic': 'automatic',
     'calendar.moved': 'Moved to {day}',
-    'calendar.dragHint': 'Drag a scheduled post to another day to move it; it keeps its local time.',
+    'calendar.dragHint': 'Drag a post to another day to move it (it keeps its time), or a piece from “Not scheduled” onto a day to schedule it.',
+    'calendar.dropHere': 'Drop here',
+    'calendar.todayEmpty': 'Nothing goes out today.',
+
+    'calendar.tray.title': 'Not scheduled',
+    'calendar.tray.hint': 'Drag a piece onto a day to schedule it, or click to choose when.',
+    'calendar.tray.hintTap': 'Tap a piece to choose when it goes out.',
+    'calendar.tray.empty': 'Everything approved has a date.',
+    'calendar.tray.scheduleLabel': 'Schedule “{title}”',
+    'calendar.tray.paused': 'While the brand is paused nothing can be scheduled.',
+    'calendar.tray.show': 'Show what is approved and not scheduled',
+    'calendar.tray.hide': 'Hide what is approved and not scheduled',
     'calendar.paused': 'Paused',
     'calendar.pausedHint': 'While the brand is paused nothing scheduled goes out and nothing can be moved.',
 
@@ -99,8 +120,7 @@ export const calendar = define({
     'calendar.legend.slot': 'Empty slot',
     'calendar.legend.blocked': 'Blocked day',
 
-    'calendar.empty': 'Nothing in these dates',
-    'calendar.emptyHint': 'Posts are scheduled from the page of each approved piece.',
+    'calendar.empty': 'Nothing on these dates.',
     'calendar.live': { zero: 'No posts between {from} and {to}', one: '{count} post between {from} and {to}', other: '{count} posts between {from} and {to}' },
 
     'calendar.net.instagram': 'IG',

@@ -42,6 +42,29 @@ export type Visibility = 'public' | 'private' | 'processing' | 'scheduled' | 'un
 export interface Me {
   user: { id: string; email: string; name: string | null };
   brands: { id: string; name: string; timezone: string; paused: boolean; role: Role; workspace: string }[];
+  /** Brands of other workspaces that asked this person to join; nothing changes until they accept. */
+  invitations?: MyInvitation[];
+}
+
+export interface MyInvitation {
+  id: string;
+  role: Role;
+  created_at: string;
+  expires_at: string;
+  brand_id: string;
+  brand: string;
+  workspace: string;
+  invited_by: string | null;
+}
+
+/** An invitation of this brand still waiting for an answer (the person belongs to another workspace). */
+export interface BrandInvitation {
+  id: string;
+  role: Role;
+  created_at: string;
+  expires_at: string;
+  email: string;
+  invited_by: string | null;
 }
 
 export interface BrandSettings {
@@ -257,7 +280,16 @@ export interface Account {
   automated: boolean;
   last_error: string | null;
   last_health_at: string | null;
-  details: { audited?: boolean; username?: string; missingScopes?: string[]; dataAccessExpiresAt?: string };
+  details: {
+    audited?: boolean;
+    username?: string;
+    missingScopes?: string[];
+    dataAccessExpiresAt?: string;
+    /** YouTube: the channel's made-for-kids default for new videos; absent when each video is asked. */
+    madeForKids?: boolean;
+    /** Meta: whether the network pushes this account's comments to the app's webhook, and why not when it does not. */
+    events?: { subscribed: boolean; fields?: string[]; note?: string; at?: string };
+  };
 }
 
 export interface PlacementSpec {

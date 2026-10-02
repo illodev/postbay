@@ -5,7 +5,17 @@ import { define } from './define';
 export const account = define({
   es: {
     'account.title': 'Tu cuenta',
-    'account.subtitle': 'Quién eres aquí, en qué idioma lo ves, cómo demuestras que eres tú y qué te avisamos.',
+
+    'account.invitations.title': { one: 'Te han invitado a una marca', other: 'Te han invitado a {count} marcas' },
+    'account.invitations.hint': 'No cambia nada hasta que respondas. Si aceptas, entrarás en la marca con el rol que te ofrecen.',
+    'account.invitations.as': 'como {role}',
+    'account.invitations.by': 'te invita {who}',
+    'account.invitations.expires': 'caduca el {date}',
+    'account.invitations.accept': 'Aceptar',
+    'account.invitations.decline': 'Rechazar',
+    'account.invitations.accepted': 'Ya estás en {brand}',
+    'account.invitations.declined': 'Invitación rechazada',
+    'account.invitations.unknown': 'Si no sabes quién te invita, recházala.',
 
     'account.profile.title': 'Perfil',
     'account.profile.brands': { one: 'Tu marca', other: 'Tus {count} marcas' },
@@ -148,7 +158,17 @@ export const account = define({
   },
   en: {
     'account.title': 'Your account',
-    'account.subtitle': 'Who you are here, the language you see it in, how you prove it is you and what you are told about.',
+
+    'account.invitations.title': { one: 'You have been invited to a brand', other: 'You have been invited to {count} brands' },
+    'account.invitations.hint': 'Nothing changes until you answer. If you accept, you join the brand with the role they offer.',
+    'account.invitations.as': 'as {role}',
+    'account.invitations.by': 'from {who}',
+    'account.invitations.expires': 'expires {date}',
+    'account.invitations.accept': 'Accept',
+    'account.invitations.decline': 'Decline',
+    'account.invitations.accepted': 'You are now in {brand}',
+    'account.invitations.declined': 'Invitation declined',
+    'account.invitations.unknown': 'If you do not know who is inviting you, decline it.',
 
     'account.profile.title': 'Profile',
     'account.profile.brands': { one: 'Your brand', other: 'Your {count} brands' },

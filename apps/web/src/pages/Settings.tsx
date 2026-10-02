@@ -2,8 +2,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Info } from 'luxon';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api, type Account, type BrandSettings, type Integrations, type PendingConnection, type Provider, type Role, type SlackSettings, type Webhook } from '../api';
-import { Chip, CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, NetMark, Spinner, useToast } from '../components/ui';
+import { api, type Account, type BrandInvitation, type BrandSettings, type Integrations, type PendingConnection, type Provider, type Role, type SlackSettings, type Webhook } from '../api';
+import { Avatar, displayName } from '../components/Avatar';
+import { Icon } from '../components/icons';
+import { PageBar } from '../components/PageBar';
+import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, MoreMenu, NetMark, Select, Skeleton, Spinner, Switch, Tip, useConfirm, useToast } from '../components/ui';
 import { t, tMaybe, type Key } from '../i18n';
 import { fmtDateTime, fmtDay, fmtShort, NETWORK_LABEL, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -18,14 +21,8 @@ import '../styles/settings.css';
 type Tab = 'general' | 'members' | 'accounts' | 'schedule' | 'agent' | 'webhooks' | 'prizes' | 'notifications' | 'tokens' | 'audit';
 
 const ROLES: Role[] = ['admin', 'approver', 'reviewer', 'producer', 'reader'];
-
-/** Network initials for the small square badge. Not words: the same in every language, and the full name sits next to it. */
-const NET_SHORT: Record<string, string> = {
-  instagram: 'IG', facebook: 'FB', youtube: 'YT', tiktok: 'TT', linkedin: 'LI', x: 'X', threads: 'TH', pinterest: 'PI', bluesky: 'BS',
-};
-
-const initials = (s: string) =>
-  s.split(/[\s@.()]+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
+/** Built on use: the labels follow the language. */
+const ROLE_OPTIONS = () => ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r] ?? r }));
 
 /** Day names from luxon, so they follow the language: Monday is 1, as the API counts them. */
 const weekdayName = (n: number) => {
@@ -45,6 +42,7 @@ function General({ brandId }: { brandId: string }) {
   const { can } = useSession();
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const { data: b, error } = useBrandSettings(brandId);
   const [form, setForm] = useState<null | { name: string; timezone: string; locale: string; required: number; reapprove: boolean; checklist: string; lead: number; tolerance: number }>(null);
   const f = form ?? (b && { name: b.name, timezone: b.timezone, locale: b.locale, required: b.rules.required_approvals, reapprove: b.rules.reapprove_on_move, checklist: b.rules.checklist.join('\n'), lead: b.publishing.prepare_lead_minutes, tolerance: b.publishing.late_tolerance_minutes });
@@ -63,7 +61,9 @@ function General({ brandId }: { brandId: string }) {
   });
   if (error) return <ErrorBox error={error} />;
   if (!b || !f) return <Spinner />;
-  const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+  const known = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+  // The brand's own zone is always offered, even when this browser's list spells it differently (UTC, Etc/…).
+  const zones = known.includes(f.timezone) ? known : [f.timezone, ...known];
   return (
     <>
       {can('manage') && (
@@ -74,9 +74,8 @@ function General({ brandId }: { brandId: string }) {
               <input type="text" required value={f.name} onChange={(e) => setForm({ ...f, name: e.target.value })} />
             </Field>
             <div className="set-fields">
-              <Field label={t('settings.general.timezone')} hint={t('settings.general.timezoneHint')}>
-                <input type="text" list="zones" required value={f.timezone} onChange={(e) => setForm({ ...f, timezone: e.target.value })} />
-                <datalist id="zones">{zones.map((z) => <option key={z} value={z} />)}</datalist>
+              <Field label={t('settings.general.timezone')}>
+                <Select label={t('settings.general.timezone')} value={f.timezone} onChange={(z) => setForm({ ...f, timezone: z })} options={zones.map((z) => ({ value: z, label: z.replace(/_/g, ' ') }))} />
               </Field>
               <Field label={t('settings.general.locale')} hint={t('settings.general.localeHint')}>
                 <input type="text" required maxLength={10} value={f.locale} onChange={(e) => setForm({ ...f, locale: e.target.value })} />
@@ -85,19 +84,11 @@ function General({ brandId }: { brandId: string }) {
           </section>
 
           <section className="card stack">
-            <div className="set-card-head">
-              <div>
-                <h3>{t('settings.general.rules')}</h3>
-                <p className="set-hint">{t('settings.general.rulesHint')}</p>
-              </div>
-            </div>
-            <Field label={t('settings.general.required')} hint={t('settings.general.requiredHint')}>
+            <h3>{t('settings.general.rules')}</h3>
+            <Field label={t('settings.general.required')} hint={t('settings.general.rulesHint')}>
               <input className="set-num-input" type="number" min={1} max={5} value={f.required} onChange={(e) => setForm({ ...f, required: Number(e.target.value) })} />
             </Field>
-            <label className="check">
-              <input type="checkbox" checked={f.reapprove} onChange={(e) => setForm({ ...f, reapprove: e.target.checked })} />
-              <span>{t('settings.general.reapprove')}<br /><span className="muted small">{t('settings.general.reapproveHint')}</span></span>
-            </label>
+            <Switch label={t('settings.general.reapprove')} hint={t('settings.general.reapproveHint')} checked={f.reapprove} onChange={(v) => setForm({ ...f, reapprove: v })} />
             <Field label={t('settings.general.checklist')} hint={t('settings.general.checklistHint')}>
               <textarea value={f.checklist} onChange={(e) => setForm({ ...f, checklist: e.target.value })} placeholder={t('settings.general.checklistPlaceholder')} />
             </Field>
@@ -138,7 +129,15 @@ function General({ brandId }: { brandId: string }) {
             {b.paused ? (
               <button className="btn btn-primary" onClick={() => pause.mutate(false)} disabled={pause.isPending}>{t('settings.general.resume')}</button>
             ) : (
-              <button className="btn btn-danger" onClick={() => confirm(t('settings.general.pauseConfirm', { brand: b.name })) && pause.mutate(true)} disabled={pause.isPending}>{t('settings.general.pause')}</button>
+              <button
+                className="btn btn-danger"
+                disabled={pause.isPending}
+                onClick={async () => {
+                  if (await confirm({ title: t('settings.general.pauseAsk', { brand: b.name }), text: t('settings.general.pauseConfirm'), confirmLabel: t('settings.general.pause'), danger: true })) pause.mutate(true);
+                }}
+              >
+                {t('settings.general.pause')}
+              </button>
             )}
           </div>
         </section>
@@ -149,18 +148,28 @@ function General({ brandId }: { brandId: string }) {
 
 // ───────────────────────────── members ─────────────────────────────
 
-interface Member { id: string; role: Role; user_id: string; email: string; name: string | null; second_factor: boolean }
+interface Member { id: string; role: Role; user_id: string; email: string; name: string | null; second_factor: boolean; can_reset_second_factor?: boolean }
 
 function Members({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const { me } = useSession();
   const { data, error } = useQuery({ queryKey: ['members', brandId], queryFn: () => api.get<Member[]>(`/api/brands/${brandId}/members`) });
+  const invitations = useQuery({ queryKey: ['invitations', brandId], queryFn: () => api.get<BrandInvitation[]>(`/api/brands/${brandId}/invitations`) });
   const [form, setForm] = useState({ email: '', name: '', role: 'reviewer' as Role });
-  const refresh = () => qc.invalidateQueries({ queryKey: ['members', brandId] });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['members', brandId] });
+    qc.invalidateQueries({ queryKey: ['invitations', brandId] });
+  };
   const add = useMutation({
-    mutationFn: () => api.post(`/api/brands/${brandId}/members`, { email: form.email, name: form.name || undefined, role: form.role }),
-    onSuccess: () => { refresh(); setForm({ email: '', name: '', role: 'reviewer' }); toast(t('settings.members.added')); },
+    mutationFn: () => api.post<{ invited: boolean }>(`/api/brands/${brandId}/members`, { email: form.email, name: form.name || undefined, role: form.role }),
+    onSuccess: (r) => {
+      refresh();
+      // Someone who already works in another workspace is invited (202): they join only when they accept.
+      toast(r.invited ? t('settings.members.invited', { email: form.email }) : t('settings.members.added'));
+      setForm({ email: '', name: '', role: form.role });
+    },
   });
   const change = useMutation({
     mutationFn: ({ id, role }: { id: string; role: Role }) => api.patch(`/api/brands/${brandId}/members/${id}`, { role }),
@@ -169,7 +178,7 @@ function Members({ brandId }: { brandId: string }) {
   });
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/api/brands/${brandId}/members/${id}`),
-    onSuccess: refresh,
+    onSuccess: () => { refresh(); toast(t('settings.members.removed')); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
   const reset = useMutation({
@@ -177,83 +186,132 @@ function Members({ brandId }: { brandId: string }) {
     onSuccess: () => { refresh(); toast(t('settings.members.resetDone')); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
+  const cancel = useMutation({
+    mutationFn: (id: string) => api.del(`/api/brands/${brandId}/invitations/${id}`),
+    onSuccess: () => { refresh(); toast(t('settings.members.invitationCancelled')); },
+    onError: (e) => toast(errorMessage(e), 'error'),
+  });
+  const pending = invitations.data ?? [];
   return (
     <>
-      <section className="card">
-        <div className="card-head">
-          <h3>{data ? t('settings.members.count', { count: data.length }) : t('settings.members.title')}</h3>
-        </div>
+      <section className="card set-card" aria-labelledby="set-members">
+        <header className="set-card-top">
+          <h3 id="set-members">{data ? t('settings.members.count', { count: data.length }) : t('settings.members.title')}</h3>
+        </header>
         {error && <ErrorBox error={error} />}
-        {!data && !error && <Spinner />}
+        {!data && !error && <ListSkeleton />}
         {data && (
-          <div className="table-wrap">
-            <table className="set-table">
-              <thead>
-                <tr>
-                  <th>{t('settings.members.person')}</th>
-                  <th>{t('settings.members.role')}</th>
-                  <th>{t('settings.members.secondFactor')}</th>
-                  <th className="set-actions"><span className="sr-only">{t('settings.actions')}</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.map((m) => {
-                  const isMe = m.user_id === me.user.id;
-                  return (
-                    <tr key={m.id}>
-                      <td>
-                        <div className="set-person">
-                          <span className="avatar" aria-hidden="true">{initials(m.name ?? m.email)}</span>
-                          <div className="grow">
-                            <div className="set-person-name">{m.name ?? m.email}{isMe && <span className="tag">{t('settings.members.you')}</span>}</div>
-                            {m.name && <div className="muted small">{m.email}</div>}
-                          </div>
-                        </div>
-                      </td>
-                      <td data-label={t('settings.members.role')}>
-                        <select className="set-inline-select" aria-label={t('settings.members.roleOf', { email: m.email })} value={m.role} onChange={(e) => change.mutate({ id: m.id, role: e.target.value as Role })}>
-                          {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
-                        </select>
-                      </td>
-                      <td data-label={t('settings.members.secondFactor')}>
-                        {m.second_factor ? <Chip state="approved" label={t('settings.members.2faOn')} /> : <Chip state="draft" label={t('settings.members.2faOff')} />}
-                      </td>
-                      <td className="set-actions">
-                        <div className="row">
-                          {m.second_factor && !isMe && (
-                            <button className="btn btn-small" title={t('settings.members.resetHint')} onClick={() => confirm(t('settings.members.resetConfirm', { email: m.email })) && reset.mutate(m.id)}>{t('settings.members.reset')}</button>
-                          )}
-                          <button className="btn btn-small btn-danger set-quiet" onClick={() => confirm(t('settings.members.removeConfirm', { email: m.email })) && remove.mutate(m.id)}>{t('settings.members.remove')}</button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <ul className="ent-list">
+            {data.map((m) => {
+              const isMe = m.user_id === me.user.id;
+              const who = displayName(m.name, m.email);
+              // The server says who may reset whose authenticator (an admin of every brand that person is in, never their own).
+              const canReset = m.second_factor && !isMe && m.can_reset_second_factor !== false;
+              return (
+                <li key={m.id} className="ent ent-person">
+                  <Avatar name={m.name || m.email} size={32} />
+                  <div className="ent-main">
+                    <div className="ent-title">{who}{isMe && <span className="set-you">({t('settings.members.you')})</span>}</div>
+                    <div className="ent-sub">{m.email}</div>
+                  </div>
+                  <div className="ent-side">
+                    <span className={`set-2fa ${m.second_factor ? 'on' : ''}`} title={m.second_factor ? t('settings.members.2faOnHint') : t('settings.members.2faOffHint')}>
+                      <Icon name="shield" />
+                      <span>{m.second_factor ? t('settings.members.2faOn') : t('settings.members.2faOff')}</span>
+                    </span>
+                    <Select className="set-inline-select" label={t('settings.members.roleOf', { email: m.email })} value={m.role} onChange={(role) => change.mutate({ id: m.id, role })} options={ROLE_OPTIONS()} />
+                    <MoreMenu
+                      label={t('settings.members.actionsOf', { name: who })}
+                      items={[
+                        canReset && {
+                          label: t('settings.members.reset'), icon: 'key',
+                          onSelect: async () => {
+                            if (await confirm({ title: t('settings.members.resetTitle', { name: who }), text: t('settings.members.resetConfirm', { email: m.email }), confirmLabel: t('settings.members.reset') })) reset.mutate(m.id);
+                          },
+                        },
+                        {
+                          label: t('settings.members.remove'), icon: 'trash', danger: true,
+                          onSelect: async () => {
+                            const text = isMe ? t('settings.members.removeSelfConfirm') : t('settings.members.removeConfirm', { email: m.email });
+                            if (await confirm({ title: t('settings.members.removeTitle', { name: who }), text, confirmLabel: t('settings.members.remove'), danger: true })) remove.mutate(m.id);
+                          },
+                        },
+                      ]}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </section>
 
-      <form className="card stack" onSubmit={(e) => { e.preventDefault(); add.mutate(); }}>
-        <div className="set-card-head">
-          <div>
-            <h3>{t('settings.members.addTitle')}</h3>
-            <p className="set-hint">{t('settings.members.addHint')}</p>
-          </div>
-        </div>
-        <div className="set-fields">
-          <Field label={t('settings.members.email')}><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+      {pending.length > 0 && (
+        <section className="card set-card" aria-labelledby="set-invitations">
+          <header className="set-card-top">
+            <h3 id="set-invitations">{t('settings.members.pending')}</h3>
+            <span className="set-count">{pending.length}</span>
+          </header>
+          <ul className="ent-list">
+            {pending.map((i) => (
+              <li key={i.id} className="ent ent-person">
+                <Avatar name={i.email} size={32} />
+                <div className="ent-main">
+                  <div className="ent-title">{i.email}</div>
+                  <div className="ent-sub">
+                    {ROLE_LABEL[i.role]} · {t('settings.members.invitedWhen', { when: fmtShort(i.created_at) })}
+                    {i.invited_by && <> · {t('settings.members.invitedBy', { who: displayName(null, i.invited_by) })}</>}
+                    {' · '}{t('settings.members.expires', { date: fmtDay(i.expires_at) })}
+                  </div>
+                </div>
+                <div className="ent-side">
+                  <span className="chip chip-in_review">{t('settings.members.waiting')}</span>
+                  <button
+                    className="btn btn-small btn-ghost"
+                    disabled={cancel.isPending}
+                    onClick={async () => {
+                      if (await confirm({ title: t('settings.members.cancelTitle'), text: t('settings.members.cancelConfirm', { email: i.email }), confirmLabel: t('settings.members.cancelInvitation'), danger: true })) cancel.mutate(i.id);
+                    }}
+                  >
+                    {t('settings.members.cancelInvitation')}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <form className="card set-card" onSubmit={(e) => { e.preventDefault(); add.mutate(); }} aria-labelledby="set-add-member">
+        <header className="set-card-top">
+          <h3 id="set-add-member" title={t('settings.members.addHint')}>{t('settings.members.addTitle')}</h3>
+        </header>
+        <div className="set-invite">
+          <Field label={t('settings.members.email')}><input type="email" required placeholder={t('settings.members.emailPlaceholder')} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
           <Field label={`${t('settings.members.name')} ${t('common.optional')}`}><input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
           <Field label={t('settings.members.role')}>
-            <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>{ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}</select>
+            <Select label={t('settings.members.role')} value={form.role} onChange={(role) => setForm({ ...form, role })} options={ROLE_OPTIONS()} />
           </Field>
+          <button className="btn btn-primary" disabled={add.isPending}>{t('settings.members.add')}</button>
         </div>
-        <p className="set-hint"><strong>{ROLE_LABEL[form.role]}:</strong> {t(`settings.role.${form.role}` as Key)} {t('settings.members.otherBrands')}</p>
+        <p className="set-role-help"><strong>{ROLE_LABEL[form.role]}.</strong> {t(`settings.role.${form.role}` as Key)} {t('settings.members.otherBrands')}</p>
         {add.error && <ErrorBox error={add.error} />}
-        <div><button className="btn btn-primary" disabled={add.isPending}>{t('settings.members.add')}</button></div>
       </form>
     </>
+  );
+}
+
+/** Rows that are loading: a circle and two lines each. */
+function ListSkeleton({ rows = 3, square }: { rows?: number; square?: boolean }) {
+  return (
+    <ul className="ent-list" aria-hidden="true">
+      {Array.from({ length: rows }, (_, i) => (
+        <li key={i} className="ent">
+          <Skeleton width={32} height={32} radius={square ? 9 : 99} />
+          <span className="ent-main stack" style={{ gap: 6 }}><Skeleton width="38%" /><Skeleton width="24%" height={10} /></span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -354,6 +412,10 @@ function CredentialsDialog({ brandId, provider, reconnect, onClose, onDone }: {
 
 /** Networks that hold posts back until they have reviewed the app: what ticking the box means for each. */
 const APPROVAL_NETWORKS = ['youtube', 'tiktok', 'pinterest'];
+/** Networks whose comments reach the app through Meta's webhook, once the account is subscribed to it. */
+const META_NETWORKS = ['instagram', 'facebook'];
+/** Where the repository explains how to give this server each network's app (its credentials). */
+const SETUP_DOCS = 'https://github.com/illodev/marketing/blob/HEAD/docs/phase-2.md#setting-up-the-networks';
 
 function AccountState({ a }: { a: Account }) {
   if (a.status === 'reconnect_required') return <Chip state="failed" label={t('settings.accounts.state.reconnect')} />;
@@ -361,9 +423,31 @@ function AccountState({ a }: { a: Account }) {
   return <Chip state="approved" label={t('settings.accounts.state.connected')} />;
 }
 
+/** Whether Meta pushes this account's comments to the app, from what was written on the account when it was asked. */
+function EventsState({ a }: { a: Account }) {
+  const ev = a.details.events;
+  if (!ev) return null;
+  if (ev.subscribed) {
+    return (
+      <span className="set-note set-note-good" title={ev.fields?.length ? ev.fields.join(', ') : undefined}>
+        <Icon name="check" />
+        {t('settings.accounts.events.on')}
+        {ev.at && <span className="set-note-when"> · {fmtShort(ev.at)}</span>}
+      </span>
+    );
+  }
+  return (
+    <span className="set-note set-note-warn">
+      <Icon name="bell" />
+      <span>{t('settings.accounts.events.off')}{ev.note && <span className="set-note-why"> {ev.note}</span>}</span>
+    </span>
+  );
+}
+
 function Accounts({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const [params, setParams] = useSearchParams();
   const pendingId = params.get('connection');
   const connectError = params.get('connect_error');
@@ -387,7 +471,7 @@ function Accounts({ brandId }: { brandId: string }) {
   });
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/api/brands/${brandId}/accounts/${id}`),
-    onSuccess: refresh,
+    onSuccess: () => { refresh(); toast(t('settings.accounts.removed')); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
   const connect = useMutation({
@@ -402,13 +486,113 @@ function Accounts({ brandId }: { brandId: string }) {
     onSuccess: () => { refresh(); toast(t('settings.accounts.disconnected')); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
-  const audited = useMutation({
-    mutationFn: ({ id, value }: { id: string; value: boolean }) => api.patch(`/api/brands/${brandId}/accounts/${id}`, { audited: value }),
-    onSuccess: refresh,
+  const settle = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: { audited?: boolean; madeForKids?: boolean | null } }) => api.patch(`/api/brands/${brandId}/accounts/${id}`, body),
+    onSuccess: () => { refresh(); toast(t('settings.saved')); },
     onError: (e) => toast(errorMessage(e), 'error'),
   });
   const providerOf = (network: string) => integ?.providers.find((p) => p.networks.includes(network));
-  const needs = data?.filter((a) => a.status === 'reconnect_required').length ?? 0;
+  const all = data ?? [];
+  const connected = all.filter((a) => a.connected || a.status === 'reconnect_required');
+  const manual = all.filter((a) => !connected.includes(a));
+  const needs = connected.filter((a) => a.status === 'reconnect_required').length;
+  const configured = integ?.providers.filter((p) => p.configured) ?? [];
+  const unconfigured = integ?.providers.filter((p) => !p.configured) ?? [];
+
+  const handleOf = (a: Account) => (a.details.username ? `@${a.details.username.replace(/^@/, '')}` : a.external_id);
+
+  const connectedRow = (a: Account) => {
+    const provider = providerOf(a.network);
+    const network = NETWORK_LABEL[a.network] ?? a.network;
+    const notes: ReactNode[] = [];
+    if (a.status === 'active' && a.connected && !a.automated) notes.push(<span key="auto" className="set-note">{t('settings.accounts.notAutomated', { network })}</span>);
+    if (a.details.missingScopes && a.details.missingScopes.length > 0) notes.push(<span key="scopes" className="set-note set-note-warn"><Icon name="key" />{t('settings.accounts.missingScopes', { scopes: a.details.missingScopes.join(', ') })}</span>);
+    if (a.last_error && a.status === 'reconnect_required') notes.push(<span key="err" className="set-note set-note-bad">{a.last_error}</span>);
+    if (a.details.dataAccessExpiresAt) notes.push(<span key="exp" className="set-note"><Icon name="clock" />{t('settings.accounts.accessUntil', { date: fmtDay(a.details.dataAccessExpiresAt) })}</span>);
+    if (META_NETWORKS.includes(a.network) && a.connected) notes.push(<EventsState key="events" a={a} />);
+    const controls: ReactNode[] = [];
+    if (APPROVAL_NETWORKS.includes(a.network)) {
+      controls.push(
+        <Switch
+          key="aud"
+          checked={!!a.details.audited}
+          disabled={settle.isPending}
+          onChange={(v) => settle.mutate({ id: a.id, body: { audited: v } })}
+          label={t(`settings.accounts.approval.${a.network}` as Key)}
+          hint={a.details.audited ? undefined : t(`settings.accounts.approvalUntil.${a.network}` as Key)}
+        />,
+      );
+    }
+    if (a.network === 'youtube') controls.push(<KidsDefault key="kids" a={a} disabled={settle.isPending} onChange={(v) => settle.mutate({ id: a.id, body: { madeForKids: v } })} />);
+    return (
+      <li key={a.id} className="ent">
+        <NetMark network={a.network} size="lg" />
+        <div className="ent-main">
+          <div className="ent-title">{a.display_name}</div>
+          <div className="ent-sub">
+            {network} · {handleOf(a)}
+            {a.last_health_at && a.status === 'active' && a.connected && <> · {t('settings.accounts.checked', { when: fmtShort(a.last_health_at) })}</>}
+          </div>
+        </div>
+        <div className="ent-side">
+          <AccountState a={a} />
+          {a.status === 'reconnect_required' && provider?.configured && (
+            <button className="btn btn-small btn-primary" onClick={() => start(provider, a)}>{t('settings.accounts.reconnect')}</button>
+          )}
+          <MoreMenu
+            label={t('settings.accounts.actionsOf', { name: a.display_name })}
+            items={[
+              a.connected && { label: t('settings.accounts.check'), icon: 'check', onSelect: () => setChecking(a) },
+              provider?.configured && {
+                label: a.status === 'reconnect_required' ? t('settings.accounts.reconnect') : t('settings.accounts.renew'), icon: 'refresh',
+                onSelect: () => start(provider, a),
+              },
+              a.connected && {
+                label: t('settings.accounts.disconnect'), icon: 'logout', danger: true,
+                onSelect: async () => {
+                  if (await confirm({ title: t('settings.accounts.disconnectTitle', { name: a.display_name }), text: t('settings.accounts.disconnectConfirm', { name: a.display_name, network }), confirmLabel: t('settings.accounts.disconnect'), danger: true })) disconnect.mutate(a.id);
+                },
+              },
+            ]}
+          />
+        </div>
+        {(notes.length > 0 || controls.length > 0) && (
+          <div className="ent-notes">
+            {notes}
+            {controls.length > 0 && <div className="set-controls">{controls}</div>}
+          </div>
+        )}
+      </li>
+    );
+  };
+
+  const manualRow = (a: Account) => {
+    const provider = providerOf(a.network);
+    const network = NETWORK_LABEL[a.network] ?? a.network;
+    return (
+      <li key={a.id} className="ent">
+        <NetMark network={a.network} size="lg" />
+        <div className="ent-main">
+          <div className="ent-title">{a.display_name}</div>
+          <div className="ent-sub">{network} · {handleOf(a)}</div>
+        </div>
+        <div className="ent-side">
+          {provider?.configured && <button className="btn btn-small" onClick={() => start(provider, a)}><Icon name="link" /><span>{t('settings.accounts.connect')}</span></button>}
+          <MoreMenu
+            label={t('settings.accounts.actionsOf', { name: a.display_name })}
+            items={[
+              {
+                label: t('settings.accounts.removeFromBrand'), icon: 'trash', danger: true,
+                onSelect: async () => {
+                  if (await confirm({ title: t('settings.accounts.removeTitle', { name: a.display_name }), text: t('settings.accounts.removeConfirm', { name: a.display_name, network }), confirmLabel: t('settings.accounts.removeFromBrand'), danger: true })) remove.mutate(a.id);
+                },
+              },
+            ]}
+          />
+        </div>
+      </li>
+    );
+  };
 
   return (
     <>
@@ -417,105 +601,77 @@ function Accounts({ brandId }: { brandId: string }) {
           <div className="row-between"><span>{t('settings.accounts.connectError', { error: connectError })}</span><button className="btn btn-small" onClick={clearParams}>{t('settings.dismiss')}</button></div>
         </div>
       )}
+      {error && <ErrorBox error={error} />}
+      {!data && !error && <section className="card set-card"><ListSkeleton square /></section>}
+      {data?.length === 0 && <p className="set-empty">{t('settings.accounts.empty')}</p>}
 
-      <section className="card">
-        <div className="card-head">
-          <h3>{data && data.length > 0 ? t('settings.accounts.count', { count: data.length }) : t('settings.accounts.title')}</h3>
-          {needs > 0 && <Chip state="failed" label={t('settings.accounts.needsCount', { count: needs })} />}
-        </div>
-        {error && <ErrorBox error={error} />}
-        {!data && !error && <Spinner />}
-        {data?.length === 0 && <Empty title={t('settings.accounts.empty')}>{t('settings.accounts.emptyHint')}</Empty>}
-        {data && data.length > 0 && (
-          <ul className="ent-list">
-            {data.map((a) => {
-              const provider = providerOf(a.network);
-              const network = NETWORK_LABEL[a.network] ?? a.network;
-              const handle = a.details.username ? `@${a.details.username.replace(/^@/, '')}` : a.external_id;
-              const approval = APPROVAL_NETWORKS.includes(a.network) && a.connected;
-              const notes: ReactNode[] = [];
-              if (a.status === 'active' && a.connected && !a.automated) notes.push(<span key="auto" className="muted">{t('settings.accounts.notAutomated', { network })}</span>);
-              if (a.details.missingScopes && a.details.missingScopes.length > 0) notes.push(<span key="scopes" className="set-warn">{t('settings.accounts.missingScopes', { scopes: a.details.missingScopes.join(', ') })}</span>);
-              if (a.last_error && a.status === 'reconnect_required') notes.push(<span key="err" className="set-bad">{a.last_error}</span>);
-              if (a.details.dataAccessExpiresAt) notes.push(<span key="exp" className="muted">{t('settings.accounts.accessUntil', { date: fmtDay(a.details.dataAccessExpiresAt) })}</span>);
-              if (approval) {
-                notes.push(
-                  <label key="aud" className="check">
-                    <input type="checkbox" checked={!!a.details.audited} onChange={(e) => audited.mutate({ id: a.id, value: e.target.checked })} />
-                    <span>{t(`settings.accounts.approval.${a.network}` as Key)}{!a.details.audited && <span className="muted"> · {t(`settings.accounts.approvalUntil.${a.network}` as Key)}</span>}</span>
-                  </label>,
-                );
-              }
-              return (
-                <li key={a.id} className="ent">
-                  <NetMark network={a.network} size="lg" />
-                  <div className="ent-main">
-                    <div className="ent-title">{a.display_name}</div>
-                    <div className="ent-sub">{network} · <span className="mono">{handle}</span>{a.last_health_at && a.status === 'active' && a.connected && <> · {t('settings.accounts.checked', { when: fmtShort(a.last_health_at) })}</>}</div>
-                  </div>
-                  <div className="ent-side">
-                    <AccountState a={a} />
-                    <div className="ent-actions">
-                      {a.connected && <button className="btn btn-small" onClick={() => setChecking(a)}>{t('settings.accounts.check')}</button>}
-                      {provider?.configured && (a.status !== 'active' || !a.connected) && (
-                        <button className={`btn btn-small ${a.status === 'reconnect_required' ? 'btn-primary' : ''}`} onClick={() => start(provider, a)}>
-                          {a.status === 'manual' ? t('settings.accounts.connect') : t('settings.accounts.reconnect')}
-                        </button>
-                      )}
-                      {a.connected && a.status === 'active' && provider?.configured && (
-                        <button className="btn btn-small" onClick={() => start(provider, a)}>{t('settings.accounts.renew')}</button>
-                      )}
-                      {(a.connected || provider?.configured) && <span className="ent-sep" aria-hidden="true" />}
-                      {a.connected ? (
-                        <button className="btn btn-small btn-danger set-quiet" onClick={() => confirm(t('settings.accounts.disconnectConfirm', { name: a.display_name, network })) && disconnect.mutate(a.id)}>{t('settings.accounts.disconnect')}</button>
-                      ) : (
-                        <button className="btn btn-small btn-danger set-quiet" onClick={() => confirm(t('settings.accounts.removeConfirm', { name: a.display_name, network })) && remove.mutate(a.id)}>{t('settings.accounts.remove')}</button>
-                      )}
-                    </div>
-                  </div>
-                  {notes.length > 0 && <div className="ent-notes">{notes}</div>}
-                </li>
-              );
-            })}
-          </ul>
+      {data && connected.length > 0 && (
+        <section className="card set-card" aria-labelledby="set-acc-connected">
+          <header className="set-card-top">
+            <h3 id="set-acc-connected">{t('settings.accounts.groupConnected')}</h3>
+            <span className="set-count">{connected.length}</span>
+            {needs > 0 && <Chip state="failed" label={t('settings.accounts.needsCount', { count: needs })} />}
+          </header>
+          <ul className="ent-list">{connected.map(connectedRow)}</ul>
+        </section>
+      )}
+
+      {data && manual.length > 0 && (
+        <section className="card set-card" aria-labelledby="set-acc-manual">
+          <header className="set-card-top">
+            <h3 id="set-acc-manual">{t('settings.accounts.groupManual')}</h3>
+            <span className="set-count">{manual.length}</span>
+          </header>
+          <p className="set-hint set-card-lead">{t('settings.accounts.groupManualHint')}</p>
+          <ul className="ent-list">{manual.map(manualRow)}</ul>
+        </section>
+      )}
+
+      <section className="card set-card" aria-labelledby="set-acc-connect">
+        <header className="set-card-top">
+          <h3 id="set-acc-connect" className="grow">{t('settings.accounts.connectTitle')}</h3>
+          <button className="btn btn-small btn-ghost" onClick={() => setChecking('server')}>{t('settings.accounts.serverReady')}</button>
+        </header>
+        {integ && configured.length === 0 && (
+          <div className="set-callout" style={{ marginTop: 12 }}>
+            <Icon name="settings" />
+            <div>
+              <strong>{t('settings.accounts.noneConfigured')}</strong>
+              <p>{t('settings.accounts.noneConfiguredHint')} <a href={SETUP_DOCS} target="_blank" rel="noreferrer">{t('settings.accounts.setupDocs')}<Icon name="external" /></a></p>
+            </div>
+          </div>
+        )}
+        {configured.length > 0 && (
+          <div className="set-providers">
+            {configured.map((p) => (
+              <button key={p.id} className="btn set-provider" disabled={connect.isPending} onClick={() => start(p)}>
+                <span className="nets" aria-hidden="true">{p.networks.map((n) => <NetMark key={n} network={n} size="sm" />)}</span>
+                {t('settings.accounts.connectProvider', { name: providerLabel(p) })}
+              </button>
+            ))}
+          </div>
+        )}
+        {configured.length > 0 && unconfigured.length > 0 && (
+          <p className="set-hint" style={{ marginTop: 10 }}>
+            {t('settings.accounts.someUnconfigured', { names: unconfigured.map(providerLabel).join(', ') })}{' '}
+            <a href={SETUP_DOCS} target="_blank" rel="noreferrer">{t('settings.accounts.setupDocs')}<Icon name="external" /></a>
+          </p>
         )}
       </section>
 
-      <section className="card stack">
-        <div className="set-card-head">
-          <div>
-            <h3>{t('settings.accounts.connectTitle')}</h3>
-            <p className="set-hint">{t('settings.accounts.connectHint')}</p>
-          </div>
-          <button className="btn btn-small" onClick={() => setChecking('server')}>{t('settings.accounts.serverReady')}</button>
-        </div>
-        <div className="set-providers">
-          {integ?.providers.map((p) => (
-            <button key={p.id} className="btn set-provider" disabled={!p.configured || connect.isPending} onClick={() => start(p)} title={p.configured ? undefined : t('settings.accounts.notConfigured')}>
-              <span className="nets" aria-hidden="true">{p.networks.map((n) => <NetMark key={n} network={n} />)}</span>
-              {t('settings.accounts.connectProvider', { name: providerLabel(p) })}
-            </button>
-          ))}
-        </div>
-        {integ?.providers.some((p) => !p.configured) && <p className="set-hint">{t('settings.accounts.notConfiguredHint')}</p>}
-      </section>
-
-      <form className="card stack" onSubmit={(e) => { e.preventDefault(); add.mutate(); }}>
-        <div className="set-card-head">
-          <div>
-            <h3>{t('settings.accounts.manualTitle')}</h3>
-            <p className="set-hint">{t('settings.accounts.manualHint')}</p>
-          </div>
-        </div>
-        <div className="set-fields">
+      <form className="card set-card" onSubmit={(e) => { e.preventDefault(); add.mutate(); }} aria-labelledby="set-acc-manual-add">
+        <header className="set-card-top">
+          <h3 id="set-acc-manual-add" title={t('settings.accounts.manualHint')}>{t('settings.accounts.manualTitle')}</h3>
+        </header>
+        <div className="set-invite">
           <Field label={t('settings.accounts.network')}>
-            <select value={form.network} onChange={(e) => setForm({ ...form, network: e.target.value })}>{Object.keys(NET_SHORT).map((k) => <option key={k} value={k}>{NETWORK_LABEL[k]}</option>)}</select>
+            <Select label={t('settings.accounts.network')} value={form.network} onChange={(network) => setForm({ ...form, network })} options={Object.keys(NETWORK_LABEL).map((k) => ({ value: k, label: NETWORK_LABEL[k]!, icon: <NetMark network={k} size="xs" /> }))} />
           </Field>
           <Field label={t('settings.accounts.displayName')}><input type="text" required value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} /></Field>
           <Field label={t('settings.accounts.handle')}><input type="text" required value={form.externalId} onChange={(e) => setForm({ ...form, externalId: e.target.value })} /></Field>
+          <button className="btn btn-primary" disabled={add.isPending}>{t('settings.accounts.add')}</button>
         </div>
         {add.error && <ErrorBox error={add.error} />}
-        <div><button className="btn btn-primary" disabled={add.isPending}>{t('settings.accounts.add')}</button></div>
       </form>
 
       {pendingId && <ConnectionDialog brandId={brandId} pendingId={pendingId} onClose={clearParams} />}
@@ -526,6 +682,27 @@ function Accounts({ brandId }: { brandId: string }) {
   );
 }
 
+/** YouTube asks, for every video, whether it is made for kids; a channel can start each new video from a default. */
+function KidsDefault({ a, disabled, onChange }: { a: Account; disabled?: boolean; onChange: (v: boolean | null) => void }) {
+  const value = a.details.madeForKids === undefined ? 'ask' : a.details.madeForKids ? 'yes' : 'no';
+  return (
+    <div className="set-control-row">
+      <span className="switch-text">
+        <span className="switch-label">{t('settings.accounts.kids')}</span>
+        <span className="switch-hint">{t('settings.accounts.kidsHint')}</span>
+      </span>
+      <Select
+        className="set-inline-select"
+        label={t('settings.accounts.kids')}
+        value={value}
+        disabled={disabled}
+        onChange={(v) => onChange(v === 'ask' ? null : v === 'yes')}
+        options={[{ value: 'ask', label: t('settings.accounts.kidsAsk') }, { value: 'no', label: t('settings.accounts.kidsNo') }, { value: 'yes', label: t('settings.accounts.kidsYes') }]}
+      />
+    </div>
+  );
+}
+
 // ───────────────────────────── calendar: slots and blocked dates ─────────────────────────────
 
 interface Slot { id: string; weekday: number; local_time: string; label: string; network: string; account_name: string }
@@ -533,6 +710,7 @@ interface Slot { id: string; weekday: number; local_time: string; label: string;
 function Schedule({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const { brand } = useSession();
   const { data: accounts } = useQuery({ queryKey: ['accounts', brandId], queryFn: () => api.get<Account[]>(`/api/brands/${brandId}/accounts`) });
   const { data: slots, error } = useQuery({ queryKey: ['slots', brandId], queryFn: () => api.get<Slot[]>(`/api/brands/${brandId}/slots`) });
@@ -550,98 +728,105 @@ function Schedule({ brandId }: { brandId: string }) {
     onError: (e) => toast(errorMessage(e), 'error'),
   });
   const sorted = [...(slots ?? [])].sort((a, b) => a.weekday - b.weekday || a.local_time.localeCompare(b.local_time));
+  // The week as columns: each day lists its slots in the order of the clock.
+  const byDay = [1, 2, 3, 4, 5, 6, 7].map((d) => ({ day: d, slots: sorted.filter((s) => s.weekday === d) }));
+  const exampleAccount = accounts?.find((a) => a.network === 'instagram') ?? accounts?.[0];
+
   return (
     <>
-      <section className="card">
-        <div className="set-card-head" style={{ marginBottom: '.85rem' }}>
-          <div>
-            <h3>{t('settings.schedule.slots')}</h3>
-            <p className="set-hint">{t('settings.schedule.slotsHint', { zone: brand.timezone })}</p>
-          </div>
-        </div>
+      <section className="card set-card" aria-labelledby="set-grid">
+        <header className="set-card-top">
+          <h3 id="set-grid">{t('settings.schedule.slots')}</h3>
+          {sorted.length > 0 && <span className="set-count">{sorted.length}</span>}
+        </header>
+        <p className="set-hint set-card-lead">{t('settings.schedule.slotsHint')}</p>
         {error && <ErrorBox error={error} />}
-        {slots?.length === 0 && <Empty title={t('settings.schedule.noSlots')}>{t('settings.schedule.noSlotsHint')}</Empty>}
-        {sorted.length > 0 && (
-          <div className="table-wrap">
-            <table className="set-table">
-              <thead>
-                <tr>
-                  <th>{t('settings.schedule.day')}</th>
-                  <th>{t('settings.schedule.time')}</th>
-                  <th>{t('settings.schedule.account')}</th>
-                  <th>{t('settings.schedule.label')}</th>
-                  <th className="set-actions"><span className="sr-only">{t('settings.actions')}</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((s) => (
-                  <tr key={s.id}>
-                    <td><strong>{weekdayName(s.weekday)}</strong></td>
-                    <td className="mono" data-label={t('settings.schedule.time')}>{s.local_time.slice(0, 5)}</td>
-                    <td data-label={t('settings.schedule.account')}>
-                      <span className="row" style={{ gap: '.45rem', flexWrap: 'nowrap' }}>
-                        <NetMark network={s.network} />
-                        <span>{s.account_name} <span className="muted small">· {NETWORK_LABEL[s.network] ?? s.network}</span></span>
-                      </span>
-                    </td>
-                    <td data-label={t('settings.schedule.label')}>{s.label || <span className="muted">{t('settings.schedule.noLabel')}</span>}</td>
-                    <td className="set-actions">
-                      <div className="row">
-                        <button className="btn btn-small btn-danger set-quiet" onClick={() => confirm(t('settings.schedule.removeConfirm', { day: weekdayName(s.weekday), time: s.local_time.slice(0, 5) })) && remove.mutate(s.id)}>{t('settings.schedule.remove')}</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {slots?.length === 0 && (
+          <div className="set-example">
+            <p className="set-example-label">{t('settings.schedule.example')}</p>
+            <div className="set-slot set-slot-example" aria-hidden="true">
+              <span className="set-slot-time">{weekdayName(2)} 19:00</span>
+              {exampleAccount ? <NetMark network={exampleAccount.network} size="xs" /> : <NetMark network="instagram" size="xs" />}
+              <span className="set-slot-label">{t('settings.schedule.labelPlaceholder')}</span>
+            </div>
           </div>
         )}
+        {sorted.length > 0 && (
+          <div className="set-week" role="list" aria-label={t('settings.schedule.slots')}>
+            {byDay.map(({ day, slots: list }) => (
+              <div key={day} className="set-week-day" role="listitem">
+                <div className="set-week-name">{weekdayName(day).slice(0, 3)}</div>
+                {list.length === 0 && <div className="set-week-none" aria-hidden="true">—</div>}
+                {list.map((sl) => (
+                  <div key={sl.id} className="set-slot" title={`${weekdayName(sl.weekday)} ${sl.local_time.slice(0, 5)} · ${NETWORK_LABEL[sl.network] ?? sl.network} · ${sl.account_name}`}>
+                    <div className="set-slot-top">
+                      <span className="set-slot-time">{sl.local_time.slice(0, 5)}</span>
+                      <NetMark network={sl.network} size="xs" />
+                      <Tip label={t('settings.schedule.removeTitle')}>
+                        <button
+                          className="set-slot-x"
+                          aria-label={t('settings.schedule.removeLabel', { day: weekdayName(sl.weekday), time: sl.local_time.slice(0, 5) })}
+                          onClick={async () => {
+                            if (await confirm({ title: t('settings.schedule.removeTitle'), text: t('settings.schedule.removeConfirm', { day: weekdayName(sl.weekday), time: sl.local_time.slice(0, 5) }), confirmLabel: t('settings.schedule.remove'), danger: true })) remove.mutate(sl.id);
+                          }}
+                        >
+                          <Icon name="x" />
+                        </button>
+                      </Tip>
+                    </div>
+                    <span className={`set-slot-label ${sl.label ? '' : 'none'}`}>{sl.label || t('settings.schedule.noLabel')}</span>
+                    <span className="set-slot-account">{sl.account_name}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="set-hint set-zone"><Icon name="clock" />{t('settings.schedule.zone', { zone: brand.timezone })}</p>
       </section>
 
-      <form className="card stack" onSubmit={(e) => { e.preventDefault(); add.mutate(); }}>
-        <h3>{t('settings.schedule.addTitle')}</h3>
-        {accounts?.length === 0 && <div className="notice notice-warn">{t('settings.schedule.needAccount')}</div>}
-        <div className="set-fields">
-          <Field label={t('settings.schedule.account')}>
-            <select value={form.accountId || accounts?.[0]?.id || ''} onChange={(e) => setForm({ ...form, accountId: e.target.value })}>
-              {accounts?.map((a) => <option key={a.id} value={a.id}>{NETWORK_LABEL[a.network]} · {a.display_name}</option>)}
-            </select>
-          </Field>
+      <form className="card set-card" onSubmit={(e) => { e.preventDefault(); add.mutate(); }} aria-labelledby="set-add-slot">
+        <header className="set-card-top">
+          <h3 id="set-add-slot">{t('settings.schedule.addTitle')}</h3>
+        </header>
+        {accounts?.length === 0 && <div className="notice notice-warn" style={{ margin: '10px 0 0' }}>{t('settings.schedule.needAccount')}</div>}
+        <div className="set-invite set-invite-slot">
           <Field label={t('settings.schedule.day')}>
-            <select value={form.weekday} onChange={(e) => setForm({ ...form, weekday: Number(e.target.value) })}>
-              {[1, 2, 3, 4, 5, 6, 7].map((d) => <option key={d} value={d}>{weekdayName(d)}</option>)}
-            </select>
+            <Select label={t('settings.schedule.day')} value={String(form.weekday)} onChange={(d) => setForm({ ...form, weekday: Number(d) })} options={[1, 2, 3, 4, 5, 6, 7].map((d) => ({ value: String(d), label: weekdayName(d) }))} />
           </Field>
           <Field label={t('settings.schedule.time')}><input type="time" required value={form.localTime} onChange={(e) => setForm({ ...form, localTime: e.target.value })} /></Field>
-          <Field label={`${t('settings.schedule.label')} ${t('common.optional')}`}><input type="text" placeholder={t('settings.schedule.labelPlaceholder')} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} /></Field>
+          <Field label={t('settings.schedule.account')}>
+            <Select
+              label={t('settings.schedule.account')}
+              value={form.accountId || accounts?.[0]?.id}
+              disabled={!accounts?.length}
+              onChange={(accountId) => setForm({ ...form, accountId })}
+              options={(accounts ?? []).map((a) => ({ value: a.id, label: a.display_name, icon: <NetMark network={a.network} size="xs" /> }))}
+            />
+          </Field>
+          <Field label={t('settings.schedule.label')}><input type="text" placeholder={t('settings.schedule.labelPlaceholder')} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} /></Field>
+          <button className="btn btn-primary" disabled={add.isPending || !accounts?.length}>{t('settings.schedule.add')}</button>
         </div>
+        <p className="set-hint" style={{ marginTop: 8 }}>{t('settings.schedule.labelHint')}</p>
         {add.error && <ErrorBox error={add.error} />}
-        <div><button className="btn btn-primary" disabled={add.isPending || !accounts?.length}>{t('settings.schedule.add')}</button></div>
       </form>
 
-      <section className="card">
-        <div className="set-card-head" style={{ marginBottom: '.85rem' }}>
-          <div>
-            <h3>{t('settings.schedule.blocked')}</h3>
-            <p className="set-hint">{t('settings.schedule.blockedHint')}</p>
-          </div>
-        </div>
-        {blocked?.length === 0 && <p className="muted small" style={{ margin: 0 }}>{t('settings.schedule.noBlocked')}</p>}
+      <section className="card set-card" aria-labelledby="set-blocked">
+        <header className="set-card-top">
+          <h3 id="set-blocked" title={t('settings.schedule.blockedHint')}>{t('settings.schedule.blocked')}</h3>
+          {blocked && blocked.length > 0 && <span className="set-count">{blocked.length}</span>}
+        </header>
+        {blocked?.length === 0 && <p className="set-empty">{t('settings.schedule.noBlocked')}</p>}
         {blocked && blocked.length > 0 && (
-          <div className="table-wrap">
-            <table className="set-table">
-              <thead><tr><th>{t('settings.schedule.date')}</th><th>{t('settings.schedule.reason')}</th><th className="set-actions"><span className="sr-only">{t('settings.actions')}</span></th></tr></thead>
-              <tbody>
-                {blocked.map((b) => (
-                  <tr key={b.day}>
-                    <td className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtDay(b.day)}</td>
-                    <td data-label={t('settings.schedule.reason')}>{b.reason || <span className="muted">—</span>}</td>
-                    <td className="set-actions"><div className="row"><button className="btn btn-small" onClick={() => unblock.mutate(b.day)}>{t('settings.schedule.unblock')}</button></div></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ul className="ent-list">
+            {blocked.map((b) => (
+              <li key={b.day} className="ent ent-compact">
+                <span className="set-date">{fmtDay(b.day)}</span>
+                <div className="ent-main"><div className="ent-title">{b.reason || <span className="muted">{t('settings.schedule.noReason')}</span>}</div></div>
+                <div className="ent-side"><button className="btn btn-small btn-ghost" onClick={() => unblock.mutate(b.day)}>{t('settings.schedule.unblock')}</button></div>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
     </>
@@ -650,11 +835,12 @@ function Schedule({ brandId }: { brandId: string }) {
 
 // ───────────────────────────── API tokens ─────────────────────────────
 
-interface Token { id: string; name: string; created_at: string; expires_at: string; revoked_at: string | null; last_used_at: string | null }
+interface Token { id: string; name: string; created_at: string; expires_at: string; revoked_at: string | null; last_used_at: string | null; created_by_email?: string | null; created_by_name?: string | null }
 
 function Tokens({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const { brand } = useSession();
   const { data, error } = useQuery({ queryKey: ['tokens', brandId], queryFn: () => api.get<Token[]>(`/api/brands/${brandId}/tokens`) });
   const [form, setForm] = useState({ name: '', days: 90 });
@@ -667,55 +853,66 @@ function Tokens({ brandId }: { brandId: string }) {
   const revoke = useMutation({ mutationFn: (id: string) => api.del(`/api/brands/${brandId}/tokens/${id}`), onSuccess: () => { refresh(); toast(t('settings.tokens.revokedToast')); }, onError: (e) => toast(errorMessage(e), 'error') });
   return (
     <>
-      <section className="card">
-        <div className="card-head"><h3>{data && data.length > 0 ? t('settings.tokens.count', { count: data.length }) : t('settings.tokens.title')}</h3></div>
+      <section className="card set-card" aria-labelledby="set-tokens">
+        <header className="set-card-top">
+          <h3 id="set-tokens">{data && data.length > 0 ? t('settings.tokens.count', { count: data.length }) : t('settings.tokens.title')}</h3>
+        </header>
         {error && <ErrorBox error={error} />}
-        {!data && !error && <Spinner />}
-        {data?.length === 0 && <Empty title={t('settings.tokens.empty')}>{t('settings.tokens.emptyHint')}</Empty>}
+        {!data && !error && <ListSkeleton square />}
+        {data?.length === 0 && <p className="set-empty">{t('settings.tokens.empty')}</p>}
         {data && data.length > 0 && (
-          <div className="table-wrap">
-            <table className="set-table">
-              <thead>
-                <tr>
-                  <th>{t('settings.tokens.name')}</th>
-                  <th>{t('settings.tokens.state')}</th>
-                  <th>{t('settings.tokens.expires')}</th>
-                  <th>{t('settings.tokens.lastUsed')}</th>
-                  <th className="set-actions"><span className="sr-only">{t('settings.actions')}</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.map((tk) => {
-                  const gone = !!tk.revoked_at || expired(tk.expires_at);
-                  return (
-                    <tr key={tk.id}>
-                      <td><strong style={{ fontWeight: 500 }}>{tk.name}</strong><div className="muted small">{t('settings.tokens.created', { when: fmtShort(tk.created_at) })}</div></td>
-                      <td data-label={t('settings.tokens.state')}>
-                        {tk.revoked_at ? <Chip state="failed" label={t('settings.tokens.revoked')} /> : expired(tk.expires_at) ? <Chip state="draft" label={t('settings.tokens.expired')} /> : <Chip state="approved" label={t('settings.tokens.active')} />}
-                      </td>
-                      <td className="mono" data-label={t('settings.tokens.expires')}>{fmtDay(tk.expires_at)}</td>
-                      <td data-label={t('settings.tokens.lastUsed')}>{tk.last_used_at ? <span title={fmtDateTime(tk.last_used_at, brand.timezone)}>{fmtShort(tk.last_used_at)}</span> : <span className="muted">{t('settings.tokens.never')}</span>}</td>
-                      <td className="set-actions">
-                        <div className="row">
-                          {!gone && <button className="btn btn-small btn-danger set-quiet" onClick={() => confirm(t('settings.tokens.revokeConfirm', { name: tk.name })) && revoke.mutate(tk.id)}>{t('settings.tokens.revoke')}</button>}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <ul className="ent-list">
+            {data.map((tk) => {
+              const gone = !!tk.revoked_at || expired(tk.expires_at);
+              const by = tk.created_by_email ? displayName(tk.created_by_name, tk.created_by_email) : null;
+              return (
+                <li key={tk.id} className={`ent ${gone ? 'ent-gone' : ''}`}>
+                  <span className="set-token-icon" aria-hidden="true"><Icon name="key" /></span>
+                  <div className="ent-main">
+                    <div className="ent-title">{tk.name}</div>
+                    <div className="ent-sub set-token-sub">
+                      {by ? (
+                        <span className="set-by" title={tk.created_by_email ?? undefined}>
+                          <Avatar name={tk.created_by_name || tk.created_by_email} size={16} />
+                          {t('settings.tokens.createdBy', { who: by, when: fmtShort(tk.created_at) })}
+                        </span>
+                      ) : (
+                        <span>{t('settings.tokens.created', { when: fmtShort(tk.created_at) })}</span>
+                      )}
+                      <span aria-hidden="true">·</span>
+                      <span>{tk.last_used_at ? <span title={fmtDateTime(tk.last_used_at, brand.timezone)}>{t('settings.tokens.usedWhen', { when: fmtShort(tk.last_used_at) })}</span> : t('settings.tokens.neverUsed')}</span>
+                    </div>
+                  </div>
+                  <div className="ent-side">
+                    {tk.revoked_at ? <Chip state="failed" label={t('settings.tokens.revoked')} /> : expired(tk.expires_at) ? <Chip state="draft" label={t('settings.tokens.expired')} /> : <Chip state="approved" label={t('settings.tokens.activeUntil', { date: fmtDay(tk.expires_at) })} />}
+                    {!gone ? (
+                      <MoreMenu
+                        label={t('settings.tokens.actionsOf', { name: tk.name })}
+                        items={[{
+                          label: t('settings.tokens.revoke'), icon: 'ban', danger: true,
+                          onSelect: async () => {
+                            if (await confirm({ title: t('settings.tokens.revokeTitle', { name: tk.name }), text: t('settings.tokens.revokeConfirm', { name: tk.name }), confirmLabel: t('settings.tokens.revoke'), danger: true })) revoke.mutate(tk.id);
+                          },
+                        }]}
+                      />
+                    ) : <span className="menu-trigger-spacer" aria-hidden="true" />}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </section>
-      <form className="card stack" onSubmit={(e) => { e.preventDefault(); create.mutate(); }}>
-        <h3>{t('settings.tokens.newTitle')}</h3>
-        <div className="set-fields">
+      <form className="card set-card" onSubmit={(e) => { e.preventDefault(); create.mutate(); }} aria-labelledby="set-new-token">
+        <header className="set-card-top">
+          <h3 id="set-new-token" title={t('settings.tokens.newHint')}>{t('settings.tokens.newTitle')}</h3>
+        </header>
+        <div className="set-invite set-invite-token">
           <Field label={t('settings.tokens.name')}><input type="text" required placeholder={t('settings.tokens.namePlaceholder')} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-          <Field label={t('settings.tokens.days')}><input className="set-num-input" type="number" min={1} max={365} value={form.days} onChange={(e) => setForm({ ...form, days: Number(e.target.value) })} /></Field>
+          <Field label={t('settings.tokens.days')}><input type="number" min={1} max={365} value={form.days} onChange={(e) => setForm({ ...form, days: Number(e.target.value) })} /></Field>
+          <button className="btn btn-primary" disabled={create.isPending}>{t('settings.tokens.create')}</button>
         </div>
         {create.error && <ErrorBox error={create.error} />}
-        <div><button className="btn btn-primary" disabled={create.isPending}>{t('settings.tokens.create')}</button></div>
       </form>
       {shown && (
         <Dialog title={t('settings.tokens.copyTitle')} onClose={() => setShown(null)}>
@@ -739,7 +936,7 @@ function Audit({ brandId, zone }: { brandId: string; zone: string }) {
       </div>
       {error && <ErrorBox error={error} />}
       {!data && !error && <Spinner />}
-      {data?.length === 0 && <Empty title={t('settings.audit.empty')} />}
+      {data?.length === 0 && <p className="set-empty">{t('settings.audit.empty')}</p>}
       {data && data.length > 0 && (
         <div className="table-wrap">
           <table className="set-table">
@@ -748,7 +945,9 @@ function Audit({ brandId, zone }: { brandId: string; zone: string }) {
               {data.map((e) => (
                 <tr key={e.id}>
                   <td className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(e.at, zone)}</td>
-                  <td data-label={t('settings.audit.who')}>{e.actor ?? <span className="muted">{t('settings.audit.system')}</span>}</td>
+                  <td data-label={t('settings.audit.who')}>
+                    {e.actor ? <span className="set-by" title={e.actor}><Avatar name={e.actor} size={18} />{e.actor.includes('@') ? displayName(null, e.actor) : e.actor}</span> : <span className="muted">{t('settings.audit.system')}</span>}
+                  </td>
                   <td data-label={t('settings.audit.what')}><span className="tag">{e.action}</span></td>
                   <td data-label={t('settings.audit.detail')} className="muted mono"><div className="clip" title={e.after ? JSON.stringify(e.after) : undefined}>{e.after ? JSON.stringify(e.after) : ''}</div></td>
                 </tr>
@@ -803,12 +1002,7 @@ export function SettingsPage() {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>{t('settings.title')}</h1>
-          <p className="muted">{t('settings.subtitle', { brand: brand.name })}</p>
-        </div>
-      </div>
+      <PageBar crumbs={[{ label: t('settings.title'), to: '/settings' }, { label: t(`settings.tab.${current}` as Key) }]} />
       <div className="set">
         <nav ref={nav} className="set-nav" role="tablist" aria-orientation="vertical" aria-label={t('settings.sections')}>
           {groups.map((g) => {
@@ -817,26 +1011,22 @@ export function SettingsPage() {
             return [
               <div key={g.label} className="set-nav-group" aria-hidden="true">{t(g.label)}</div>,
               ...items.map(([k]) => (
-                <button key={k} id={`tab-${k}`} role="tab" aria-selected={current === k} aria-controls="settings-panel" className="set-nav-item" onClick={() => open(k)}>
-                  <span>{t(`settings.tab.${k}` as Key)}</span>
-                  {attention[k] && (
-                    <>
-                      <span className="set-dot" aria-hidden="true" />
-                      <span className="sr-only">{t('settings.needsAttention')}</span>
-                    </>
-                  )}
-                </button>
+                <Tip key={k} label={t(`settings.tabDesc.${k}` as Key)} side="right">
+                  <button id={`tab-${k}`} role="tab" aria-selected={current === k} aria-controls="settings-panel" className="set-nav-item" onClick={() => open(k)}>
+                    <span>{t(`settings.tab.${k}` as Key)}</span>
+                    {attention[k] && (
+                      <>
+                        <span className="set-dot" aria-hidden="true" />
+                        <span className="sr-only">{t('settings.needsAttention')}</span>
+                      </>
+                    )}
+                  </button>
+                </Tip>
               )),
             ];
           })}
         </nav>
         <div className="set-main" role="tabpanel" id="settings-panel" aria-labelledby={`tab-${current}`}>
-          <header className="set-head">
-            <div>
-              <h2>{t(`settings.tab.${current}` as Key)}</h2>
-              <p className="muted">{t(`settings.tabDesc.${current}` as Key)}</p>
-            </div>
-          </header>
           {current === 'general' && <General brandId={brand.id} />}
           {current === 'members' && <Members brandId={brand.id} />}
           {current === 'accounts' && <Accounts brandId={brand.id} />}

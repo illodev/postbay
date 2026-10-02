@@ -25,6 +25,8 @@ let n = 0;
 
 async function newSession(email, viewport = { width: 1280, height: 900 }, mobile = false) {
   const context = await browser.newContext({ baseURL: BASE, locale: 'en-US', viewport, isMobile: mobile, hasTouch: mobile, acceptDownloads: true });
+  // The interface is in Spanish unless the person chose otherwise; these steps read its English.
+  await context.addInitScript(() => { try { localStorage.setItem('studio.locale', 'en'); } catch { /* no storage: Spanish */ } });
   const page = await context.newPage();
   page.on('pageerror', (e) => problems.push(`[${email}] page error: ${e.message}`));
   page.on('console', (m) => m.type() === 'error' && !/status of 4\d\d/.test(m.text()) && problems.push(`[${email}] console error: ${m.text()}`));
@@ -375,12 +377,12 @@ await step('Publish page: the handed-over post is in "Due now", and the person r
   const p = approver.page;
   sql(`update publication set scheduled_at = now() - interval '2 minutes' where manual = true and text = 'Spring menu, Facebook first'`);
   await p.goto('/today');
-  await p.getByRole('region', { name: 'Due now' }).getByText('Spring menu reel').first().waitFor();
-  await p.getByRole('region', { name: 'Due now' }).getByRole('button', { name: 'Publish…' }).first().click();
-  const d = p.getByRole('dialog');
-  await d.getByText('Spring menu, Facebook first').waitFor();
-  await d.getByRole('button', { name: 'I published it…' }).click();
-  await p.getByRole('dialog').getByRole('button', { name: 'Mark as published' }).click();
+  // Each due post is a card on the page: its picture, its text and files, and the form that records it.
+  const due = p.getByRole('region', { name: 'Due now' });
+  await due.getByText('Spring menu reel').first().waitFor();
+  const card = due.getByRole('article').filter({ hasText: 'Spring menu, Facebook first' });
+  await card.waitFor();
+  await card.getByRole('button', { name: 'Mark as published' }).click();
   await p.getByText('Marked as published').waitFor();
 });
 
@@ -444,8 +446,9 @@ await step('reconnect: the same account only, and the waiting post carries on st
 
 await step('calendar and publish page: automatic posts are marked, and the page has no needless sections', async () => {
   const p = approver.page;
-  await p.goto('/calendar');
-  await p.locator('.cal-item .auto-dot').first().waitFor();
+  // The list view says how each post goes out: by the app, or by hand.
+  await p.goto('/calendar?view=list');
+  await p.locator('.ops-row .pb-mode[data-mode="auto"]').first().waitFor();
   await shot(p, 'calendar-automatic');
   await p.goto('/today');
   await p.getByRole('region', { name: 'Coming up' }).waitFor();

@@ -3,12 +3,13 @@ import { useState } from 'react';
 import { api, type SlackSettings } from '../api';
 import { t, tMaybe } from '../i18n';
 import { fmtShort } from '../lib/format';
-import { Chip, ErrorBox, errorMessage, Field, Spinner, useToast } from './ui';
+import { Chip, ErrorBox, errorMessage, Field, Spinner, Switch, useConfirm, useToast } from './ui';
 
 /** Posts chosen events to a Slack channel, through that channel's incoming webhook. The address is a secret: it is never shown again. */
 export function SlackSettingsCard({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const { data, error } = useQuery({ queryKey: ['slack', brandId], queryFn: () => api.get<SlackSettings>(`/api/brands/${brandId}/slack`) });
   const [url, setUrl] = useState('');
   const [kinds, setKinds] = useState<Set<string> | null>(null);
@@ -37,10 +38,7 @@ export function SlackSettingsCard({ brandId }: { brandId: string }) {
     <>
       <form className="card stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }} aria-label={t('settings.slack.title')}>
         <div className="set-card-head">
-          <div>
-            <h3>{t('settings.slack.channel')}</h3>
-            <p className="set-hint">{t('settings.slack.hint')}</p>
-          </div>
+          <h3 title={t('settings.slack.hint')}>{t('settings.slack.channel')}</h3>
           {data.configured && !data.disabledReason && <Chip state="approved" label={data.hint ? t('settings.slack.onHint', { hint: data.hint }) : t('settings.slack.on')} />}
           {data.disabledReason && <Chip state="failed" label={t('settings.slack.stopped')} />}
           {!data.configured && !data.disabledReason && <Chip state="draft" label={t('settings.slack.off')} />}
@@ -54,10 +52,7 @@ export function SlackSettingsCard({ brandId }: { brandId: string }) {
         <fieldset className="set-fieldset set-checks-2">
           <legend className="set-legend">{t('settings.slack.postWhen')}</legend>
           {data.allKinds.map((k) => (
-            <label key={k.kind} className="check">
-              <input type="checkbox" checked={chosen.has(k.kind)} onChange={() => flip(k.kind)} disabled={!data.available} />
-              <span>{tMaybe(`account.kind.${k.kind}`, k.label)}</span>
-            </label>
+            <Switch key={k.kind} label={tMaybe(`account.kind.${k.kind}`, k.label)} checked={chosen.has(k.kind)} onChange={() => flip(k.kind)} disabled={!data.available} />
           ))}
         </fieldset>
         {save.error && <ErrorBox error={save.error} />}
@@ -75,7 +70,16 @@ export function SlackSettingsCard({ brandId }: { brandId: string }) {
               <strong>{t('settings.slack.removeTitle')}</strong>
               <p>{t('settings.slack.removeHint')}</p>
             </div>
-            <button type="button" className="btn btn-danger" onClick={() => confirm(t('settings.slack.removeConfirm')) && remove.mutate()} disabled={remove.isPending}>{t('settings.slack.remove')}</button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={remove.isPending}
+              onClick={async () => {
+                if (await confirm({ title: t('settings.slack.removeAsk'), text: t('settings.slack.removeConfirm'), confirmLabel: t('settings.slack.remove'), danger: true })) remove.mutate();
+              }}
+            >
+              {t('settings.slack.remove')}
+            </button>
           </div>
         </section>
       )}

@@ -39,6 +39,8 @@ const watch = (page, label) => {
 
 async function context(label, { viewport = { width: 1280, height: 900 }, init, permissions } = {}) {
   const ctx = await browser.newContext({ baseURL: BASE, locale: 'en-US', viewport, acceptDownloads: true, permissions });
+  // The interface is in Spanish unless the person chose otherwise; these steps read its English.
+  await ctx.addInitScript(() => { try { localStorage.setItem('studio.locale', 'en'); } catch { /* no storage: Spanish */ } });
   if (init) await ctx.addInitScript(init.fn, init.arg);
   const page = await ctx.newPage();
   watch(page, label);
@@ -248,13 +250,17 @@ await step('second factor: five wrong codes lock the approver out, an admin rese
 
   const a = admin.page;
   await a.goto('/settings?tab=members');
-  const row = a.locator('tr', { hasText: 'approver@example.com' });
+  // The reset is in the person's "⋯" menu, and the app asks first in its own dialog.
+  const row = a.locator('li.ent', { hasText: 'approver@example.com' });
   await row.waitFor();
-  a.once('dialog', (d) => d.accept());
-  await row.getByRole('button', { name: 'Reset authenticator' }).click();
+  await row.getByRole('button', { name: /^Actions for / }).click();
+  await a.getByRole('menuitem', { name: 'Reset authenticator' }).click();
+  await a.getByRole('dialog').getByRole('button', { name: 'Reset authenticator' }).click();
   await until('the approver to have no authenticator', () => sql(`select count(*) from user_totp sf join app_user u on u.id = sf.user_id where u.email = 'approver@example.com'`) === '0');
   await a.reload();
-  assert((await a.locator('tr', { hasText: 'approver@example.com' }).getByRole('button', { name: 'Reset authenticator' }).count()) === 0, 'nobody to reset any more');
+  await a.locator('li.ent', { hasText: 'approver@example.com' }).getByRole('button', { name: /^Actions for / }).click();
+  assert((await a.getByRole('menuitem', { name: 'Reset authenticator' }).count()) === 0, 'nobody to reset any more');
+  await a.keyboard.press('Escape');
 
   // A reset ends every session of the person (and voids any sign-in link not used yet): the session that was locked out is signed
   // out, and signing in again asks for a new authenticator to be set up.
@@ -277,7 +283,7 @@ await step('second factor: five wrong codes lock the approver out, an admin rese
 await step('your account: the authenticator is on, recovery codes are counted, and removing it needs a code', async () => {
   const p = admin.page;
   await p.goto('/security');
-  await p.getByRole('heading', { name: 'Your account' }).waitFor();
+  await p.getByRole('navigation', { name: 'Breadcrumb' }).getByText('Your account').waitFor();
   await p.getByRole('heading', { name: 'Authenticator app' }).waitFor();
   await p.getByText('You have 9 recovery codes left').waitFor();
   await p.getByText(/Your role needs a second factor, so it cannot be turned off/).waitFor();

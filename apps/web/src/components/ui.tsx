@@ -302,12 +302,15 @@ type Side = 'top' | 'right' | 'bottom' | 'left';
 type Align = 'start' | 'center' | 'end';
 
 /** A panel anchored to its trigger. Controlled (`open`/`onOpenChange`) when the page closes it itself, e.g. after a choice. */
-export function Popover({ trigger, children, open, onOpenChange, side = 'bottom', align = 'start', width, label, className = '' }: {
+export function Popover({ trigger, children, open, onOpenChange, side = 'bottom', align = 'start', width, label, className = '', tip }: {
   trigger: ReactElement; children: ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void; side?: Side; align?: Align; width?: number | string; label?: string; className?: string;
+  /** a tooltip on the trigger */ tip?: ReactNode;
 }) {
   return (
     <RPopover.Root open={open} onOpenChange={onOpenChange}>
-      <RPopover.Trigger asChild>{trigger}</RPopover.Trigger>
+      <TipOn label={tip}>
+        <RPopover.Trigger asChild>{trigger}</RPopover.Trigger>
+      </TipOn>
       <RPopover.Portal>
         <RPopover.Content className={`float ${className}`.trim()} side={side} align={align} sideOffset={6} collisionPadding={8} style={{ width }} aria-label={label}>
           {children}
@@ -318,12 +321,15 @@ export function Popover({ trigger, children, open, onOpenChange, side = 'bottom'
 }
 
 /** A menu of actions: arrows, Enter, typeahead. Its children are MenuItem, MenuSeparator and MenuLabel. */
-export function Menu({ trigger, children, side = 'bottom', align = 'end', width, open, onOpenChange }: {
+export function Menu({ trigger, children, side = 'bottom', align = 'end', width, open, onOpenChange, tip }: {
   trigger: ReactElement; children: ReactNode; side?: Side; align?: Align; width?: number | string; open?: boolean; onOpenChange?: (open: boolean) => void;
+  /** a tooltip on the trigger (an icon-only button says what it opens) */ tip?: ReactNode;
 }) {
   return (
     <RMenu.Root open={open} onOpenChange={onOpenChange}>
-      <RMenu.Trigger asChild>{trigger}</RMenu.Trigger>
+      <TipOn label={tip}>
+        <RMenu.Trigger asChild>{trigger}</RMenu.Trigger>
+      </TipOn>
       <RMenu.Portal>
         <RMenu.Content className="float menu" side={side} align={align} sideOffset={6} collisionPadding={8} style={{ width }}>
           {children}
@@ -411,4 +417,46 @@ export function Tip({ label, shortcut, side = 'top', children }: { label: ReactN
 /** A Tip when there is something to say, the element alone when not. */
 export function Tipped({ label, shortcut, side, children }: { label?: ReactNode; shortcut?: string; side?: Side; children: ReactElement }) {
   return label || shortcut ? <Tip label={label} shortcut={shortcut} side={side}>{children}</Tip> : children;
+}
+
+/** One action of a row's "⋯" menu, for <MoreMenu>. */
+export interface MoreAction {
+  label: string;
+  icon?: IconName;
+  /** Takes something away: red, and usually last. */
+  danger?: boolean;
+  disabled?: boolean;
+  onSelect: () => void;
+}
+
+/**
+ * The "⋯" button of a row and its menu (a <Menu>): the row's less frequent actions, out of the way until asked for. Falsy
+ * entries are skipped, so an action can be listed with a condition; with nothing left, nothing is drawn.
+ */
+export function MoreMenu({ label, items }: { label: string; items: (MoreAction | false | null | undefined)[] }) {
+  const list = items.filter(Boolean) as MoreAction[];
+  if (list.length === 0) return null;
+  return (
+    <Menu tip={label} trigger={<button type="button" className="menu-trigger" aria-label={label}><Icon name="more" /></button>}>
+      {list.map((it, i) => (
+        <MenuItem key={i} icon={it.icon} danger={it.danger} disabled={it.disabled} onSelect={it.onSelect}>{it.label}</MenuItem>
+      ))}
+    </Menu>
+  );
+}
+
+/**
+ * A tooltip around a Radix trigger (a menu's or a popover's): the two triggers compose, so the button keeps its ref and
+ * both behaviours. Without a label it is just the trigger.
+ */
+function TipOn({ label, children }: { label?: ReactNode; children: ReactElement }) {
+  if (!label) return children;
+  return (
+    <RTooltip.Root>
+      <RTooltip.Trigger asChild>{children}</RTooltip.Trigger>
+      <RTooltip.Portal>
+        <RTooltip.Content className="tip" side="top" sideOffset={6} collisionPadding={8}>{label}</RTooltip.Content>
+      </RTooltip.Portal>
+    </RTooltip.Root>
+  );
 }

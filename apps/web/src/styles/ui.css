@@ -37,3 +37,8 @@
 .skeleton-text { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 @keyframes skeleton-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
+
+/* ───────────────────────────── a row's "⋯" button (its menu is <Menu>) ───────────────────────────── */
+.menu-trigger { appearance: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; flex: none; }
+.menu-trigger:hover, .menu-trigger[data-state='open'] { background: var(--control-hover); color: var(--text); }
+.menu-trigger svg { width: 16px; height: 16px; stroke-width: 3; }

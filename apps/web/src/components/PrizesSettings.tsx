@@ -4,7 +4,7 @@ import { api, type BrandSettings, type Prize } from '../api';
 import { t } from '../i18n';
 import { fmtBytes } from '../lib/format';
 import { uploadPrizeFile, type Progress } from '../lib/upload';
-import { Chip, CopyButton, Empty, ErrorBox, errorMessage, Field, Spinner, useToast } from './ui';
+import { Chip, CopyButton, Empty, ErrorBox, errorMessage, Field, Select, Spinner, Switch, useConfirm, useToast } from './ui';
 
 function Settings({ brand }: { brand: BrandSettings }) {
   const qc = useQueryClient();
@@ -18,19 +18,10 @@ function Settings({ brand }: { brand: BrandSettings }) {
   return (
     <form className="card stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
       <div className="set-card-head">
-        <div>
-          <h3>{t('prizes.settings.title')}</h3>
-          <p className="set-hint">{t('prizes.settings.hint')}</p>
-        </div>
+        <h3>{t('prizes.settings.title')}</h3>
         {brand.prizes.enabled ? <Chip state="approved" label={t('prizes.settings.on')} /> : <Chip state="draft" label={t('prizes.settings.off')} />}
       </div>
-      <label className="check">
-        <input type="checkbox" checked={f.enabled} onChange={(e) => setForm({ ...f, enabled: e.target.checked })} />
-        <span>
-          {t('prizes.settings.enable')}
-          <span className="muted small" style={{ display: 'block' }}>{t('prizes.settings.enableHint')}</span>
-        </span>
-      </label>
+      <Switch label={t('prizes.settings.enable')} hint={t('prizes.settings.enableHint')} checked={f.enabled} onChange={(v) => setForm({ ...f, enabled: v })} />
       <div className="set-fields">
         <Field label={t('prizes.settings.retention')} hint={t('prizes.settings.retentionHint')}>
           <input className="set-num-input" type="number" min={8} max={365} value={f.retention_days} onChange={(e) => setForm({ ...f, retention_days: Number(e.target.value) })} />
@@ -55,6 +46,7 @@ function PrizeState({ p }: { p: Prize }) {
 }
 
 function Library({ brandId }: { brandId: string }) {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const toast = useToast();
   const { data, error } = useQuery({ queryKey: ['prizes', brandId], queryFn: () => api.get<Prize[]>(`/api/brands/${brandId}/prizes`) });
@@ -123,7 +115,16 @@ function Library({ brandId }: { brandId: string }) {
                     </td>
                     <td className="set-actions">
                       <div className="row">
-                        {!p.archived && <button className="btn btn-small" onClick={() => confirm(t('prizes.library.archiveConfirm', { name: p.name })) && archive.mutate(p.id)}>{t('prizes.library.archive')}</button>}
+                        {!p.archived && (
+                          <button
+                            className="btn btn-small"
+                            onClick={async () => {
+                              if (await confirm({ title: t('prizes.library.archiveTitle', { name: p.name }), text: t('prizes.library.archiveConfirm'), confirmLabel: t('prizes.library.archive') })) archive.mutate(p.id);
+                            }}
+                          >
+                            {t('prizes.library.archive')}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -167,6 +168,7 @@ function Library({ brandId }: { brandId: string }) {
 
 function Erase({ brandId }: { brandId: string }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [who, setWho] = useState('');
   const [by, setBy] = useState<'name' | 'personId'>('name');
   const erase = useMutation({
@@ -174,15 +176,18 @@ function Erase({ brandId }: { brandId: string }) {
     onSuccess: (r) => { toast(r.deleted ? t('prizes.erase.deleted', { count: r.deleted }) : t('prizes.erase.nothing')); setWho(''); },
   });
   return (
-    <form className="card set-danger stack" onSubmit={(e) => { e.preventDefault(); if (confirm(t('prizes.erase.confirm', { who }))) erase.mutate(); }}>
+    <form
+      className="card set-danger stack"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (await confirm({ title: t('prizes.erase.ask', { who }), text: t('prizes.erase.confirm'), confirmLabel: t('prizes.erase.submit'), danger: true })) erase.mutate();
+      }}
+    >
       <h3>{t('prizes.erase.title')}</h3>
       <p className="set-hint">{t('prizes.erase.hint')}</p>
       <div className="set-fields">
         <Field label={t('prizes.erase.by')}>
-          <select value={by} onChange={(e) => setBy(e.target.value as 'name' | 'personId')}>
-            <option value="name">{t('prizes.erase.byName')}</option>
-            <option value="personId">{t('prizes.erase.byId')}</option>
-          </select>
+          <Select label={t('prizes.erase.by')} value={by} onChange={setBy} options={[{ value: 'name', label: t('prizes.erase.byName') }, { value: 'personId', label: t('prizes.erase.byId') }]} />
         </Field>
         <Field label={by === 'name' ? t('prizes.erase.name') : t('prizes.erase.id')}>
           <input type="text" required maxLength={200} value={who} onChange={(e) => setWho(e.target.value)} />
