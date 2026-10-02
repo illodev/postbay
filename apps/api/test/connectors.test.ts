@@ -37,6 +37,7 @@ beforeEach(() => {
   google.audited = false;
   google.videos.clear();
   google.rejection = null;
+  google.publishDelayMs = 0;
 });
 
 // ───────────────────────────── helpers ─────────────────────────────
@@ -439,11 +440,46 @@ describe('YouTube', () => {
     const rec = google.videos.get(r.handle.videoId as string)!;
     expect(rec.bytes).toBe(bytes.length);
     expect(rec.snippet).toMatchObject({ title: 'Spring menu', description: 'Spring menu #coffee', categoryId: '22' });
-    expect(rec.status).toMatchObject({ privacyStatus: 'private', publishAt: when.toISOString(), selfDeclaredMadeForKids: false, containsSyntheticMedia: true });
+    expect(rec.status).toMatchObject({ privacyStatus: 'private', publishAt: when.toISOString(), containsSyntheticMedia: true });
+    // Nobody declared whether it is made for kids, so nothing is declared for them: YouTube applies the channel's own setting.
+    expect(rec.status).not.toHaveProperty('selfDeclaredMadeForKids');
     const init = google.calls.find((c) => c.path === '/upload/youtube/v3/videos')!;
     expect(init.headers['x-upload-content-length']).toBe(String(bytes.length));
     // The session address was saved the moment YouTube handed it out, before any bytes were sent.
     expect(en.saved[0]!.sessionUrl).toMatch(/\/upload\/session\//);
+  });
+
+  it("sends the made-for-kids declaration a person made, or the channel's default", async () => {
+    const en = env(token, files);
+    const r1 = await yt().prepare(vid({ options: { madeForKids: 'yes' } }), ytAccount(), {}, en);
+    expect(google.videos.get(r1.handle.videoId as string)!.status.selfDeclaredMadeForKids).toBe(true);
+    const channelSaysNo = { ...ytAccount(), providerData: { ...ytAccount().providerData, madeForKids: false } };
+    const r2 = await yt().prepare(vid(), channelSaysNo, {}, en);
+    expect(google.videos.get(r2.handle.videoId as string)!.status.selfDeclaredMadeForKids).toBe(false);
+    // The publication's own answer wins over the channel's.
+    const r3 = await yt().prepare(vid({ options: { madeForKids: 'yes' } }), channelSaysNo, {}, en);
+    expect(google.videos.get(r3.handle.videoId as string)!.status.selfDeclaredMadeForKids).toBe(true);
+    // The dialog asks, with nothing chosen, unless the channel has a default.
+    const field = (a: Account) => yt().capabilities(a).options!.find((o) => o.key === 'madeForKids')!;
+    expect(field(ytAccount())).toMatchObject({ type: 'select', required: true });
+    expect(field(ytAccount()).default).toBeUndefined();
+    expect(field(channelSaysNo).default).toBe('no');
+  });
+
+  it('sends a description YouTube accepts: no < or >, and no more than 5,000 bytes', async () => {
+    const en = env(token, files);
+    const r = await yt().prepare(vid({ text: 'Prices <today> only: 2 > 1' }), ytAccount(), {}, en);
+    expect(google.videos.get(r.handle.videoId as string)!.snippet.description).toBe('Prices ‹today› only: 2 › 1');
+    // 2,000 characters of "é" are 4,000 bytes; 2,600 are 5,200, which YouTube refuses even though it is under 5,000 characters.
+    const codes = (text: string) => yt().validate(vid({ text, options: { madeForKids: 'no' } }), ytAccount(true)).map((x) => `${x.severity}:${x.code}`);
+    expect(codes('é'.repeat(2000))).toEqual([]);
+    expect(codes('é'.repeat(2600))).toEqual(['error:text.bytes']);
+    expect(codes('a < b')).toEqual(['warning:text.angle']);
+    // Even if it got that far, what is sent is cut to whole characters under the limit, and the stand-in takes it.
+    const long = await yt().prepare(vid({ text: '😀'.repeat(1300) }), ytAccount(), {}, en);
+    const sent = google.videos.get(long.handle.videoId as string)!.snippet.description as string;
+    expect(Buffer.byteLength(sent)).toBeLessThanOrEqual(5000);
+    expect(sent).toBe('😀'.repeat(1250));
   });
 
   it('carries on from where it stopped when the connection drops mid-upload', async () => {
@@ -488,6 +524,27 @@ describe('YouTube', () => {
     expect((await yt().verify(ytAccount(true), id, r.handle, en)).visibility).toBe('public');
   });
 
+  it('keeps looking for a while when YouTube has not yet made a scheduled video public, instead of calling it private', async () => {
+    const en = env(token, files, () => new Date(google.now()));
+    const when = new Date(Date.now() + 3600_000);
+    const r = await yt().prepare(vid({ scheduledAt: when }), ytAccount(true), {}, en);
+    const id = r.handle.videoId as string;
+    google.audited = true;
+    google.publishDelayMs = 4 * 60_000; // YouTube takes a few minutes past the time
+    google.now = () => when.getTime() + 20_000; // the publisher's first look, 20 seconds after the hour
+    const early = await yt().verify(ytAccount(true), id, r.handle, en);
+    expect(early.visibility).toBe('processing');
+    expect(early.note).toMatch(/not made it public yet/);
+    google.now = () => when.getTime() + 5 * 60_000;
+    expect((await yt().verify(ytAccount(true), id, r.handle, en)).visibility).toBe('public');
+    // Held back for good: after 45 minutes it is called private, with words a person can act on.
+    google.publishDelayMs = 10 * 3600_000;
+    google.now = () => when.getTime() + 46 * 60_000;
+    const late = await yt().verify(ytAccount(true), id, r.handle, en);
+    expect(late.visibility).toBe('private');
+    expect(late.note).toMatch(/45 minutes after its time/);
+  });
+
   it('classifies failures: quota waits for the reset, a revoked grant needs a reconnection', async () => {
     const en = env(token, files);
     google.fail((p) => p === '/upload/youtube/v3/videos', google.quotaError(), 403);
@@ -514,9 +571,10 @@ describe('YouTube', () => {
   });
 
   it('checks a publication, warning about the unaudited project and refusing a long title', () => {
-    const codes = (i: PublishInput, a = ytAccount()) => yt().validate(i, a).map((x) => `${x.severity}:${x.code}`);
+    const codes = (i: PublishInput, a = ytAccount()) => yt().validate({ ...i, options: { madeForKids: 'no', ...i.options } }, a).map((x) => `${x.severity}:${x.code}`);
     expect(codes(vid())).toEqual(['warning:youtube.unaudited']);
     expect(codes(vid(), ytAccount(true))).toEqual([]);
+    expect(yt().validate(vid(), ytAccount(true)).map((x) => x.code)).toEqual(['youtube.made_for_kids']);
     expect(codes(vid({ title: 'x'.repeat(101) }), ytAccount(true))).toEqual(['error:title.length']);
     expect(codes(vid({ options: { title: 'A fine short title' }, title: 'x'.repeat(300) }), ytAccount(true))).toEqual([]);
     expect(codes(vid({ placement: 'short', media: [media({ width: 1920, height: 1080 })] }), ytAccount(true))).toContain('error:media.aspect');
