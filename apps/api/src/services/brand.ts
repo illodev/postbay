@@ -10,6 +10,8 @@ import { audit } from './audit.js';
 import { agentOf, agentSettings } from './agent.js';
 import { prizeSettings, prizesOf } from './prizes.js';
 import { subscribeEvents } from './connectors.js';
+import { recipientLocale } from './notify.js';
+import { msg, t } from '../i18n/index.js';
 import { loadBrand, rulesOf } from './loaders.js';
 
 export const NETWORKS = ['instagram', 'facebook', 'youtube', 'tiktok', 'linkedin', 'x', 'threads', 'pinterest', 'bluesky'] as const;
@@ -150,7 +152,7 @@ export async function addMember(ctx: Ctx, p: Principal, brandId: string, raw: un
     const existing = await db.one<{ id: string }>('select id from app_user where lower(email) = $1', [input.email]);
     if (existing) {
       const exists = await db.one('select 1 from member where user_id = $1 and brand_id = $2', [existing.id, brandId]);
-      if (exists) throw conflict('already_member', 'That person is already a member of this brand');
+      if (exists) throw conflict('already_member', msg('error.brand.alreadyMember'));
       const elsewhere = await db.one(
         `select 1 from member m join brand b on b.id = m.brand_id
          where m.user_id = $1 and b.workspace_id <> (select workspace_id from brand where id = $2) limit 1`,
@@ -175,7 +177,7 @@ async function invite(db: Tx, p: Principal, brandId: string, userId: string, inp
     [brandId, userId],
   );
   const open = await db.one('select 1 from member_invitation where brand_id = $1 and user_id = $2 and answered_at is null', [brandId, userId]);
-  if (open) throw conflict('already_invited', 'That person has been invited to this brand already and has not answered yet');
+  if (open) throw conflict('already_invited', msg('error.brand.alreadyInvited'));
   const row = (await db.one<{ id: string; role: string; expires_at: Date }>(
     `insert into member_invitation (brand_id, user_id, role, invited_by, expires_at) values ($1,$2,$3,$4, now() + make_interval(days => $5))
      returning id, role, expires_at`,
@@ -185,16 +187,21 @@ async function invite(db: Tx, p: Principal, brandId: string, userId: string, inp
   return { id: row.id, email: input.email, role: row.role, expires_at: row.expires_at };
 }
 
+/** The invitation, in the language of the person invited if they chose one, otherwise in the language of the brand they are invited to. */
 async function sendInvitation(ctx: Ctx, p: Principal, brandId: string, email: string, role: string) {
-  const b = await ctx.db.one<{ brand: string; workspace: string }>(
-    'select b.name as brand, w.name as workspace from brand b join workspace w on w.id = b.workspace_id where b.id = $1',
-    [brandId],
+  const b = await ctx.db.one<{ brand: string; workspace: string; locale: string; prefs: { locale?: string } | null }>(
+    `select b.name as brand, w.name as workspace, b.locale, (select notify_prefs from app_user where lower(email) = $2) as prefs
+     from brand b join workspace w on w.id = b.workspace_id where b.id = $1`,
+    [brandId, email],
   );
-  const by = p.kind === 'user' ? p.email : 'An admin';
+  const locale = recipientLocale(b?.prefs, b?.locale);
+  const by = p.kind === 'user' ? p.email : t(locale, 'common.anAdmin');
   await ctx.mailer.send(
     email,
-    `Invitation to ${b?.brand ?? 'a brand'}`,
-    `${by} invited you to ${b?.brand} (${b?.workspace}) as ${role}.\n\nNothing changes until you accept. Sign in to accept or decline it, under Your account (valid for ${INVITATION_DAYS} days):\n\n${ctx.config.APP_URL}/\n\nIf you do not know who this is, decline it.\n`,
+    t(locale, 'mail.invitation.subject', { brand: b?.brand ?? '' }),
+    t(locale, 'mail.invitation.body', {
+      by, brand: b?.brand ?? '', workspace: b?.workspace ?? '', role: { code: `role.${role}` }, days: INVITATION_DAYS, url: `${ctx.config.APP_URL}/`,
+    }),
   );
 }
 
@@ -235,7 +242,7 @@ export async function myInvitations(ctx: Ctx, userId: string) {
 
 /** The invited person, signed in as themselves, accepts (and becomes a member with the role they were offered) or declines. */
 export async function answerInvitation(ctx: Ctx, p: Principal, invitationId: string, accept: boolean) {
-  if (p.kind !== 'user') throw forbidden('Only the person invited can answer an invitation');
+  if (p.kind !== 'user') throw forbidden(msg('error.brand.onlyInvitedAnswers'));
   return ctx.db.tx(async (db) => {
     const inv = await db.one<{ id: string; brand_id: string; role: string }>(
       `select id, brand_id, role from member_invitation where id = $1 and user_id = $2 and answered_at is null and expires_at > now() for update`,
@@ -274,7 +281,7 @@ async function revokeTokensOf(db: Tx, p: Principal, brandId: string, userId: str
 
 async function assertNotLastAdmin(db: Tx, brandId: string, memberId: string) {
   const other = await db.one(`select 1 from member where brand_id = $1 and role = 'admin' and id <> $2`, [brandId, memberId]);
-  if (!other) throw conflict('last_admin', 'A brand needs at least one admin');
+  if (!other) throw conflict('last_admin', msg('error.brand.lastAdmin'));
 }
 
 export async function changeMemberRole(ctx: Ctx, p: Principal, brandId: string, memberId: string, role: unknown) {
@@ -340,7 +347,7 @@ export async function addAccount(ctx: Ctx, p: Principal, brandId: string, raw: u
   return ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.manage');
     const dup = await db.one('select 1 from social_account where brand_id = $1 and network = $2 and external_id = $3', [brandId, input.network, input.externalId]);
-    if (dup) throw conflict('account_exists', 'That account is already registered');
+    if (dup) throw conflict('account_exists', msg('error.brand.accountExists'));
     const row = (await db.one(
       `insert into social_account (brand_id, network, external_id, display_name, status) values ($1,$2,$3,$4,'manual')
        returning id, network, external_id, display_name, status, created_at`,
@@ -357,7 +364,7 @@ export async function removeAccount(ctx: Ctx, p: Principal, brandId: string, acc
     const acc = await db.one('select * from social_account where id = $1 and brand_id = $2', [accountId, brandId]);
     if (!acc) throw notFound('Account');
     const used = await db.one('select 1 from publication where social_account_id = $1 limit 1', [accountId]);
-    if (used) throw conflict('account_in_use', 'This account has publications and cannot be removed');
+    if (used) throw conflict('account_in_use', msg('error.brand.accountInUse'));
     await db.query('delete from slot where social_account_id = $1', [accountId]);
     await db.query('delete from social_account where id = $1', [accountId]);
     await audit(db, p, brandId, 'account.removed', 'social_account', accountId, { network: acc.network, display_name: acc.display_name }, null);
@@ -467,7 +474,7 @@ export async function addSlot(ctx: Ctx, p: Principal, brandId: string, raw: unkn
   return ctx.db.tx(async (db) => {
     await authorize(db, p, brandId, 'brand.manage');
     const acc = await db.one('select 1 from social_account where id = $1 and brand_id = $2', [input.accountId, brandId]);
-    if (!acc) throw badRequest('invalid_account', 'The account does not belong to this brand');
+    if (!acc) throw badRequest('invalid_account', msg('error.brand.accountNotInBrand'));
     const row = (await db.one(
       'insert into slot (brand_id, social_account_id, weekday, local_time, label) values ($1,$2,$3,$4,$5) returning *',
       [brandId, input.accountId, input.weekday, input.localTime, input.label],

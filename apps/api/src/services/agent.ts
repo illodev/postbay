@@ -10,6 +10,7 @@ import { audit } from './audit.js';
 import { emitChangesRequested } from './approvals.js';
 import { loadBrand, loadPiece } from './loaders.js';
 import { notifyRoles } from './notify.js';
+import { english, msg, type Localized } from '../i18n/index.js';
 
 // ───────────────────────────── the brand's limits ─────────────────────────────
 
@@ -79,6 +80,7 @@ async function spending(db: Queryable, where: string, params: unknown[]): Promis
 }
 
 const STUDIO_TIMEOUT_NOTE = 'The runner stopped reporting, or ran past the longest run, so the studio closed the run';
+const STUDIO_TIMEOUT_TEXT = msg('agent.studioTimeout');
 
 /**
  * Closes the runs whose lease ran out (the runner stopped reporting) or that went past their longest run, as timeouts, and tells the
@@ -88,7 +90,7 @@ async function closeExpired(ctx: Ctx, db: Queryable, where: string, params: unkn
   const now = ctx.now();
   const closed = await db.query<{ id: string; brand_id: string; piece_id: string | null; token_id: string }>(
     `update agent_run set status = 'finished', outcome = 'timeout', finished_at = $1, notes = '${STUDIO_TIMEOUT_NOTE}',
-       detail = detail || '{"closed_by_studio": true}'::jsonb
+       notes_i18n = '${JSON.stringify(STUDIO_TIMEOUT_TEXT)}'::jsonb, detail = detail || '{"closed_by_studio": true}'::jsonb
      where status = 'running' and (lease_until < $1 or deadline_at < $1) and ${where}
      returning id, brand_id, piece_id, token_id`,
     [now, ...params],
@@ -96,7 +98,10 @@ async function closeExpired(ctx: Ctx, db: Queryable, where: string, params: unkn
   for (const r of closed) {
     const piece = r.piece_id ? await db.one('select title from piece where id = $1', [r.piece_id]) : null;
     await audit(db, null, r.brand_id, 'agent.timed_out', 'agent_run', r.id, { status: 'running' }, { outcome: 'timeout' });
-    await notifyRoles(db, r.brand_id, ['approver', 'admin'], 'agent.failed', { pieceId: r.piece_id, title: piece?.title ?? null, runId: r.id, outcome: 'timeout', message: STUDIO_TIMEOUT_NOTE }, null);
+    // A kind of its own (it used to be agent.failed): nobody did anything wrong, the run simply ran out of time.
+    await notifyRoles(db, r.brand_id, ['approver', 'admin'], 'agent.timed_out', {
+      pieceId: r.piece_id, title: piece?.title ?? null, runId: r.id, outcome: 'timeout', message: STUDIO_TIMEOUT_NOTE, message_i18n: STUDIO_TIMEOUT_TEXT,
+    }, null);
   }
   return closed.length;
 }
@@ -144,7 +149,7 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
   const token = requireToken(p);
   const pieceId = 'pieceId' in scope ? scope.pieceId : null;
 
-  const outcome = await ctx.db.tx(async (db): Promise<{ started: Started } | { blocked: { reason: BlockReason; message: string; details: Record<string, unknown> } }> => {
+  const outcome = await ctx.db.tx(async (db): Promise<{ started: Started } | { blocked: { reason: BlockReason; text: Localized; details: Record<string, unknown> } }> => {
     let brandId: string;
     let reset: Date | null = null;
     let pieceTitle: string | null = null;
@@ -155,7 +160,7 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
       reset = piece.agent_reset_at ? new Date(piece.agent_reset_at) : null;
       pieceTitle = piece.title;
       await authorize(db, p, brandId, 'version.upload');
-      if (piece.discarded_at) throw conflict('piece_discarded', 'The piece is discarded');
+      if (piece.discarded_at) throw conflict('piece_discarded', msg('error.pieceDiscarded'));
     } else {
       brandId = (scope as { brandId: string }).brandId;
       await authorize(db, p, brandId, 'version.upload');
@@ -195,26 +200,29 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
         ))!.n
       : 0;
 
-    let blocked: { reason: BlockReason; message: string; details: Record<string, unknown> } | null = null;
+    // Why it may not start, kept as a code so each person reads it in their language (the English goes in `notes`, for the runner).
+    let blocked: { reason: BlockReason; text: Localized; details: Record<string, unknown> } | null = null;
+    const money = (n: number) => n.toFixed(2);
     if (s.max_cost_per_piece === null || s.max_cost_per_month === null) {
-      blocked = { reason: 'budget_not_set', message: "Set the agent's budgets in Settings → Agent before it can start.", details: {} };
+      blocked = { reason: 'budget_not_set', text: msg('agent.blocked.budgetNotSet'), details: {} };
     } else if (pieceId && rounds >= s.max_rounds) {
-      blocked = { reason: 'rounds_exhausted', message: `The agent has used its ${s.max_rounds} rounds on this piece. A person has to take it from here.`, details: { rounds, maxRounds: s.max_rounds } };
+      blocked = { reason: 'rounds_exhausted', text: msg('agent.blocked.roundsExhausted', { rounds: s.max_rounds }), details: { rounds, maxRounds: s.max_rounds } };
     } else if (pieceId && spentPiece >= s.max_cost_per_piece) {
-      blocked = { reason: 'piece_budget_reached', message: `The agent has reached the budget for this piece (${spentPiece.toFixed(2)} of ${s.max_cost_per_piece} ${s.currency}).`, details: { spent: spentPiece, cap: s.max_cost_per_piece } };
+      blocked = { reason: 'piece_budget_reached', text: msg('agent.blocked.pieceBudget', { spent: money(spentPiece), cap: String(s.max_cost_per_piece), currency: s.currency }), details: { spent: spentPiece, cap: s.max_cost_per_piece } };
     } else if (spentMonth >= s.max_cost_per_month) {
-      blocked = { reason: 'monthly_budget_reached', message: `The agent has reached this month's budget (${spentMonth.toFixed(2)} of ${s.max_cost_per_month} ${s.currency}, counting what runs in progress may still spend).`, details: { spent: spentMonth, cap: s.max_cost_per_month } };
+      blocked = { reason: 'monthly_budget_reached', text: msg('agent.blocked.monthBudget', { spent: money(spentMonth), cap: String(s.max_cost_per_month), currency: s.currency }), details: { spent: spentMonth, cap: s.max_cost_per_month } };
     }
 
     if (blocked) {
+      const message = english(blocked.text);
       // Written down once per event, and the people who can take over are told once.
       const row = await db.one(
-        `insert into agent_run (brand_id, piece_id, token_id, trigger, trigger_event_id, status, outcome, blocked_reason, notes, started_at, finished_at)
-         values ($1,$2,$3,$4,$5,'finished','blocked',$6,$7,$8,$8) on conflict do nothing returning id`,
-        [brandId, pieceId, token.tokenId, input.trigger, input.eventId ?? null, blocked.reason, blocked.message, now],
+        `insert into agent_run (brand_id, piece_id, token_id, trigger, trigger_event_id, status, outcome, blocked_reason, notes, notes_i18n, started_at, finished_at)
+         values ($1,$2,$3,$4,$5,'finished','blocked',$6,$7,$8,$9,$9) on conflict do nothing returning id`,
+        [brandId, pieceId, token.tokenId, input.trigger, input.eventId ?? null, blocked.reason, message, JSON.stringify(blocked.text), now],
       );
       if (row) {
-        await notifyRoles(db, brandId, ['approver', 'admin'], 'agent.needs_person', { pieceId, title: pieceTitle, reason: blocked.reason, message: blocked.message }, null);
+        await notifyRoles(db, brandId, ['approver', 'admin'], 'agent.needs_person', { pieceId, title: pieceTitle, reason: blocked.reason, message, message_i18n: blocked.text }, null);
         await audit(db, p, brandId, 'agent.blocked', 'agent_run', row.id, null, { reason: blocked.reason, piece_id: pieceId });
       }
       return { blocked };
@@ -243,7 +251,7 @@ export async function startRun(ctx: Ctx, p: Principal, scope: { pieceId: string 
 
   if ('blocked' in outcome) {
     const b = outcome.blocked;
-    throw conflict(b.reason, b.message, b.details);
+    throw conflict(b.reason, b.text, b.details);
   }
   return outcome.started;
 }
@@ -319,9 +327,10 @@ export async function finishRun(ctx: Ctx, p: Principal, runId: string, raw: unkn
   });
 }
 
+/** `notes_i18n` is the studio's own note kept as a code: the answer carries it in the reader's language as `notes` (see renderStored). */
 const runView = (r: Record<string, any>) => ({
   id: r.id, piece_id: r.piece_id, trigger: r.trigger, status: r.status, outcome: r.outcome, blocked_reason: r.blocked_reason,
-  started_at: r.started_at, finished_at: r.finished_at, cost: Number(r.cost), notes: r.notes, version_id: r.version_id, detail: r.detail,
+  started_at: r.started_at, finished_at: r.finished_at, cost: Number(r.cost), notes: r.notes, notes_i18n: r.notes_i18n ?? null, version_id: r.version_id, detail: r.detail,
 });
 
 // ───────────────────────────── what people see ─────────────────────────────
@@ -360,6 +369,7 @@ export async function pieceAgent(ctx: Ctx, p: Principal, pieceId: string) {
     status: live ? 'running' : needsPerson ? 'needs_person' : 'idle',
     blocked_reason: needsPerson ? lastBlocked!.blocked_reason : null,
     blocked_message: needsPerson ? lastBlocked!.notes : null,
+    blocked_message_i18n: needsPerson ? (lastBlocked!.notes_i18n ?? null) : null,
     runs: runs.map((r) => ({ ...runView(r), version_number: r.version_number, counted: new Date(r.started_at) > since && r.outcome !== 'aborted' && r.outcome !== 'blocked' })),
   };
 }
@@ -369,11 +379,11 @@ export async function pieceAgent(ctx: Ctx, p: Principal, pieceId: string) {
  * still waiting is sent again (as a new event), because the agent was refused it and nothing else would wake it.
  */
 export async function resetRounds(ctx: Ctx, p: Principal, pieceId: string) {
-  if (p.kind !== 'user') throw forbidden('Only people can give the agent more rounds');
+  if (p.kind !== 'user') throw forbidden(msg('error.agent.peopleOnlyRounds'));
   await ctx.db.tx(async (db) => {
     const piece = await loadPiece(db, pieceId, true);
     await authorize(db, p, piece.brand_id, 'version.approve');
-    if (piece.discarded_at) throw conflict('piece_discarded', 'The piece is discarded');
+    if (piece.discarded_at) throw conflict('piece_discarded', msg('error.pieceDiscarded'));
     await db.query('update piece set agent_reset_at = $2 where id = $1', [pieceId, ctx.now()]);
     await audit(db, p, piece.brand_id, 'agent.rounds_reset', 'piece', pieceId, { agent_reset_at: piece.agent_reset_at }, { agent_reset_at: ctx.now().toISOString() });
     const waiting = await db.query<{ id: string; variant_id: string }>(
