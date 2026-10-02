@@ -394,13 +394,37 @@ export interface SafeZone {
 export function SafeZoneOverlay({ zone }: { zone: SafeZone | null | undefined }) {
   if (!zone) return null;
   const pct = (n: number) => `${n * 100}%`;
+  // What the network draws over the post, as ghost shapes in the covered bands: its buttons down the right, the account
+  // and caption along the bottom, its bar along the top. The clear part is where nothing of the post gets hidden. A band
+  // too thin to draw in (a feed post's few per cent) is just shaded.
+  const roomy = (n: number) => n >= 0.08;
   return (
     <div className="safe-zone" aria-hidden="true" data-testid="safe-zone">
-      {zone.top > 0 && <div className="safe-band" style={{ top: 0, left: 0, right: 0, height: pct(zone.top) }} />}
-      {zone.bottom > 0 && <div className="safe-band" style={{ bottom: 0, left: 0, right: 0, height: pct(zone.bottom) }} />}
+      {zone.top > 0 && (
+        <div className="safe-band sz-top" style={{ top: 0, left: 0, right: 0, height: pct(zone.top) }}>
+          {roomy(zone.top) && <><i className="sz-line" style={{ width: '22%' }} /><i className="sz-dot" /></>}
+        </div>
+      )}
+      {zone.bottom > 0 && (
+        <div className="safe-band sz-bottom" style={{ bottom: 0, left: 0, right: 0, height: pct(zone.bottom) }}>
+          {roomy(zone.bottom) && (
+            <>
+              <i className="sz-avatar" />
+              <span className="sz-lines">
+                <i className="sz-line" style={{ width: '38%' }} />
+                <i className="sz-line" style={{ width: '82%' }} />
+                <i className="sz-line" style={{ width: '64%' }} />
+              </span>
+            </>
+          )}
+        </div>
+      )}
       {zone.left > 0 && <div className="safe-band" style={{ top: pct(zone.top), bottom: pct(zone.bottom), left: 0, width: pct(zone.left) }} />}
-      {zone.right > 0 && <div className="safe-band" style={{ top: pct(zone.top), bottom: pct(zone.bottom), right: 0, width: pct(zone.right) }} />}
-      <div className="safe-frame" style={{ top: pct(zone.top), bottom: pct(zone.bottom), left: pct(zone.left), right: pct(zone.right) }} />
+      {zone.right > 0 && (
+        <div className="safe-band sz-right" style={{ top: pct(zone.top), bottom: pct(zone.bottom), right: 0, width: pct(zone.right) }}>
+          {roomy(zone.right) && [0, 1, 2, 3].map((i) => <i key={i} className="sz-dot" />)}
+        </div>
+      )}
       <span className="safe-label">{zone.label}</span>
     </div>
   );
