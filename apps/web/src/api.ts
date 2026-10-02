@@ -24,6 +24,7 @@ export const api = {
   get: <T>(url: string) => request<T>('GET', url),
   post: <T>(url: string, body?: unknown) => request<T>('POST', url, body ?? {}),
   patch: <T>(url: string, body: unknown) => request<T>('PATCH', url, body),
+  put: <T>(url: string, body: unknown) => request<T>('PUT', url, body),
   del: <T>(url: string) => request<T>('DELETE', url),
 };
 
@@ -50,6 +51,13 @@ export interface BrandSettings {
   rules: { required_approvals: number; reapprove_on_move: boolean; checklist: string[] };
   publishing: { prepare_lead_minutes: number; late_tolerance_minutes: number };
   agent: AgentSettings;
+  prizes: PrizeSettings;
+}
+
+export interface PrizeSettings {
+  enabled: boolean;
+  retention_days: number;
+  auto_notice: string;
 }
 
 export interface AgentSettings {
@@ -231,13 +239,48 @@ export interface PlacementSpec {
 export interface Capabilities {
   network: string;
   placements: PlacementSpec[];
-  text: { maxChars: number; maxHashtags?: number; maxMentions?: number; previewCutoff?: number; firstComment: boolean; firstCommentMaxChars?: number };
+  text: { maxChars: number; unit?: 'chars' | 'graphemes'; maxHashtags?: number; maxMentions?: number; previewCutoff?: number; firstComment: boolean; firstCommentMaxChars?: number };
   aiLabel: boolean;
+  /** Settings of its own that the network asks for when scheduling. */
+  options?: OptionField[];
   nativeScheduling: { minLeadMinutes: number; maxLeadDays: number } | null;
 }
 
+export interface OptionField {
+  key: string;
+  label: string;
+  type: 'text' | 'url' | 'select' | 'checkbox';
+  required?: boolean;
+  help?: string;
+  maxLength?: number;
+  choices?: { value: string; label: string }[];
+  default?: string | boolean;
+  placements?: string[];
+  showWhen?: string;
+  /** Text the network obliges the app to show next to the field, word for word. */
+  notice?: string;
+}
+
+export interface CredentialField {
+  key: string;
+  label: string;
+  type: 'text' | 'password';
+  help?: string;
+  required?: boolean;
+}
+
+export interface Provider {
+  id: string;
+  label: string;
+  networks: string[];
+  configured: boolean;
+  /** A sign-in page, or a form for credentials the person types (Bluesky's app password). */
+  signIn: 'redirect' | 'credentials';
+  fields: CredentialField[];
+}
+
 export interface Integrations {
-  providers: { id: 'meta' | 'google'; label: string; networks: string[]; configured: boolean }[];
+  providers: Provider[];
   capabilities: Record<string, Capabilities>;
 }
 
@@ -272,13 +315,13 @@ export interface Candidate {
   network: string;
   externalId: string;
   displayName: string;
-  providerData: { missingScopes?: string[]; username?: string };
+  providerData: { missingScopes?: string[]; username?: string; boardId?: string; organizationId?: string };
   existing: { id: string; status: string } | null;
 }
 
 export interface PendingConnection {
   id: string;
-  provider: 'meta' | 'google';
+  provider: string;
   candidates: Candidate[];
   reconnect: { id: string; network: string; display_name: string; status: string } | null;
 }
@@ -394,4 +437,93 @@ export interface BrandAgent {
   month_start: string;
   spent_month: number;
   runs: AgentRun[];
+}
+
+
+// ───────────────────────────── results ─────────────────────────────
+
+export interface CommonMetrics {
+  views?: number;
+  reach?: number;
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  saves?: number;
+  avgWatchSeconds?: number;
+}
+
+export type MetricAge = '1h' | '6h' | '22h' | '1d' | '7d' | '28d';
+
+export interface MetricSnapshot {
+  age: MetricAge;
+  status: 'pending' | 'ok' | 'unavailable' | 'failed' | 'expired';
+  due_at: string;
+  taken_at: string | null;
+  metrics: CommonMetrics;
+  note: string | null;
+}
+
+export interface MetricsRow {
+  publication: { id: string; network: string; account: string; piece_id: string; piece: string; placement: string | null; published_at: string; url: string | null; visibility: string | null };
+  snapshots: MetricSnapshot[];
+  latest: { age: MetricAge; taken_at: string; metrics: CommonMetrics } | null;
+}
+
+export interface BrandMetrics {
+  from: string;
+  to: string;
+  rows: MetricsRow[];
+  networks: { network: string; posts: number; read: number; totals: CommonMetrics }[];
+}
+
+// ───────────────────────────── prizes ─────────────────────────────
+
+export interface Prize {
+  id: string;
+  name: string;
+  kind: 'file' | 'link';
+  file_name: string | null;
+  file_bytes: number | null;
+  url: string | null;
+  /** A file prize is usable once its bytes have arrived. */
+  usable: boolean;
+  archived: boolean;
+  created_at: string;
+  active_rules?: number;
+}
+
+export interface PrizeRule {
+  id: string;
+  publication_id: string;
+  mode: 'private_reply' | 'public_link';
+  active: boolean;
+  keyword: string;
+  message: string;
+  link_hours: number;
+  notice_confirmed: boolean;
+  prize: Prize | null;
+  public_url: string | null;
+  public_expires_at: string | null;
+  deliveries: { pending: number; sent: number; skipped: number; failed: number };
+}
+
+export interface PublicationPrize {
+  rule: PrizeRule | null;
+  mode: 'private_reply' | 'public_link';
+  prizes_enabled: boolean;
+  auto_notice: string;
+  /** Null where nothing is sent privately; false where the account was connected without the permission. */
+  can_message: boolean | null;
+}
+
+export interface PrizeDelivery {
+  id: string;
+  person: string;
+  status: 'pending' | 'sent' | 'skipped' | 'failed';
+  reason: string | null;
+  comment_at: string;
+  sent_at: string | null;
+  downloads: number;
+  expires_at: string | null;
+  purge_after: string;
 }

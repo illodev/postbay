@@ -14,6 +14,8 @@ afterAll(async () => { await env.close(); });
 beforeEach(async () => {
   // Each test counts its own readings: whatever earlier tests left pending is cleared.
   await env.db.query('delete from metric_snapshot');
+  // Posts from earlier tests must not be given readings again by the recovery of lost rows: they are somebody else's now.
+  await env.db.query(`update publication set manual = true where status = 'published'`);
   env.meta.failures.length = 0;
   env.google.failures.length = 0;
   env.meta.calls.length = 0;
@@ -297,5 +299,47 @@ describe('the API', () => {
     const old = await env.call(env.users.reader, 'GET', `/api/brands/${env.brandId}/metrics?from=2001-01-01&to=2001-12-31`);
     expect(old.body.rows).toEqual([]);
     expect((await env.call(env.users.reader, 'GET', `/api/brands/${env.brandId}/metrics?from=yesterday`)).status).toBe(400);
+  });
+});
+
+describe('rows that were lost', () => {
+  it('are made again for a recent public post that lacks them, and only for that', async () => {
+    const { id } = await published(ig);
+    // Going live and scheduling the readings are two writes; a crash between them leaves a public post with none.
+    await env.db.query('delete from metric_snapshot where publication_id = $1', [id]);
+    await scanMetrics(env.ctx);
+    const p = await pub(id);
+    const rows = await snaps(id);
+    expect(rows.map((r) => r.age)).toEqual(['1h', '1d', '7d', '28d']);
+    expect(rows.map((r) => new Date(r.due_at).getTime() - new Date(p.published_at).getTime())).toEqual([HOUR, DAY, 7 * DAY, 28 * DAY]);
+  });
+
+  it('are not made for a post that has been public for days (its early ages are gone, and it was never scheduled by this)', async () => {
+    const { id } = await published(ig);
+    await env.db.query('delete from metric_snapshot where publication_id = $1', [id]);
+    env.clock.advance(3 * DAY);
+    await scanMetrics(env.ctx);
+    expect(await snaps(id)).toHaveLength(0);
+  });
+
+  it('are not made for a post nobody can see, nor one a person published by hand', async () => {
+    const priv = await published(yt);
+    expect((await pub(priv.id)).visibility).toBe('private');
+    const { id } = await published(ig);
+    await env.db.query('delete from metric_snapshot where publication_id = $1', [id]);
+    await env.db.query('update publication set manual = true where id = $1', [id]);
+    await scanMetrics(env.ctx);
+    expect(await snaps(priv.id)).toHaveLength(0);
+    expect(await snaps(id)).toHaveLength(0);
+  });
+
+  it('all four rows come in one statement: a reader never sees some of them', async () => {
+    const { id } = await published(ig);
+    await env.db.query('delete from metric_snapshot where publication_id = $1', [id]);
+    const log: string[] = [];
+    const spy = { query: async (sql: string, params?: unknown[]) => { log.push(sql); return env.db.query(sql, params as any[]); } };
+    await scheduleSnapshots(spy as any, await pub(id) as any);
+    expect(log).toHaveLength(1);
+    expect(await snaps(id)).toHaveLength(4);
   });
 });

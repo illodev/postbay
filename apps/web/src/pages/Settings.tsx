@@ -1,14 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api, type Account, type BrandSettings, type Integrations, type PendingConnection, type Role } from '../api';
+import { api, type Account, type BrandSettings, type Integrations, type PendingConnection, type Provider, type Role } from '../api';
 import { CopyButton, Dialog, Empty, ErrorBox, errorMessage, Field, Spinner, useToast } from '../components/ui';
 import { fmtDateTime, fmtShort, NETWORK_LABEL, ROLE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
 import { AgentTab } from '../components/AgentTab';
+import { PrizesSettings } from '../components/PrizesSettings';
 import { Webhooks } from '../components/Webhooks';
 
-type Tab = 'general' | 'members' | 'accounts' | 'schedule' | 'tokens' | 'webhooks' | 'agent' | 'audit';
+type Tab = 'general' | 'members' | 'accounts' | 'prizes' | 'schedule' | 'tokens' | 'webhooks' | 'agent' | 'audit';
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const ROLES: Role[] = ['admin', 'approver', 'reviewer', 'producer', 'reader'];
@@ -218,6 +219,51 @@ function ConnectionDialog({ brandId, pendingId, onClose }: { brandId: string; pe
   );
 }
 
+/** For a network with no sign-in page: the person types what it asks for (Bluesky's handle and an app password). */
+function CredentialsDialog({ brandId, provider, reconnect, onClose, onDone }: {
+  brandId: string;
+  provider: Provider;
+  reconnect?: Account;
+  onClose: () => void;
+  onDone: (pendingId: string) => void;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const go = useMutation({
+    mutationFn: () => api.post<{ pendingId: string }>(`/api/brands/${brandId}/connections/${provider.id}/credentials`, { values, reconnectAccountId: reconnect?.id }),
+    onSuccess: (r) => onDone(r.pendingId),
+  });
+  return (
+    <Dialog title={reconnect ? `Reconnect ${reconnect.display_name}` : `Connect ${provider.label}`} onClose={onClose}>
+      <form className="stack" autoComplete="off" onSubmit={(e) => { e.preventDefault(); go.mutate(); }}>
+        <p className="muted">
+          {provider.label} has no sign-in page for apps: it is connected with an app password you make in the network itself.
+          The password is kept encrypted and never shown again.
+        </p>
+        {provider.fields.map((f) => (
+          <Field key={f.key} label={f.label} hint={f.help}>
+            <input
+              type={f.type} name={f.key} required={f.required !== false} autoComplete={f.type === 'password' ? 'new-password' : 'off'}
+              value={values[f.key] ?? ''} onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+            />
+          </Field>
+        ))}
+        {go.error && <ErrorBox error={go.error} />}
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={go.isPending}>{go.isPending ? 'Checking…' : 'Continue'}</button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+/** What the network's approval status means for each network that holds posts back until it is given. */
+const APPROVAL: Record<string, { label: string; until: string }> = {
+  youtube: { label: 'Google has audited this project', until: 'until then videos upload as private' },
+  tiktok: { label: 'TikTok has audited this app', until: 'until then posts are made private, visible only to the account' },
+  pinterest: { label: 'Pinterest has granted this app Standard access', until: 'until then pins are not visible to others' },
+};
+
 function Accounts({ brandId }: { brandId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -227,7 +273,14 @@ function Accounts({ brandId }: { brandId: string }) {
   const { data } = useQuery({ queryKey: ['accounts', brandId], queryFn: () => api.get<Account[]>(`/api/brands/${brandId}/accounts`) });
   const { data: integ } = useQuery({ queryKey: ['integrations', brandId], queryFn: () => api.get<Integrations>(`/api/brands/${brandId}/integrations`) });
   const [form, setForm] = useState({ network: 'instagram', externalId: '', displayName: '' });
+  const [typing, setTyping] = useState<{ provider: Provider; reconnect?: Account } | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ['accounts', brandId] });
+  const openPicker = (pendingId: string) => { const p = new URLSearchParams(params); p.set('connection', pendingId); setParams(p, { replace: true }); setTyping(null); };
+  /** A sign-in page takes the browser away; a form opens here. */
+  const start = (provider: Provider, account?: Account) => {
+    if (provider.signIn === 'credentials') setTyping({ provider, reconnect: account });
+    else connect.mutate({ provider: provider.id, accountId: account?.id });
+  };
   const clearParams = () => { const p = new URLSearchParams(params); p.delete('connection'); p.delete('connect_error'); setParams(p, { replace: true }); };
 
   const add = useMutation({
@@ -270,7 +323,7 @@ function Accounts({ brandId }: { brandId: string }) {
         <p className="muted" style={{ margin: 0 }}>Connected accounts are published to by the app itself, at the scheduled time. Anything else stays manual: a person posts it and records it here.</p>
         <div className="row">
           {integ?.providers.map((p) => (
-            <button key={p.id} className="btn btn-primary" disabled={!p.configured || connect.isPending} onClick={() => connect.mutate({ provider: p.id })} title={p.configured ? '' : 'Not set up on this server'}>
+            <button key={p.id} className="btn btn-primary" disabled={!p.configured || connect.isPending} onClick={() => start(p)} title={p.configured ? '' : 'Not set up on this server'}>
               Connect {p.label}
             </button>
           ))}
@@ -308,22 +361,22 @@ function Accounts({ brandId }: { brandId: string }) {
                       {a.status === 'active' && a.connected && !a.automated && <div className="muted small">This server cannot publish to {a.network} yet.</div>}
                       {a.last_error && a.status === 'reconnect_required' && <div className="small" style={{ color: 'var(--bad)' }}>{a.last_error}</div>}
                       {a.last_health_at && a.status === 'active' && <div className="muted small">Checked {fmtShort(a.last_health_at)}</div>}
-                      {a.network === 'youtube' && a.connected && (
+                      {APPROVAL[a.network] && a.connected && (
                         <label className="check small" style={{ marginTop: 4 }}>
                           <input type="checkbox" checked={!!a.details.audited} onChange={(e) => audited.mutate({ id: a.id, value: e.target.checked })} />
-                          <span>Google has audited this project{!a.details.audited && <span className="muted"> · until then videos upload as private</span>}</span>
+                          <span>{APPROVAL[a.network]!.label}{!a.details.audited && <span className="muted"> · {APPROVAL[a.network]!.until}</span>}</span>
                         </label>
                       )}
                     </td>
                     <td>
                       <div className="row">
                         {provider?.configured && (a.status !== 'active' || !a.connected) && (
-                          <button className="btn btn-small btn-primary" onClick={() => connect.mutate({ provider: provider.id, accountId: a.id })}>
+                          <button className="btn btn-small btn-primary" onClick={() => start(provider, a)}>
                             {a.status === 'manual' ? 'Connect' : 'Reconnect'}
                           </button>
                         )}
                         {a.connected && a.status === 'active' && provider?.configured && (
-                          <button className="btn btn-small" onClick={() => connect.mutate({ provider: provider.id, accountId: a.id })}>Renew</button>
+                          <button className="btn btn-small" onClick={() => start(provider, a)}>Renew</button>
                         )}
                         {a.connected && (
                           <button className="btn btn-small" onClick={() => confirm(`Disconnect ${a.display_name}? It goes back to being published by hand.`) && disconnect.mutate(a.id)}>Disconnect</button>
@@ -352,6 +405,7 @@ function Accounts({ brandId }: { brandId: string }) {
         <div><button className="btn btn-primary" disabled={add.isPending}>Add account</button></div>
       </form>
       {pendingId && <ConnectionDialog brandId={brandId} pendingId={pendingId} onClose={clearParams} />}
+      {typing && <CredentialsDialog brandId={brandId} provider={typing.provider} reconnect={typing.reconnect} onClose={() => setTyping(null)} onDone={openPicker} />}
     </div>
   );
 }
@@ -496,6 +550,7 @@ export function SettingsPage() {
     ['general', 'General', can('manage') || can('pause')],
     ['members', 'People', can('manage')],
     ['accounts', 'Accounts', can('manage')],
+    ['prizes', 'Prizes', can('manage')],
     ['schedule', 'Slots & dates', can('manage')],
     ['tokens', 'API tokens', can('manage')],
     ['webhooks', 'Webhooks', can('manage')],
@@ -519,6 +574,7 @@ export function SettingsPage() {
       {current === 'general' && <General brandId={brand.id} />}
       {current === 'members' && <Members brandId={brand.id} />}
       {current === 'accounts' && <Accounts brandId={brand.id} />}
+      {current === 'prizes' && <PrizesSettings brandId={brand.id} />}
       {current === 'schedule' && <Schedule brandId={brand.id} />}
       {current === 'tokens' && <Tokens brandId={brand.id} />}
       {current === 'webhooks' && <Webhooks brandId={brand.id} />}

@@ -76,3 +76,15 @@ export async function createVersion(
     resolves,
   });
 }
+
+/** A prize file: hashed, sent straight to storage with the signed address the API gave, and then confirmed so the API checks what arrived. */
+export async function uploadPrizeFile(brandId: string, name: string, file: File, onProgress: (p: Progress) => void) {
+  const sha256 = await sha256File(file, (fraction) => onProgress({ step: 'hashing', file: 0, fraction }));
+  const made = await api.post<{ prize: { id: string }; upload: { url: string; headers: Record<string, string> } }>(
+    `/api/brands/${brandId}/prizes`,
+    { kind: 'file', name, file: { name: file.name, mime: guessMime(file), bytes: file.size, sha256 } },
+  );
+  await putWithProgress(made.upload.url, made.upload.headers, file, (fraction) => onProgress({ step: 'uploading', file: 0, fraction }));
+  onProgress({ step: 'closing', file: 0, fraction: 1 });
+  return api.post(`/api/prizes/${made.prize.id}/complete`);
+}

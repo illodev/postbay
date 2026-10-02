@@ -30,16 +30,35 @@ const GIVE_UP_AFTER = 3 * DAY;
 
 export const agesFor = (placement: string | null) => (placement === 'story' ? STORY_AGES : STANDARD_AGES);
 
-/** Makes the rows for a post that has gone live. Safe to repeat: a post that was already scheduled keeps what it has. */
+/**
+ * Makes the rows for a post that has gone live, all in one statement so nobody ever sees half of them. Safe to repeat: a post that
+ * was already scheduled keeps what it has.
+ */
 export async function scheduleSnapshots(db: Queryable, pub: { id: string; placement: string | null; published_at: Date | string }): Promise<void> {
   const at = new Date(pub.published_at).getTime();
-  for (const [age, offset] of agesFor(pub.placement)) {
-    const due = new Date(at + offset);
-    await db.query(
-      `insert into metric_snapshot (publication_id, age, due_at, next_attempt_at) values ($1,$2,$3,$3) on conflict (publication_id, age) do nothing`,
-      [pub.id, age, due],
-    );
-  }
+  const ages = agesFor(pub.placement);
+  await db.query(
+    `insert into metric_snapshot (publication_id, age, due_at, next_attempt_at)
+     select $1, x.age, x.due, x.due from unnest($2::text[], $3::timestamptz[]) as x(age, due)
+     on conflict (publication_id, age) do nothing`,
+    [pub.id, ages.map(([age]) => age), ages.map(([, offset]) => new Date(at + offset).toISOString())],
+  );
+}
+
+/** A post that went live this recently and has no rows is one whose rows were lost between going live and being scheduled. */
+const RECOVER_WITHIN = 2 * DAY;
+
+/** Gives the rows to recent public posts that lack them: going live and scheduling the readings are two writes, and a crash may fall between. */
+export async function recoverSnapshots(ctx: Ctx, limit = 50): Promise<number> {
+  const lost = await ctx.db.query(
+    `select p.id, p.placement, p.published_at from publication p
+     where p.status = 'published' and p.visibility = 'public' and p.manual = false and p.published_at > $1
+       and not exists (select 1 from metric_snapshot s where s.publication_id = p.id)
+     limit $2`,
+    [new Date(ctx.now().getTime() - RECOVER_WITHIN), limit],
+  );
+  for (const pub of lost) await scheduleSnapshots(ctx.db, pub as { id: string; placement: string | null; published_at: Date });
+  return lost.length;
 }
 
 /** Drops the keys a network did not give, so nothing is read as zero. */
@@ -131,6 +150,7 @@ async function readOne(ctx: Ctx, snap: Row): Promise<string> {
 
 /** Reads the snapshots that are due. One worker or several: each row is claimed with a lease before it is read. */
 export async function scanMetrics(ctx: Ctx, limit = 20): Promise<number> {
+  await recoverSnapshots(ctx);
   const now = ctx.now();
   const claimed = await ctx.db.query(
     `update metric_snapshot s set lease_until = $2, attempts = s.attempts + 1

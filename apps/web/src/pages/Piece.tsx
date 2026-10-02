@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type PieceDetail, type PublicationRow, type Variant, type BrandSettings } from '../api';
+import { PrizeDialog } from '../components/PrizeDialog';
 import { AttemptsDialog, MarkPublishedDialog, MoveDialog, PackDialog, PublicationBadges, PublicationNote, RescheduleDialog, RetryDialog } from '../components/publications';
 import { PieceAgentCard } from '../components/PieceAgentCard';
 import { UploadDialog } from '../components/UploadDialog';
@@ -112,6 +113,7 @@ function PublicationsTable({ piece, brand, zone }: { piece: PieceDetail; brand: 
   const [pack, setPack] = useState<string | null>(null);
   const [attempts, setAttempts] = useState<string | null>(null);
   const [retry, setRetry] = useState<PublicationRow | null>(null);
+  const [prize, setPrize] = useState<PublicationRow | null>(null);
   const act = useMutation({
     mutationFn: ({ id, action }: { id: string; action: 'cancel' | 'confirm' | 'hand-over' | 'recheck' }) => api.post(`/api/publications/${id}/${action}`),
     onSuccess: (_r, v) => {
@@ -149,6 +151,9 @@ function PublicationsTable({ piece, brand, zone }: { piece: PieceDetail; brand: 
                   <td>
                     <div className="row">
                       {!p.manual && <button className="btn btn-small" onClick={() => setAttempts(p.id)}>History</button>}
+                      {brand?.prizes?.enabled && can('schedule') && ['scheduled', 'preparing', 'ready', 'publishing', 'published', 'awaiting_reapproval', 'on_hold'].includes(p.status) && (
+                        <button className="btn btn-small" onClick={() => setPrize(p)}>Prize…</button>
+                      )}
                       {can('schedule') && (
                         <>
                           {p.status === 'scheduled' && p.manual && <button className="btn btn-small" onClick={() => setPack(p.id)}>Publish…</button>}
@@ -188,6 +193,7 @@ function PublicationsTable({ piece, brand, zone }: { piece: PieceDetail; brand: 
       {mark && <MarkPublishedDialog pubId={mark} onClose={() => setMark(null)} />}
       {attempts && <AttemptsDialog pubId={attempts} zone={zone} onClose={() => setAttempts(null)} />}
       {retry && <RetryDialog pub={retry} zone={zone} onClose={() => setRetry(null)} />}
+      {prize && <PrizeDialog pub={prize} brandId={piece.brand_id} zone={zone} onClose={() => setPrize(null)} />}
     </section>
   );
 }

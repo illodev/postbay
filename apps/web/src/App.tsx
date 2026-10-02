@@ -9,6 +9,8 @@ import { CalendarPage } from './pages/Calendar';
 import { Login, AuthCallback } from './pages/Login';
 import { PiecePage } from './pages/Piece';
 import { PiecesPage } from './pages/Pieces';
+import { DataDeletionPage, PublicPrizePage } from './pages/PublicPrize';
+import { ResultsPage } from './pages/Results';
 import { PublishPage } from './pages/Publish';
 import { SettingsPage } from './pages/Settings';
 
@@ -38,6 +40,7 @@ function Authed() {
           <Route path="review/:versionId" element={<Suspense fallback={<Spinner />}><ReviewPage /></Suspense>} />
           <Route path="calendar" element={<CalendarPage />} />
           <Route path="today" element={<PublishPage />} />
+          <Route path="results" element={<ResultsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Empty title="Page not found" />} />
         </Route>
@@ -51,6 +54,8 @@ export function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
+      <Route path="/prize/:token" element={<PublicPrizePage />} />
+      <Route path="/data-deletion" element={<DataDeletionPage />} />
       <Route path="/*" element={<Authed />} />
     </Routes>
   );

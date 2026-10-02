@@ -76,7 +76,7 @@ export async function startWorker(ctx: Ctx): Promise<Worker> {
         await pollComments(ctx);
       }
       await scanPrizeDeliveries(ctx);
-      if (Date.now() - lastPrizePurge > 3600_000) {
+      if (Date.now() - lastPrizePurge > ctx.config.PRIZE_PURGE_SECONDS * 1000) {
         lastPrizePurge = Date.now();
         await purgePrizeData(ctx);
       }

@@ -247,3 +247,8 @@ th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color:
 /* phase 3 */
 .chip-needs_person { background: var(--bad-soft); color: var(--bad); }
 progress { accent-color: var(--accent); height: .6rem; }
+
+/* phase 4 */
+.options { border: 1px solid var(--border); border-radius: 8px; padding: .75rem .9rem; margin: 0; }
+.options legend { padding: 0 .35rem; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }

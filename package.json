@@ -20,7 +20,8 @@
     "e2e": "node e2e/smoke.mjs",
     "e2e:phase2": "sh e2e/phase2.sh",
     "runner": "npm run dev -w @estudio/runner",
-    "e2e:phase3": "sh e2e/phase3.sh"
+    "e2e:phase3": "sh e2e/phase3.sh",
+    "e2e:phase4": "sh e2e/phase4.sh"
   },
   "devDependencies": {
     "playwright-core": "^1.63.0"

@@ -8,14 +8,16 @@ It does not generate content, it orchestrates it. The producer can be an AI agen
 same kind of client (a producer token or a signed-in user). It serves one brand or several, and nothing in it is
 specific to any client: names, time zones, languages and review rules are configuration, never code.
 
-> **Status: phase 3 of 4.** Review, approval, calendar and assisted publishing work end to end (phase 1); the app can
-> publish by itself to Instagram, Facebook Pages and YouTube (phase 2); and a comment can now become a new version without
-> anyone's hands: signed webhooks, an agent runner with safeguards, and automatic checks (phase 3). **Phase 2 was built and
-> tested against fake Meta and Google servers: no real network was reachable, so a first run with real accounts is still to
-> do. Phase 3 was proven in a browser with a scripted agent and with real Claude Code on a few simple requests.** Metrics,
-> prizes and the remaining networks are the next phase. See [docs/phase-1.md](docs/phase-1.md),
-> [docs/phase-2.md](docs/phase-2.md) and [docs/phase-3.md](docs/phase-3.md) for exactly what is done, what is left out, and
-> the decisions taken where the spec left room.
+> **Status: phase 4 of 4.** Review, approval, calendar and assisted publishing work end to end (phase 1); the app can
+> publish by itself to Instagram, Facebook Pages and YouTube (phase 2); a comment can become a new version without
+> anyone's hands: signed webhooks, an agent runner with safeguards, and automatic checks (phase 3); and it now also
+> publishes to TikTok, LinkedIn, X, Threads, Pinterest and Bluesky, reads the numbers each post earned, and gives prizes
+> to people who comment a keyword (phase 4). **Phases 2 and 4 were built and tested against stand-ins for the networks
+> that I wrote from their documentation: no real network was reachable, so a first run with real accounts is still to do
+> for every one of them, and TikTok in particular may refuse an app like this. Phase 3 was proven in a browser with a
+> scripted agent and with real Claude Code on a few simple requests.** See [docs/phase-1.md](docs/phase-1.md),
+> [docs/phase-2.md](docs/phase-2.md), [docs/phase-3.md](docs/phase-3.md) and [docs/phase-4.md](docs/phase-4.md) for exactly what
+> is done, what is left out, and the decisions taken where the spec left room.
 
 ## What phase 1 does
 
@@ -69,6 +71,18 @@ specific to any client: names, time zones, languages and review rules are config
 - **Empty slots ask for content.** A slot still empty a few days before its date is announced, with the campaign's brief, so an
   agent can fill it.
 
+## What phase 4 adds
+
+- **Six more networks.** Threads, X, LinkedIn, Pinterest and TikTok connect through their sign-in pages; Bluesky with a handle and an
+  app password. Each declares the settings it needs (who can see a TikTok post, alt text, a Pinterest link…) and the schedule dialog
+  asks for them. A network that holds posts back until it approves the app (TikTok, Pinterest, YouTube) is shown as *Private*, in its
+  own words, until an admin says it has.
+- **Results.** Each post is read 1 hour, 1 day, 7 days and 28 days after it goes live (a story: 1, 6 and 22 hours). *Results* shows
+  each network on its own and never adds networks together.
+- **Prizes for commenting.** A post can carry a prize: whoever comments the keyword gets a file or a link by private message on
+  Instagram and Facebook (a public page on the other networks). Switched on per brand, with a confirmation that the post says the reply
+  is automatic, Meta's signed webhook, data kept for as short a time as you set, and erasing a person on request or when Meta says so.
+
 ## Quick start
 
 You need Node 22, PostgreSQL 16 and ffmpeg.
@@ -107,7 +121,7 @@ apps/api    Node 22, TypeScript, Fastify, PostgreSQL (plain SQL), zod
   src/migrations  SQL; the database itself refuses edits to versions, files, approvals and the audit log
 apps/web    React, Vite, TanStack Query; plain CSS, light and dark, works on a phone
 apps/runner Node, TypeScript: the agent runner. Listens to webhooks, runs the agent's command, checks and uploads
-e2e         real-browser tests: phase 1's flow, phase 2's publishing against fake networks, phase 3's agent loop
+e2e         real-browser tests: phase 1's flow, phase 2's publishing against fake networks, phase 3's agent loop, phase 4's networks, results and prizes
 deploy      Docker Compose with PostgreSQL, MinIO, Caddy (TLS), the app and a worker
 ```
 
@@ -187,12 +201,15 @@ See [`.env.example`](.env.example). The ones that matter:
 | `TOKEN_KEY` | 32 bytes in base64 (`openssl rand -base64 32`). Seals network tokens and webhook secrets; required once Meta or Google is set, and for any webhook. **Keep a copy: losing it means connecting every account and replacing every webhook secret** |
 | `WEBHOOK_ALLOW_PRIVATE_NETWORKS` | Whether webhooks may point at loopback and private addresses. Default: yes in development, no in production |
 | `META_APP_ID`, `META_APP_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | The developer apps ([setup in docs/phase-2.md](docs/phase-2.md#setting-up-the-networks)). Without them accounts stay manual |
+| `THREADS_*`, `TIKTOK_*`, `LINKEDIN_*` (and `LINKEDIN_VERSION`), `X_*`, `PINTEREST_*` | The other networks' apps ([setup in docs/phase-4.md](docs/phase-4.md#setting-up-the-networks)). Each switches on with its credentials; Bluesky needs only `TOKEN_KEY` |
+| `META_WEBHOOK_VERIFY_TOKEN` | For prizes: the token Meta sends back when you register `$APP_URL/api/meta/webhook` |
+| `METRICS_SWEEP_SECONDS`, `PRIZE_POLL_SECONDS`, `PRIZE_PURGE_SECONDS` | How often readings are taken, comments of posts with a prize are read, and expired people are deleted (120, 180 and 3600 seconds by default) |
 | `RUN_WORKERS` | `true` (default) runs the queue inside the API process; `false` when a separate worker runs |
 
 ## Tests
 
 ```sh
-npm test                 # 249 API tests and 51 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
+npm test                 # 507 API tests and 51 runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker)
 npm run typecheck
 ```
 
@@ -200,12 +217,13 @@ The API tests create a throwaway database per file, so they need a PostgreSQL th
 `TEST_DATABASE_ADMIN_URL` at it (default `postgres://postgres@localhost:5433/postgres`). They cover the rules above, the
 database guarantees (by trying to break them), permissions, isolation between brands, sign-in, and the calendar across
 clock changes, for phase 2 the connectors against fake Meta and Google servers and the whole publishing state machine on a
-controlled clock, and for phase 3 signed delivery with every retry wait, the agent's limits, and the runner against a scripted
-agent (the runner's tests also need ffmpeg).
+controlled clock, for phase 3 signed delivery with every retry wait, the agent's limits, and the runner against a scripted
+agent (the runner's tests also need ffmpeg), and for phase 4 every connector against its stand-in (including a post whose answer was lost),
+the readings, and prizes with Meta's own rules.
 
 The end-to-end tests drive the real app in a real browser, with real ffmpeg: phase 1's whole flow, phase 2's connecting and
-publishing against fake networks, and phase 3's comment-to-new-version loop (with a scripted agent, or real Claude Code, which
-costs money). See [e2e/README.md](e2e/README.md).
+publishing against fake networks, phase 3's comment-to-new-version loop (with a scripted agent, or real Claude Code, which
+costs money), and phase 4's eight networks, results and prize flow. See [e2e/README.md](e2e/README.md).
 
 ## Deploying
 
@@ -217,6 +235,6 @@ be reachable from the internet, because Meta downloads the files it publishes fr
 
 ## Not yet
 
-TikTok, LinkedIn, X, Threads, Pinterest and Bluesky, metrics, and automatic prize delivery. Also not yet: SSO and two-factor
-sign-in, push and Slack notifications, and subtitle display. Details and reasons in [docs/phase-1.md](docs/phase-1.md),
-[docs/phase-2.md](docs/phase-2.md) and [docs/phase-3.md](docs/phase-3.md), which also list what could not be verified.
+SSO and two-factor sign-in, push and Slack notifications, subtitle display, and anything run against a real network (see
+the box at the top). Details and reasons in [docs/phase-1.md](docs/phase-1.md), [docs/phase-2.md](docs/phase-2.md),
+[docs/phase-3.md](docs/phase-3.md) and [docs/phase-4.md](docs/phase-4.md), which also list what could not be verified.

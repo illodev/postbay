@@ -115,6 +115,7 @@ export function Layout() {
           <NavLink to="/pieces">Pieces</NavLink>
           <NavLink to="/calendar">Calendar</NavLink>
           <NavLink to="/today">Publish</NavLink>
+          <NavLink to="/results">Results</NavLink>
           {(can('manage') || can('audit')) && <NavLink to="/settings">Settings</NavLink>}
         </nav>
         <Bell />

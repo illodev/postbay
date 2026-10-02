@@ -1,9 +1,10 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, type Account, type Attempt, type Capabilities, type Integrations, type Issue, type Plan, type PublicationRow, type VersionDetail } from '../api';
-import { countChars, countHashtags, countMentions, truncatePreview } from '../lib/text';
+import { countHashtags, countLength, countMentions, truncatePreview } from '../lib/text';
 import { ERROR_CLASS_LABEL, fmtBytes, fmtDateTime, isoToZonedInput, NETWORK_LABEL, STEP_LABEL, VISIBILITY_LABEL, zonedToIso } from '../lib/format';
 import { Chip, CopyButton, Dialog, ErrorBox, Field } from './ui';
+import { defaultValues, NetworkOptions, sendableOptions, type OptionValues } from './NetworkOptions';
 import { useToast } from './ui';
 
 /** Accounts a version is approved for right now: the ones every counted approver agreed on. */
@@ -42,7 +43,7 @@ export function NetworkText({ caps, label, hint, value, onChange }: { caps: Capa
       </Field>
       {t && (
         <div className="row counters">
-          <Counter label="Characters" value={countChars(value)} max={t.maxChars} />
+          <Counter label={t.unit === 'graphemes' ? 'Characters (as seen)' : 'Characters'} value={countLength(value, t.unit)} max={t.maxChars} />
           {t.maxHashtags !== undefined && <Counter label="Hashtags" value={countHashtags(value)} max={t.maxHashtags} />}
           {t.maxMentions !== undefined && <Counter label="Mentions" value={countMentions(value)} max={t.maxMentions} />}
         </div>
@@ -75,12 +76,14 @@ function IssueList({ issues }: { issues: Issue[] }) {
   );
 }
 
+/** The value a moment after it stopped changing. Compared by content: a new object with the same fields is not a change. */
 function useDebounced<T>(value: T, ms: number): T {
+  const key = JSON.stringify(value);
   const [v, setV] = useState(value);
   useEffect(() => {
-    const t = setTimeout(() => setV(value), ms);
+    const t = setTimeout(() => setV(JSON.parse(key) as T), ms);
     return () => clearTimeout(t);
-  }, [value, ms]);
+  }, [key, ms]);
   return v;
 }
 
@@ -97,14 +100,17 @@ export function ScheduleDialog({ version, brandId, zone, onClose }: { version: V
   const [firstComment, setFirstComment] = useState('');
   const [placement, setPlacement] = useState('');
   const [byHand, setByHand] = useState(false);
+  const [typed, setTyped] = useState<OptionValues>({});
   const [formError, setFormError] = useState<string | null>(null);
   const chosen = accountId || options[0]?.id || '';
   const account = options.find((a) => a.id === chosen);
   const caps = account ? integ?.capabilities[account.network] : undefined;
   const mode = byHand ? 'manual' : undefined;
+  // What the network asks for, with its defaults under whatever the person has changed. Only what is showing is sent.
+  const values: OptionValues = { ...defaultValues(caps?.options), ...typed };
 
   // The server decides how it would go out and what would stop it. Asked again a moment after typing stops.
-  const probe = useDebounced({ chosen, text, firstComment, placement, mode, when }, 350);
+  const probe = useDebounced({ chosen, text, firstComment, placement, mode, when, options: sendableOptions(caps?.options, placement || undefined, values) }, 350);
   const plan = useQuery({
     queryKey: ['plan', version.id, probe],
     enabled: !!probe.chosen,
@@ -113,7 +119,7 @@ export function ScheduleDialog({ version, brandId, zone, onClose }: { version: V
       let scheduledAt: string | undefined;
       try { scheduledAt = probe.when ? zonedToIso(probe.when, zone) : undefined; } catch { scheduledAt = undefined; }
       return api.post<Plan>(`/api/versions/${version.id}/publications/validate`, {
-        accountId: probe.chosen, text: probe.text, firstComment: probe.firstComment, placement: probe.placement || undefined, mode: probe.mode, scheduledAt,
+        accountId: probe.chosen, text: probe.text, firstComment: probe.firstComment, placement: probe.placement || undefined, mode: probe.mode, scheduledAt, options: probe.options,
       });
     },
   });
@@ -124,6 +130,7 @@ export function ScheduleDialog({ version, brandId, zone, onClose }: { version: V
   const create = useMutation({
     mutationFn: () => api.post(`/api/versions/${version.id}/publications`, {
       accountId: chosen, scheduledAt: zonedToIso(when, zone), text, firstComment, placement: placement || undefined, mode,
+      options: sendableOptions(caps?.options, p?.placement ?? (placement || undefined), values),
     }),
     onSuccess: () => {
       invalidate();
@@ -151,7 +158,7 @@ export function ScheduleDialog({ version, brandId, zone, onClose }: { version: V
         <div className="row">
           <div className="grow">
             <Field label="Account">
-              <select value={chosen} onChange={(e) => { setAccountId(e.target.value); setPlacement(''); }} required>
+              <select value={chosen} onChange={(e) => { setAccountId(e.target.value); setPlacement(''); setTyped({}); }} required>
                 {options.map((a) => <option key={a.id} value={a.id}>{NETWORK_LABEL[a.network] ?? a.network} · {a.display_name}</option>)}
               </select>
             </Field>
@@ -189,13 +196,16 @@ export function ScheduleDialog({ version, brandId, zone, onClose }: { version: V
         )}
 
         <NetworkText caps={caps} label="Text" hint="The caption or description for this account." value={text} onChange={setText} />
+        {account && !byHand && (
+          <NetworkOptions network={account.network} fields={caps?.options} placement={p?.placement ?? (placement || undefined)} values={values} onChange={(k, v) => setTyped((t) => ({ ...t, [k]: v }))} />
+        )}
         {canComment && (
           <div className="stack" style={{ gap: '.35rem' }}>
             <Field label="First comment (optional)">
               <textarea value={firstComment} onChange={(e) => setFirstComment(e.target.value)} style={{ minHeight: 56 }} />
             </Field>
             {caps?.text.firstCommentMaxChars !== undefined && (
-              <div className="row counters"><Counter label="Characters" value={countChars(firstComment)} max={caps.text.firstCommentMaxChars} /></div>
+              <div className="row counters"><Counter label="Characters" value={countLength(firstComment, caps.text.unit)} max={caps.text.firstCommentMaxChars} /></div>
             )}
           </div>
         )}
@@ -324,14 +334,21 @@ export function RescheduleDialog({ pub, approvedVersions, zone, onClose }: {
 
 // ───────────────────────────── automatic publications: how they are going ─────────────────────────────
 
+/** Why a post a network accepted is still hidden from other people, in that network's own terms. */
+const PRIVATE_NOTE: Record<string, string> = {
+  youtube: 'Uploaded as private: Google keeps new uploads private until the project passes its audit',
+  tiktok: "Posted as private: TikTok keeps an app's posts private until it audits the app. Someone can make it public in TikTok",
+  pinterest: 'Pinned, but not visible to others until Pinterest grants the app Standard access',
+};
+
 /** Where an automatic publication stands, in a few words a person can act on. */
-export function PublicationNote({ pub }: { pub: Pick<PublicationRow, 'status' | 'manual' | 'visibility' | 'last_error' | 'last_error_class' | 'native_scheduled' | 'url'> }) {
+export function PublicationNote({ pub }: { pub: Pick<PublicationRow, 'status' | 'manual' | 'visibility' | 'last_error' | 'last_error_class' | 'native_scheduled' | 'url' | 'network'> }) {
   if (pub.manual) return null;
   return (
     <>
       {pub.native_scheduled && ['scheduled', 'ready'].includes(pub.status) && <div className="muted small">Already with the network, which holds it until the hour</div>}
       {pub.status === 'published' && pub.visibility === 'private' && (
-        <div className="small" style={{ color: 'var(--warn)' }}>Uploaded as private: Google keeps new uploads private until the project passes its audit</div>
+        <div className="small" style={{ color: 'var(--warn)' }}>{PRIVATE_NOTE[pub.network] ?? 'Posted as private: only the account can see it'}</div>
       )}
       {pub.status === 'published' && pub.visibility === 'processing' && <div className="muted small">The network is still processing it</div>}
       {pub.status === 'published' && pub.visibility === 'unknown' && <div className="small" style={{ color: 'var(--warn)' }}>The network no longer shows this post</div>}

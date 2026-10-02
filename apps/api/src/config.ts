@@ -91,6 +91,8 @@ const schema = z.object({
   METRICS_SWEEP_SECONDS: z.coerce.number().int().min(1).default(120),
   /** How often the comments of posts with a prize are read, for the networks that do not push them (and while Meta has not reviewed the app). */
   PRIZE_POLL_SECONDS: z.coerce.number().int().min(1).default(180),
+  /** How often the people whose retention period ended are deleted. */
+  PRIZE_PURGE_SECONDS: z.coerce.number().int().min(1).default(3600),
 });
 
 export type Config = z.infer<typeof schema> & {

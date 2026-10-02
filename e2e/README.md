@@ -1,6 +1,6 @@
 # End-to-end tests
 
-Three browser runs: [phase 1's flow](#phase-1-smoke-test), [phase 2's publishing against fake networks](#phase-2-publishing-against-fake-networks) and [phase 3's agent loop](#phase-3-the-agent-loop).
+Four browser runs: [phase 1's flow](#phase-1-smoke-test), [phase 2's publishing against fake networks](#phase-2-publishing-against-fake-networks), [phase 3's agent loop](#phase-3-the-agent-loop) and [phase 4's other networks, results and prizes](#phase-4-the-other-networks-results-and-prizes).
 
 ## Phase 1 smoke test
 
@@ -103,3 +103,32 @@ it in. The test passes the runner only `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKE
 are set (the agent never gets the runner's whole environment), and in this mode the requests are ones a real agent can always do
 (brighten, change the colours), so the run does not depend on what a model decides about text it cannot edit. A model is not
 deterministic: a pass shows the loop works with a real agent, not that every edit will be good.
+
+## Phase 4: the other networks, results and prizes
+
+Connects Threads, X, LinkedIn, Pinterest, TikTok and Bluesky (and Meta again, with prizes on) through the real screens, schedules
+one photo to eight networks, lets the real worker publish it, takes the readings, and runs a prize from a comment to a download.
+The networks are the stand-ins in `apps/api/test/fakes`, started by `e2e/fakes.mts` (which now also fakes each network's sign-in page
+and offers `meta.scopes`, `meta.comment`, `tiktok.domain` and `tiktok.audited` on its control surface).
+
+```sh
+npm install && npm run build && npm run e2e:assets          # once
+TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres npm run e2e:phase4
+```
+
+`e2e/phase4.sh` creates a clean database (`estudio_e2e_phase4`), starts the fakes (port 4040), bootstraps a brand, starts the API with its
+worker (port 3300, with the readings and comment polling every few seconds), runs `e2e/phase4.mjs` and stops everything. Screenshots land in
+`e2e/shots-phase4` (override with `SHOTS`).
+
+**What it can and cannot tell you.** It proves the app's own behaviour from the browser down to the database. It cannot prove that the
+real networks answer the way the stand-ins do: they were written from each network's documentation, and nothing in this run reaches a real one.
+
+It covers: a connect button per network; sign-in pages for five of them, a board picker for Pinterest, and a handle and app-password form for
+Bluesky (a wrong password refused, the right one never coming back to the page); tokens sealed in the database; the approval flag for TikTok and
+Pinterest; the settings each network asks for in the schedule dialog (TikTok's empty privacy choice, unticked permissions, its consent text word for
+word and the branded-content rules; alt text; Pinterest's title and link) and only the fields showing being saved; Bluesky's limit counting characters
+as a person sees them; the worker publishing to all eight and what each fake received; TikTok kept private until audited; the readings and the results
+page, one section per network and never a total across them; prizes (switching them on, a link and a file, the reconnect needed for the permission to
+message, the rule and its checks, Meta's signed webhook and its handshake, a private reply within seconds, once per person, the public page and the
+download of the exact file, a public link for a network that cannot message, erasing a person, Meta's data-deletion callback and its status page, the
+retention purge); and phone-sized screens.
