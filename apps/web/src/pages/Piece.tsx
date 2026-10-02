@@ -6,7 +6,7 @@ import { PieceAgentCard } from '../components/PieceAgentCard';
 import { PrizeDialog } from '../components/PrizeDialog';
 import { AttemptsDialog, MarkPublishedDialog, MoveDialog, PackDialog, PublicationBadges, PublicationNote, RescheduleDialog, RetryDialog } from '../components/publications';
 import { UploadDialog } from '../components/UploadDialog';
-import { Chip, Dialog, Empty, ErrorBox, Field, Spinner, errorMessage, useToast } from '../components/ui';
+import { Chip, Dialog, Empty, ErrorBox, Field, NetMark, Spinner, errorMessage, useToast } from '../components/ui';
 import { t, tMaybe, type Key } from '../i18n';
 import { fmtDateTime, fmtDay, fmtShort, NETWORK_LABEL, STATE_LABEL } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -24,11 +24,6 @@ type WithCampaign = PieceDetail & { campaign_id?: string | null };
 
 /** Publications that are still going to happen, and so are cancelled if the piece is discarded. */
 const PENDING = ['scheduled', 'awaiting_reapproval', 'on_hold', 'preparing', 'ready'];
-
-/** Two-letter marks for the networks, beside the account name; the full name is said next to it. */
-const NET_MARK: Record<string, string> = {
-  instagram: 'IG', facebook: 'FB', youtube: 'YT', tiktok: 'TT', linkedin: 'LI', x: 'X', threads: 'TH', pinterest: 'PI', bluesky: 'BS',
-};
 
 function Icon({ d }: { d: string }) {
   return (
@@ -404,7 +399,7 @@ function Publications({ piece, brand, zone, className }: { piece: PieceDetail; b
           return (
             <li key={p.id} className="pc-pub">
               <div className="pc-pub-acct">
-                <span className="net" aria-hidden="true">{NET_MARK[p.network] ?? p.network.slice(0, 2).toUpperCase()}</span>
+                <NetMark network={p.network} />
                 <span className="pc-pub-who">
                   <strong>{p.account_name}</strong>
                   <span className="muted small">{network}</span>
