@@ -369,11 +369,12 @@ export interface SelectOption<T extends string> {
  * The app's own select: its list is styled, keyboard and typeahead work, and it opens above a dialog. A value may not be
  * the empty string (Radix keeps that for "nothing chosen", shown with the placeholder): use 'all', 'none'… instead.
  */
-export function Select<T extends string>({ value, onChange, options, placeholder, label, disabled, id, className = '' }: {
+export function Select<T extends string>({ value, onChange, options, placeholder, label, disabled, id, className = '', required }: {
   value: T | undefined; onChange: (value: T) => void; options: SelectOption<T>[]; placeholder?: string; label?: string; disabled?: boolean; id?: string; className?: string;
+  /** inside a form, the form will not submit while nothing is chosen */ required?: boolean;
 }) {
   return (
-    <RSelect.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
+    <RSelect.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled} required={required}>
       <RSelect.Trigger className={`select-trigger ${className}`.trim()} aria-label={label} id={id}>
         <RSelect.Value placeholder={placeholder} />
         <RSelect.Icon className="select-chevron">

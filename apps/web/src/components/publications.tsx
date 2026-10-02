@@ -6,7 +6,7 @@ import { api, type Account, type AccountOptionsReply, type Attempt, type Calenda
 import { getLocale, t, type Key } from '../i18n';
 import { countHashtags, countLength, countMentions, truncatePreview } from '../lib/text';
 import { ERROR_CLASS_LABEL, fmtBytes, fmtDateTime, isoToZonedInput, NETWORK_LABEL, STEP_LABEL, VISIBILITY_LABEL, zonedToIso } from '../lib/format';
-import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, Menu, MenuItem, MenuSeparator, Tip, useConfirm, useToast } from './ui';
+import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, Menu, MenuItem, MenuSeparator, Tip, Tipped, useConfirm, useToast } from './ui';
 import { defaultValues, NetMark, NetworkOptions, sendableOptions, type OptionValues } from './NetworkOptions';
 import { Icon as UiIcon, type IconName } from './icons';
 import { PrizeDialog } from './PrizeDialog';
@@ -505,9 +505,14 @@ export function ScheduleDialog({ version, brandId, zone, initialWhen, onClose }:
             )}
           </span>
           <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
-          <button className="btn btn-primary" disabled={create.isPending || !chosen || blocked} title={blocked ? t('publications.schedule.blockedHint') : !when ? t('publications.schedule.needsWhen') : undefined}>
-            {create.isPending ? t('publications.schedule.submitting') : t('publications.schedule.submit')}
-          </button>
+          {/* A disabled button takes no pointer: the tooltip that says why hangs on a wrapper. */}
+          <Tipped label={blocked ? t('publications.schedule.blockedHint') : !when ? t('publications.schedule.needsWhen') : undefined}>
+            <span className="tip-host">
+              <button className="btn btn-primary" disabled={create.isPending || !chosen || blocked}>
+                {create.isPending ? t('publications.schedule.submitting') : t('publications.schedule.submit')}
+              </button>
+            </span>
+          </Tipped>
         </footer>
       </form>
     </Dialog>
@@ -688,10 +693,12 @@ export function PublicationBadges({ pub }: { pub: Pick<PublicationRow, 'manual' 
   return (
     <>
       <ScheduledBy by={pub.scheduled_by} name={pub.scheduled_by_name} />
-      <span className="pb-mode" data-mode={pub.manual ? 'manual' : 'auto'} title={pub.manual ? t('publications.mode.manualHint') : t('publications.mode.autoHint')}>
-        <Icon d={pub.manual ? ICON.hand : ICON.auto} />
-        {pub.manual ? t('publications.mode.manual') : t('publications.mode.auto')}
-      </span>
+      <Tipped label={pub.manual ? t('publications.mode.manualHint') : t('publications.mode.autoHint')}>
+        <span className="pb-mode" data-mode={pub.manual ? 'manual' : 'auto'}>
+          <Icon d={pub.manual ? ICON.hand : ICON.auto} />
+          {pub.manual ? t('publications.mode.manual') : t('publications.mode.auto')}
+        </span>
+      </Tipped>
       {!pub.manual && pub.status === 'published' && pub.visibility && pub.visibility !== 'public' && (
         <span className={`chip ${pub.visibility === 'processing' ? 'chip-publishing' : 'chip-on_hold'}`}>{VISIBILITY_LABEL[pub.visibility]}</span>
       )}
@@ -1082,15 +1089,15 @@ export function PublicationList({ pubs, variants = [], brandId, zone, brand, can
         <div className="pb-row-main">
           <span className="pb-row-net"><NetMark network={p.network} labelled /></span>
           <span className="pb-row-who">
-            <strong title={p.account_name}>{p.account_name}</strong>
+            <Tipped label={p.account_name}><strong>{p.account_name}</strong></Tipped>
             <span className="pb-row-sub">
               <span>{netName(p.network)}</span>
               <span aria-hidden="true">·</span>
-              <span className="pb-row-ver" title={t('publications.list.carries', { version: tag.full })}>{tag.short}</span>
+              <Tip label={t('publications.list.carries', { version: tag.full })}><span className="pb-row-ver">{tag.short}</span></Tip>
               {(p.scheduled_by === 'auto' || p.scheduled_by === 'agent') && <><span aria-hidden="true">·</span><ScheduledBy by={p.scheduled_by} name={p.scheduled_by_name} /></>}
             </span>
           </span>
-          <time className="pb-row-when" dateTime={at} title={fmtDateTime(at, zone)}>{shortWhen(at, zone)}</time>
+          <Tipped label={fmtDateTime(at, zone)}><time className="pb-row-when" dateTime={at}>{shortWhen(at, zone)}</time></Tipped>
           <span className="pb-row-state">
             {isPrivate ? <Chip state="on_hold" label={VISIBILITY_LABEL[p.visibility!] ?? p.visibility!} /> : <Chip state={p.status} />}
             <Tip label={p.manual ? t('publications.list.manualHint') : t('publications.list.autoHint')}>

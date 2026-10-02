@@ -9,7 +9,7 @@ import { OutcomeChip } from './AgentTab';
 import { Avatar } from './Avatar';
 import { Icon } from './icons';
 import { ago } from './PieceHero';
-import { errorMessage, useToast } from './ui';
+import { errorMessage, Tip, Tipped, useToast } from './ui';
 import '../styles/piece.css';
 
 const SHOWN = 5;
@@ -57,15 +57,15 @@ function Meter({ label, value, cap, fraction }: { label: string; value: string; 
 function Project({ p, pieceSource }: { p: ProjectDetail; pieceSource?: string | null }) {
   return (
     <div className="pc-proj">
-      {p.source && p.source !== pieceSource && <code className="pc-proj-src" title={t('piece.agent.project.source')}>{p.source}</code>}
+      {p.source && p.source !== pieceSource && <Tip label={t('piece.agent.project.source')}><code className="pc-proj-src">{p.source}</code></Tip>}
       <div className="pc-proj-line">
         {p.mode === 'dir' ? (
           <span className="pc-proj-item">{t('piece.agent.project.dir')}</span>
         ) : (
           <>
-            {p.branch && <span className="pc-proj-item" title={t('piece.agent.project.branch')}><Icon name="branch" /><code>{p.branch}</code></span>}
+            {p.branch && <Tip label={t('piece.agent.project.branch')}><span className="pc-proj-item"><Icon name="branch" /><code>{p.branch}</code></span></Tip>}
             {p.commit ? (
-              <span className="pc-proj-item" title={t('piece.agent.project.commit', { sha: p.commit })}><Icon name="commit" /><code>{sha(p.commit)}</code></span>
+              <Tip label={t('piece.agent.project.commit', { sha: p.commit })}><span className="pc-proj-item"><Icon name="commit" /><code>{sha(p.commit)}</code></span></Tip>
             ) : p.commit === null && !p.error ? (
               <span className="pc-proj-item is-quiet">{t('piece.agent.project.unchanged')}</span>
             ) : null}
@@ -73,12 +73,12 @@ function Project({ p, pieceSource }: { p: ProjectDetail; pieceSource?: string | 
             {p.commit && (p.pushed ? (
               <span className="pc-proj-item is-good"><Icon name="arrowUp" />{t('piece.agent.project.pushed')}</span>
             ) : (
-              <span className="pc-proj-item is-warn" title={t('piece.agent.project.notPushedHint')}>{t('piece.agent.project.notPushed')}</span>
+              <Tip label={t('piece.agent.project.notPushedHint')}><span className="pc-proj-item is-warn">{t('piece.agent.project.notPushed')}</span></Tip>
             ))}
           </>
         )}
       </div>
-      {p.error && <p className="pc-proj-err" title={p.error}>{p.error}</p>}
+      {p.error && <Tipped label={p.error}><p className="pc-proj-err">{p.error}</p></Tipped>}
     </div>
   );
 }
@@ -142,7 +142,7 @@ export function PieceAgentCard({ pieceId, source, zone, className }: { pieceId: 
         <div className="pc-agent-stop" role="status">
           <p><strong>{BLOCK_REASON_LABEL[data.blocked_reason ?? ''] ?? t('piece.agent.stopped')}.</strong> {why}</p>
           {can('approve') && !brandBlock && (
-            <button className="btn btn-small" disabled={reset.isPending} onClick={() => reset.mutate()} title={t('piece.agent.handBackHint')}>{t('piece.agent.handBack')}</button>
+            <Tip label={t('piece.agent.handBackHint')}><button className="btn btn-small" disabled={reset.isPending} onClick={() => reset.mutate()}>{t('piece.agent.handBack')}</button></Tip>
           )}
           {brandBlock && <p className="pc-agent-admin">{t('piece.agent.adminBudget')}</p>}
         </div>
@@ -157,9 +157,9 @@ export function PieceAgentCard({ pieceId, source, zone, className }: { pieceId: 
               <div className="pc-run-head">
                 {r.status === 'running' ? <span className="chip chip-agent">{t('piece.agent.running')}</span> : <OutcomeChip run={r} />}
                 {r.version_id && r.version_number && (
-                  <Link className="pc-run-ver" to={`/review/${r.version_id}`} title={t('piece.agent.openVersion', { n: r.version_number })}>v{r.version_number}</Link>
+                  <Tip label={t('piece.agent.openVersion', { n: r.version_number })}><Link className="pc-run-ver" to={`/review/${r.version_id}`}>v{r.version_number}</Link></Tip>
                 )}
-                <time className="pc-run-time" dateTime={r.started_at} title={fmtDateTime(r.started_at, tz)}>{ago(r.started_at)}</time>
+                <Tipped label={fmtDateTime(r.started_at, tz)}><time className="pc-run-time" dateTime={r.started_at}>{ago(r.started_at)}</time></Tipped>
               </div>
               <div className="pc-run-meta">
                 <span>{TRIGGER_LABEL[r.trigger] ?? r.trigger}</span>
@@ -167,11 +167,11 @@ export function PieceAgentCard({ pieceId, source, zone, className }: { pieceId: 
                   <>
                     <span aria-hidden="true">·</span>
                     <span className="mono">{money(r.cost)}</span>
-                    {r.counted === false && <span className="pc-run-free" title={t('piece.agent.notCountedHint')}>{t('piece.agent.notCounted')}</span>}
+                    {r.counted === false && <Tip label={t('piece.agent.notCountedHint')}><span className="pc-run-free">{t('piece.agent.notCounted')}</span></Tip>}
                   </>
                 )}
               </div>
-              {r.notes && r.outcome !== 'blocked' && <p className="pc-run-notes" title={r.notes}>{r.notes}</p>}
+              {r.notes && r.outcome !== 'blocked' && <Tipped label={r.notes}><p className="pc-run-notes">{r.notes}</p></Tipped>}
               {r.detail?.checks?.summary?.length ? <p className="pc-run-notes is-checks">{t('piece.agent.checks', { summary: r.detail.checks.summary.join('; ') })}</p> : null}
               {project && <Project p={project} pieceSource={source} />}
             </li>

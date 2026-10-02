@@ -50,7 +50,7 @@ export const account = define({
     'account.recovery.copyAll': 'Copiar todos',
     'account.recovery.saved': 'Los he guardado en un sitio seguro',
     'account.recovery.done': 'Ya los he guardado',
-    'account.recovery.fileTitle': 'Códigos de recuperación del Estudio',
+    'account.recovery.fileTitle': 'Códigos de recuperación de Postbay',
     'account.recovery.fileNote': 'Cada uno vale una vez.',
     'account.recovery.fileName': 'codigos-de-recuperacion-estudio.txt',
 
@@ -203,7 +203,7 @@ export const account = define({
     'account.recovery.copyAll': 'Copy all',
     'account.recovery.saved': 'I have put them somewhere safe',
     'account.recovery.done': 'I have saved them',
-    'account.recovery.fileTitle': 'Studio recovery codes',
+    'account.recovery.fileTitle': 'Postbay recovery codes',
     'account.recovery.fileNote': 'Each works once.',
     'account.recovery.fileName': 'studio-recovery-codes.txt',
 

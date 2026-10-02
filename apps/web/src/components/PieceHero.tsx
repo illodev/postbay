@@ -9,7 +9,7 @@ import { fmtDateTime, fmtDay, STATE_LABEL } from '../lib/format';
 import { useStableUrls } from '../lib/stableUrls';
 import { Avatar, displayName } from './Avatar';
 import { Icon, type IconName } from './icons';
-import { Chip, errorMessage, Select, Tip, useToast } from './ui';
+import { Chip, errorMessage, Select, Tip, Tipped, useToast } from './ui';
 import '../styles/piece.css';
 
 // ───────────────────────────── small shared helpers ─────────────────────────────
@@ -295,25 +295,25 @@ function Filmstrip({ variant, selected, onSelect }: { variant: HeroVariant; sele
         const on = v.id === selected;
         const title = t('piece.versionTitle', { n: v.number, state: STATE_LABEL[v.review_state] ?? v.review_state, who: authorName(v), when: ago(v.created_at) });
         return (
-          <button
-            key={v.id}
-            ref={(el) => { refs.current[v.id] = el; }}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            tabIndex={on ? 0 : -1}
-            className={`pc-film-item ${v.by_agent ? 'is-agent' : ''} ${['superseded', 'discarded'].includes(v.review_state) ? 'is-old' : ''}`}
-            title={title}
-            aria-label={title}
-            onClick={() => onSelect(v.id)}
-          >
-            <span className="pc-film-thumb"><FilmThumb version={v} />{i === versions.length - 1 && versions.length > 1 && <span className="pc-film-latest">{t('piece.hero.latest')}</span>}</span>
-            <span className="pc-film-label">
-              <span className={`pc-film-dot chip-${v.review_state}`} aria-hidden="true" />
-              <span className="pc-film-n">V{v.number}</span>
-              {v.by_agent && <Icon name="bot" className="pc-film-bot" />}
-            </span>
-          </button>
+          <Tipped key={v.id} label={title}>
+            <button
+              ref={(el) => { refs.current[v.id] = el; }}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              tabIndex={on ? 0 : -1}
+              className={`pc-film-item ${v.by_agent ? 'is-agent' : ''} ${['superseded', 'discarded'].includes(v.review_state) ? 'is-old' : ''}`}
+              aria-label={title}
+              onClick={() => onSelect(v.id)}
+            >
+              <span className="pc-film-thumb"><FilmThumb version={v} />{i === versions.length - 1 && versions.length > 1 && <span className="pc-film-latest">{t('piece.hero.latest')}</span>}</span>
+              <span className="pc-film-label">
+                <span className={`pc-film-dot chip-${v.review_state}`} aria-hidden="true" />
+                <span className="pc-film-n">V{v.number}</span>
+                {v.by_agent && <Icon name="bot" className="pc-film-bot" />}
+              </span>
+            </button>
+          </Tipped>
         );
       })}
     </div>
@@ -364,10 +364,12 @@ function InlineText({ value, canEdit, onSave, label, placeholder, mono, display,
   if (!canEdit) return <>{display ?? (value || <span className="pc-empty-val">{emptyLabel ?? '—'}</span>)}</>;
   if (!editing) {
     return (
-      <button type="button" className={`pc-inline ${className ?? ''}`} onClick={() => { setDraft(value); setEditing(true); }} title={t('piece.inline.edit', { what: label })} aria-label={`${label}: ${value || emptyLabel || '—'}. ${t('piece.inline.edit', { what: label })}`}>
-        <span className="pc-inline-val">{display ?? (value || <span className="pc-empty-val">{emptyLabel ?? '—'}</span>)}</span>
-        <Icon name="pen" className="pc-inline-pen" />
-      </button>
+      <Tip label={t('piece.inline.edit', { what: label })}>
+        <button type="button" className={`pc-inline ${className ?? ''}`} onClick={() => { setDraft(value); setEditing(true); }} aria-label={`${label}: ${value || emptyLabel || '—'}. ${t('piece.inline.edit', { what: label })}`}>
+          <span className="pc-inline-val">{display ?? (value || <span className="pc-empty-val">{emptyLabel ?? '—'}</span>)}</span>
+          <Icon name="pen" className="pc-inline-pen" />
+        </button>
+      </Tip>
     );
   }
   const save = async () => {
@@ -474,10 +476,12 @@ export function PieceStage(p: HeroProps) {
       {p.variants.length > 1 && (
         <div className="pc-vtabs" role="tablist" aria-label={t('piece.variants')}>
           {p.variants.map((v) => (
-            <button key={v.id} type="button" role="tab" aria-selected={v.id === variant?.id} className="pc-vtab" onClick={() => p.onVariant(v.id)} title={variantName(v)}>
-              <span className={`pc-vtab-format ${/^\d/.test(v.format) ? 'is-ratio' : ''}`}>{formatName(v.format)}</span>
-              <span className="pc-vtab-style">{v.style || formatHint(v.format)}</span>
-            </button>
+            <Tipped key={v.id} label={variantName(v)}>
+              <button type="button" role="tab" aria-selected={v.id === variant?.id} className="pc-vtab" onClick={() => p.onVariant(v.id)}>
+                <span className={`pc-vtab-format ${/^\d/.test(v.format) ? 'is-ratio' : ''}`}>{formatName(v.format)}</span>
+                <span className="pc-vtab-style">{v.style || formatHint(v.format)}</span>
+              </button>
+            </Tipped>
           ))}
         </div>
       )}
@@ -499,9 +503,11 @@ export function PieceStage(p: HeroProps) {
               </Link>
             </Tip>
             {comments > 0 && (
-              <Link to={reviewTo} className="pc-ov pc-ov-bl pc-ov-comments" title={t('piece.openComments', { count: comments })}>
-                <Icon name="bubble" />{comments}
-              </Link>
+              <Tip label={t('piece.openComments', { count: comments })}>
+                <Link to={reviewTo} className="pc-ov pc-ov-bl pc-ov-comments">
+                  <Icon name="bubble" />{comments}
+                </Link>
+              </Tip>
             )}
             {stage.corner && <span className={`pc-ov pc-ov-br ${stage.timecode ? 'is-tc' : ''}`}>{stage.corner}</span>}
           </>
@@ -530,7 +536,7 @@ export function PieceFacts(p: HeroProps) {
       <div className="pc-info-top">
         <span className={`chip chip-solid chip-${state}`}>{STATE_LABEL[state] ?? state}</span>
         <span className="pc-meta">{tMaybe(`kind.${piece.kind}`, piece.kind)}</span>
-        {piece.ai_generated && <span className="pc-meta" title={t('piece.aiHint')}><Icon name="sparkle" />{t('piece.aiLabel')}</span>}
+        {piece.ai_generated && <Tip label={t('piece.aiHint')}><span className="pc-meta"><Icon name="sparkle" />{t('piece.aiLabel')}</span></Tip>}
       </div>
       <h1 className="pc-title">
         <InlineText
@@ -583,10 +589,12 @@ export function PieceFacts(p: HeroProps) {
               }}
             />
           ) : canEdit ? (
-            <button type="button" className="pc-inline" onClick={() => setEditingDate(true)} title={t('piece.inline.edit', { what: t('piece.fields.target') })}>
-              <span className="pc-inline-val">{piece.target_date ? fmtDay(piece.target_date) : <span className="pc-empty-val">{t('piece.fields.noDate')}</span>}</span>
-              <Icon name="pen" className="pc-inline-pen" />
-            </button>
+            <Tip label={t('piece.inline.edit', { what: t('piece.fields.target') })}>
+              <button type="button" className="pc-inline" onClick={() => setEditingDate(true)}>
+                <span className="pc-inline-val">{piece.target_date ? fmtDay(piece.target_date) : <span className="pc-empty-val">{t('piece.fields.noDate')}</span>}</span>
+                <Icon name="pen" className="pc-inline-pen" />
+              </button>
+            </Tip>
           ) : piece.target_date ? fmtDay(piece.target_date) : <span className="pc-empty-val">{t('piece.fields.noDate')}</span>}
         </FieldRow>
         {piece.slot && (
@@ -603,7 +611,7 @@ export function PieceFacts(p: HeroProps) {
             placeholder={t('piece.fields.sourcePlaceholder')}
             maxLength={500}
             emptyLabel={canEdit ? t('piece.fields.addSource') : t('piece.fields.noSource')}
-            display={piece.source ? <code className="pc-source" title={piece.source}>{piece.source}</code> : undefined}
+            display={piece.source ? <Tipped label={piece.source}><code className="pc-source">{piece.source}</code></Tipped> : undefined}
             onSave={(source) => patch.mutateAsync({ source: source || null })}
           />
         </FieldRow>
@@ -613,32 +621,36 @@ export function PieceFacts(p: HeroProps) {
         <div className="pc-ver">
           <div className="pc-ver-head">
             <span className={`pc-ver-n ${version.by_agent ? 'is-agent' : ''}`}>V{version.number}</span>
-            <span className="pc-ver-variant" title={variantName(variant)}>{variantName(variant)}</span>
+            <Tipped label={variantName(variant)}><span className="pc-ver-variant">{variantName(variant)}</span></Tipped>
             <Chip state={version.review_state} />
           </div>
           <div className="pc-ver-meta">
             {version.by_agent ? <Avatar agent size={16} title={version.author ?? undefined} /> : <Avatar name={authorName(version)} size={16} />}
-            <span className={version.by_agent ? 'pc-agent-name' : undefined} title={version.author ?? undefined}>{authorName(version)}</span>
+            <Tipped label={version.author ?? undefined}><span className={version.by_agent ? 'pc-agent-name' : undefined}>{authorName(version)}</span></Tipped>
             <span className="pc-dot-sep" aria-hidden="true">·</span>
-            <time dateTime={version.created_at} title={fmtDateTime(version.created_at, zone)}>{ago(version.created_at)}</time>
+            <Tipped label={fmtDateTime(version.created_at, zone)}><time dateTime={version.created_at}>{ago(version.created_at)}</time></Tipped>
             {comments > 0 && (
               <>
                 <span className="pc-dot-sep" aria-hidden="true">·</span>
-                <Link to={reviewTo} className="pc-meta-link" title={t('piece.openComments', { count: comments })}><Icon name="bubble" />{comments}</Link>
+                <Tip label={t('piece.openComments', { count: comments })}><Link to={reviewTo} className="pc-meta-link"><Icon name="bubble" />{comments}</Link></Tip>
               </>
             )}
           </div>
-          {version.notes && <p className="pc-ver-notes" title={version.notes}>{version.notes}</p>}
+          {version.notes && <Tipped label={version.notes}><p className="pc-ver-notes">{version.notes}</p></Tipped>}
           {approvals.length > 0 && (
-            <div className="pc-ver-meta" title={approverNames.join(', ')}>
-              <span className="avatars">{approvals.slice(0, 3).map((a, i) => <Avatar key={a.id} name={approverNames[i]} size={16} />)}</span>
-              <span>{t('piece.hero.approvedBy', { names: approverNames.join(', ') })}</span>
-            </div>
+            <Tipped label={approverNames.join(', ')}>
+              <div className="pc-ver-meta">
+                <span className="avatars">{approvals.slice(0, 3).map((a, i) => <Avatar key={a.id} name={approverNames[i]} size={16} />)}</span>
+                <span>{t('piece.hero.approvedBy', { names: approverNames.join(', ') })}</span>
+              </div>
+            </Tipped>
           )}
-          <Link to={reviewTo} className="btn btn-block pc-ver-review" title={t('piece.reviewHint', { n: version.number, variant: variantName(variant) })}>
-            {t('piece.reviewN', { n: version.number })}
-            <Icon name="arrowRight" />
-          </Link>
+          <Tip label={t('piece.reviewHint', { n: version.number, variant: variantName(variant) })}>
+            <Link to={reviewTo} className="btn btn-block pc-ver-review">
+              {t('piece.reviewN', { n: version.number })}
+              <Icon name="arrowRight" />
+            </Link>
+          </Tip>
         </div>
       )}
     </section>

@@ -248,7 +248,7 @@ describe('push messages', () => {
     const b = await subscribeBrowser('approver@example.com');
     const r = await env.call(env.users.approver, 'POST', '/api/push/test');
     expect(r.body).toEqual({ devices: 1, reached: 1 });
-    expect(push.messagesFor(b)[0]).toMatchObject({ title: 'Content Studio', tag: 'test' });
+    expect(push.messagesFor(b)[0]).toMatchObject({ title: 'Postbay', tag: 'test' });
     expect((await env.call(env.users.admin, 'POST', '/api/push/test')).body).toEqual({ devices: 0, reached: 0 });
   });
 });
@@ -314,7 +314,7 @@ describe('Slack', () => {
     const ok = await env.call(env.users.admin, 'POST', brandUrl('/slack/test'));
     expect(ok.body).toEqual({ ok: true });
     expect(slack.posts).toHaveLength(1);
-    expect(slack.posts[0]!.text).toContain('test message from the content studio');
+    expect(slack.posts[0]!.text).toContain('test message from Postbay');
     expect(slack.posts[0]!.path).toBe('/services/T0001/B0001/abcdEFGH');
 
     slack.gone.add('/services/T0001/B0001/abcdEFGH');

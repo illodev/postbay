@@ -31,7 +31,7 @@ const schema = z.object({
   S3_SECRET_ACCESS_KEY: z.string().optional(),
   S3_FORCE_PATH_STYLE: bool,
   SMTP_URL: z.string().optional(),
-  MAIL_FROM: z.string().default('Estudio <no-reply@localhost>'),
+  MAIL_FROM: z.string().default('Postbay <no-reply@localhost>'),
   AUTH_DEV_LOGIN: bool,
   WEB_DIST: z.string().optional(),
   /** The host Slack incoming webhook addresses are on. Only that host is accepted; this is changed only to point tests at a stand-in. */

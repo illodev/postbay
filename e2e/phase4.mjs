@@ -325,11 +325,14 @@ await step('TikTok: the settings come from TikTok while the post is written, not
   const opts = d.getByTestId('options-tiktok');
   await opts.waitFor();
   await opts.getByText(/^Posting to TikTok as /).waitFor();
-  const privacy = opts.getByLabel(/Who can see this post/);
-  assert((await privacy.inputValue()) === '', 'who can see the post must start empty');
+  // The app's own select: empty shows its placeholder; its choices are listed once it is opened.
+  const privacy = opts.getByRole('combobox', { name: /Who can see this post/ });
+  assert((await privacy.innerText()).includes('Choose…'), 'who can see the post must start empty');
   // The app has not passed TikTok's audit: TikTok only takes "Only me", so that is the only choice offered.
-  const offered = (await privacy.locator('option').allTextContents()).filter((t) => t !== 'Choose…');
-  assert(JSON.stringify(offered) === JSON.stringify(['Only me']), `before the audit only "Only me" is offered, got ${JSON.stringify(offered)}`);
+  await privacy.click();
+  const offered = await p.getByRole('option').allInnerTexts();
+  await p.keyboard.press('Escape');
+  assert(JSON.stringify(offered.map((o) => o.trim())) === JSON.stringify(['Only me']), `before the audit only "Only me" is offered, got ${JSON.stringify(offered)}`);
   for (const label of ['Allow comments', 'Allow duets', 'Allow stitches']) {
     const box = opts.getByLabel(new RegExp(label));
     if (await box.count()) assert(!(await box.isChecked()), `${label} must start unticked`);
@@ -345,7 +348,8 @@ await step('TikTok: the settings come from TikTok while the post is written, not
   await d.getByText(/has not passed TikTok's audit yet/).waitFor();
   await shot(p, 'schedule-tiktok-empty');
 
-  await privacy.selectOption({ label: 'Only me' });
+  await privacy.click();
+  await p.getByRole('option', { name: 'Only me' }).click();
   await d.getByText(/Choose who can see this post/).waitFor({ state: 'detached' });
   await d.getByText(/TikTok needs this agreement before posting/).waitFor();
 

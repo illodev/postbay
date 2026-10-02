@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { PieceSummary } from '../../api';
 import { Avatar } from '../../components/Avatar';
 import { Icon, type IconName } from '../../components/icons';
-import { Chip, Menu, MenuItem, MenuSeparator, NetMark, Skeleton } from '../../components/ui';
+import { Chip, Menu, MenuItem, MenuSeparator, NetMark, Skeleton, Tip, Tipped } from '../../components/ui';
 import { t, tMaybe, type Key } from '../../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../../lib/format';
 import { ago, BOARD, FIRST_DIR, mediaLabel, stageOf, when, type Look, type Sort, type SortKey, type Stage } from './model';
@@ -41,11 +41,13 @@ function MetaLine({ p, zone }: { p: PieceSummary; zone: string }) {
   if (stageOf(p) === 'scheduled' && next) {
     const at = when(next.scheduled_at, zone);
     return (
-      <span className="pz-by" title={t('pieces.card.nextTitle', { when: at, network: netName(next.network) })}>
-        <NetMark network={next.network} size="xs" />
-        <span className="pz-by-name">{at}</span>
-        {p.networks.length > 1 && <span className="pz-by-more">+{p.networks.length - 1}</span>}
-      </span>
+      <Tip label={t('pieces.card.nextTitle', { when: at, network: netName(next.network) })}>
+        <span className="pz-by">
+          <NetMark network={next.network} size="xs" />
+          <span className="pz-by-name">{at}</span>
+          {p.networks.length > 1 && <span className="pz-by-more">+{p.networks.length - 1}</span>}
+        </span>
+      </Tip>
     );
   }
   if (!v) return <span className="pz-by"><span className="pz-by-name">{t('pieces.card.created', { when: ago(p.created_at) })}</span></span>;
@@ -78,8 +80,9 @@ function CardMenu({ p, actions }: { p: PieceSummary; actions: CardActions }) {
       <Menu
         align="start"
         width={236}
+        tip={t('pieces.card.menuShort')}
         trigger={
-          <button type="button" className="pz-more" aria-label={t('pieces.card.menu', { title: p.title })} title={t('pieces.card.menuShort')}>
+          <button type="button" className="pz-more" aria-label={t('pieces.card.menu', { title: p.title })}>
             <Icon name="more" />
           </button>
         }
@@ -107,21 +110,22 @@ function CardMenu({ p, actions }: { p: PieceSummary; actions: CardActions }) {
 /** A tick box that is a real control: Space toggles it, Shift-click takes the whole range from the last one ticked. */
 function Check({ checked, label, onToggle, className }: { checked: boolean; label: string; onToggle: (range: boolean) => void; className?: string }) {
   return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={checked}
-      aria-label={label}
-      title={t('pieces.card.selectHint')}
-      className={`pz-check ${className ?? ''}`}
-      onClick={(e: MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onToggle(e.shiftKey);
-      }}
-    >
-      {checked && <Icon name="check" />}
-    </button>
+    <Tip label={t('pieces.card.selectHint')}>
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={checked}
+        aria-label={label}
+        className={`pz-check ${className ?? ''}`}
+        onClick={(e: MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onToggle(e.shiftKey);
+        }}
+      >
+        {checked && <Icon name="check" />}
+      </button>
+    </Tip>
   );
 }
 
@@ -157,21 +161,23 @@ function PieceCard({ p, look, selected, selecting, onToggle, actions, zone }: {
         />
         <Check checked={selected} label={t('pieces.card.select', { title: p.title })} onToggle={(range) => onToggle(p.id, range)} />
         <span className="pz-ov pz-ov-state"><i style={{ background: STAGE_COLOUR[stage] }} aria-hidden="true" />{STATE_LABEL[stage]}</span>
-        {v && <span className="pz-ov pz-ov-tr" title={t('pieces.card.version', { number: v.number })}>V{v.number}</span>}
+        {v && <Tip label={t('pieces.card.version', { number: v.number })}><span className="pz-ov pz-ov-tr">V{v.number}</span></Tip>}
         {p.open_comments > 0 && (
-          <span className="pz-ov pz-ov-bl" title={t('pieces.card.comments', { count: p.open_comments })}>
-            <Icon name="bubble" />{p.open_comments}
-          </span>
+          <Tip label={t('pieces.card.comments', { count: p.open_comments })}>
+            <span className="pz-ov pz-ov-bl">
+              <Icon name="bubble" />{p.open_comments}
+            </span>
+          </Tip>
         )}
         <span className="pz-ov-br">
-          {p.variant_count > 1 && <span className="pz-ov" title={t('common.variants', { count: p.variant_count })}><Icon name="copy" />{p.variant_count}</span>}
+          {p.variant_count > 1 && <Tip label={t('common.variants', { count: p.variant_count })}><span className="pz-ov"><Icon name="copy" />{p.variant_count}</span></Tip>}
           {media && <span className="pz-ov">{media}</span>}
         </span>
         {!look.info && <span className="pz-ov-title">{p.title}</span>}
       </div>
       {look.info && (
         <div className="pz-meta">
-          <h3 className="pz-title"><Link to={`/pieces/${p.id}`} title={p.title}>{p.title}</Link></h3>
+          <h3 className="pz-title"><Tipped label={p.title}><Link to={`/pieces/${p.id}`}>{p.title}</Link></Tipped></h3>
           <div className="pz-line">
             <MetaLine p={p} zone={zone} />
             <CardMenu p={p} actions={actions} />
@@ -241,16 +247,17 @@ function BoardCard({ p, zone, onDragStart, onDragEnd }: { p: PieceSummary; zone:
         <Link to={`/pieces/${p.id}`} className="pz-btitle pz-hit-text" draggable={false}>{p.title}</Link>
         <div className="pz-bmeta">
           {v && <span className="pz-vtag">V{v.number}</span>}
-          {p.open_comments > 0 && <span className="pz-bcount" title={t('pieces.card.comments', { count: p.open_comments })}><Icon name="bubble" />{p.open_comments}</span>}
-          {p.latest_by_agent && <span className="pz-bagent" title={t('pieces.card.byAgent')}><Avatar agent size={14} /></span>}
+          {p.open_comments > 0 && <Tip label={t('pieces.card.comments', { count: p.open_comments })}><span className="pz-bcount"><Icon name="bubble" />{p.open_comments}</span></Tip>}
+          {p.latest_by_agent && <Tip label={t('pieces.card.byAgent')}><span className="pz-bagent"><Avatar agent size={14} /></span></Tip>}
         </div>
-        <div
-          className="pz-bmeta pz-bdate"
-          title={stage === 'scheduled' && p.next_publication ? t('pieces.card.nextTitle', { when: date, network: netName(p.next_publication.network) }) : undefined}
-        >
-          {stage === 'scheduled' && <Icon name="calendar" />}
-          <span>{date}</span>
-        </div>
+        <Tipped label={stage === 'scheduled' && p.next_publication ? t('pieces.card.nextTitle', { when: date, network: netName(p.next_publication.network) }) : undefined}>
+          <div
+            className="pz-bmeta pz-bdate"
+          >
+            {stage === 'scheduled' && <Icon name="calendar" />}
+            <span>{date}</span>
+          </div>
+        </Tipped>
       </div>
     </article>
   );
@@ -299,11 +306,13 @@ export function BoardView({ pieces, zone, dragging, onDragStart, onDragEnd, onDr
               onDrop(s);
             }}
           >
-            <header className="pz-colh" title={s === 'scheduled' ? t('pieces.board.hint') : undefined}>
-              <span className="pz-sdot" style={{ background: STAGE_COLOUR[s] }} aria-hidden="true" />
-              <span className="pz-colname" style={{ color: STAGE_COLOUR[s] }}>{STATE_LABEL[s]}</span>
-              <span className="pz-colcount">{items.length}</span>
-            </header>
+            <Tipped label={s === 'scheduled' ? t('pieces.board.hint') : undefined}>
+              <header className="pz-colh">
+                <span className="pz-sdot" style={{ background: STAGE_COLOUR[s] }} aria-hidden="true" />
+                <span className="pz-colname" style={{ color: STAGE_COLOUR[s] }}>{STATE_LABEL[s]}</span>
+                <span className="pz-colcount">{items.length}</span>
+              </header>
+            </Tipped>
             <div className="pz-colbody">
               {accepts && <div className={`pz-drop ${over === s ? 'is-on' : ''}`}><Icon name="calendar" />{t('pieces.board.drop')}</div>}
               {items.map((p) => <BoardCard key={p.id} p={p} zone={zone} onDragStart={onDragStart} onDragEnd={onDragEnd} />)}
@@ -382,10 +391,12 @@ export function ListView({ pieces, sort, onSort, selected, onToggle, onToggleAll
     const on = sort.key === c.key;
     return (
       <th key={c.key} className={c.className} aria-sort={on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
-        <button type="button" className={`pz-th ${on ? 'is-on' : ''}`} title={t(c.label)} onClick={() => onSort({ key: c.key, dir: on ? (sort.dir === 'asc' ? 'desc' : 'asc') : FIRST_DIR[c.key] })}>
-          {c.key === 'comments' ? <><Icon name="bubble" className="pz-th-icon" /><span className="sr-only">{t(c.label)}</span></> : t(c.label)}
-          <Icon name="chevronDown" className={`pz-th-arrow ${on && sort.dir === 'asc' ? 'is-up' : ''}`} />
-        </button>
+        <Tip label={t(c.label)}>
+          <button type="button" className={`pz-th ${on ? 'is-on' : ''}`} onClick={() => onSort({ key: c.key, dir: on ? (sort.dir === 'asc' ? 'desc' : 'asc') : FIRST_DIR[c.key] })}>
+            {c.key === 'comments' ? <><Icon name="bubble" className="pz-th-icon" /><span className="sr-only">{t(c.label)}</span></> : t(c.label)}
+            <Icon name="chevronDown" className={`pz-th-arrow ${on && sort.dir === 'asc' ? 'is-up' : ''}`} />
+          </button>
+        </Tip>
       </th>
     );
   };
@@ -394,15 +405,19 @@ export function ListView({ pieces, sort, onSort, selected, onToggle, onToggleAll
       <table className="pz-table">
         <caption className="sr-only">{t('pieces.list.keys')}</caption>
         <thead>
-          <tr title={t('pieces.list.keys')}>
-            <th className="pz-c-check">
-              <button type="button" role="checkbox" aria-checked={all ? 'true' : some ? 'mixed' : 'false'} aria-label={t('pieces.list.selectAll')} title={t('pieces.list.selectAllHint')} className={`pz-check pz-check-inline ${some ? 'is-mixed' : ''}`} onClick={onToggleAll}>
-                {all && <Icon name="check" />}
-              </button>
-            </th>
-            <th className="pz-c-thumb"><span className="sr-only">{t('pieces.list.preview')}</span></th>
-            {COLUMNS.map(header)}
-          </tr>
+          <Tip label={t('pieces.list.keys')}>
+            <tr>
+              <th className="pz-c-check">
+                <Tip label={t('pieces.list.selectAllHint')}>
+                  <button type="button" role="checkbox" aria-checked={all ? 'true' : some ? 'mixed' : 'false'} aria-label={t('pieces.list.selectAll')} className={`pz-check pz-check-inline ${some ? 'is-mixed' : ''}`} onClick={onToggleAll}>
+                    {all && <Icon name="check" />}
+                  </button>
+                </Tip>
+              </th>
+              <th className="pz-c-thumb"><span className="sr-only">{t('pieces.list.preview')}</span></th>
+              {COLUMNS.map(header)}
+            </tr>
+          </Tip>
         </thead>
         <tbody>
           {pieces.map((p, i) => {
@@ -428,7 +443,7 @@ export function ListView({ pieces, sort, onSort, selected, onToggle, onToggleAll
                 </td>
                 <td className="pz-c-thumb"><span className="pz-lthumb"><Thumb piece={p} width={240} /></span></td>
                 <td className="pz-c-title">
-                  <Link to={`/pieces/${p.id}`} tabIndex={-1} className="pz-ltitle" title={p.title}>{p.title}</Link>
+                  <Tipped label={p.title}><Link to={`/pieces/${p.id}`} tabIndex={-1} className="pz-ltitle">{p.title}</Link></Tipped>
                   <span className="pz-lsub">
                     {[tMaybe(`kind.${p.kind}`, p.kind), mediaLabel(p)].filter(Boolean).join(' · ')}
                     {p.campaign_name && <span className="pz-lsub-camp"> · {p.campaign_name}</span>}

@@ -174,8 +174,8 @@ describe('the API in the request\'s language', () => {
     env.clock.advance(6 * 3600_000);
     expect(await expireRuns(env.ctx)).toBe(1);
     const runs = async (locale: string) => (await env.callIn(locale, env.users.reader, 'GET', `/api/pieces/${pieceId}/agent`)).body.runs;
-    expect((await runs('es'))[0]).toMatchObject({ outcome: 'timeout', notes: 'El runner dejó de informar o se pasó del tiempo máximo de una ejecución, así que el estudio la cerró' });
-    expect((await runs('en'))[0].notes).toBe('The runner stopped reporting, or ran past the longest run, so the studio closed the run');
+    expect((await runs('es'))[0]).toMatchObject({ outcome: 'timeout', notes: 'El runner dejó de informar o se pasó del tiempo máximo de una ejecución, así que Postbay la cerró' });
+    expect((await runs('en'))[0].notes).toBe('The runner stopped reporting, or ran past the longest run, so Postbay closed the run');
     const told = await env.db.query(`select kind from notification where payload->>'pieceId' = $1`, [pieceId]);
     expect(told.map((n) => n.kind)).toContain('agent.timed_out');
     expect(told.map((n) => n.kind)).not.toContain('agent.failed');

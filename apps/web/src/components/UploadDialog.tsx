@@ -6,7 +6,7 @@ import { api, ApiError, type Anchor, type CommentThread } from '../api';
 import { t, tMaybe, type Key } from '../i18n';
 import { fmtBytes } from '../lib/format';
 import { createVersion, guessKind, guessMime, type AssetKind, type PendingFile, type Progress } from '../lib/upload';
-import { Dialog, ErrorBox, errorMessage, Select, Tip, useToast } from './ui';
+import { Dialog, ErrorBox, errorMessage, Select, Tip, Tipped, useToast } from './ui';
 import '../styles/piece.css';
 
 type Shape = 'document' | 'carousel' | 'default';
@@ -354,7 +354,7 @@ export function UploadDialog({ variant, variants, latestVersionId, onClose }: {
                       {shape === 'carousel' && <span className="pc-file-pos" aria-hidden="true">{i + 1}</span>}
                       <FilePreview file={f.file} kind={f.kind} />
                       <span className="pc-file-main">
-                        <span className="pc-file-name" title={f.file.name}>{f.file.name}</span>
+                        <Tipped label={f.file.name}><span className="pc-file-name">{f.file.name}</span></Tipped>
                         <span className="pc-file-meta">
                           <span className="mono">{fmtBytes(f.file.size)}</span>
                           {ph && (

@@ -22,7 +22,8 @@ import { personLocale } from './notify.js';
 const MAX_FAILURES = 5;
 const LOCK_MINUTES = 15;
 const RECOVERY_CODES = 10;
-const ISSUER = 'Content Studio';
+// What an authenticator app shows. Only the label: the key derivation below keeps 'content-studio', or every saved secret breaks.
+const ISSUER = 'Postbay';
 
 const vault = (ctx: Ctx) => new TokenVault(Buffer.from(hkdfSync('sha256', ctx.config.SECRET, 'content-studio', 'totp-secret-v1', 32)));
 const aad = (userId: string) => `totp:${userId}`;
