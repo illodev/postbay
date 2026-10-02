@@ -204,8 +204,8 @@ so what was written before keeps showing.
 
 ## What was verified, and how
 
-All against a real PostgreSQL, through the HTTP API (the whole suite: 899 API tests and 105 runner tests, 24 and 4 of them new here, plus
-changes to two older ones):
+All against a real PostgreSQL, through the HTTP API (27 API tests and 4 runner tests new for these features, plus changes to older
+ones; on 3 October 2026 the whole suites were 925 API tests and 107 runner tests, all passing):
 
 - `test/member-deactivation.test.ts`: refused with the code in both languages, `/api/me`, the member list, twice and back; only admins, never
   oneself, re-adding; two admins taking each other out at once (one refused) and the last active admin on removal and demotion; tokens
