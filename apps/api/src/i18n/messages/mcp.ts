@@ -15,6 +15,9 @@ export const mcp = define({
     'mcp.request.stale': 'La página de autorización ha cambiado. Recárgala y vuelve a intentarlo.',
     'mcp.request.noBrands': 'Elige al menos una de tus marcas.',
     'mcp.connection.notFound': 'Esa conexión no existe o ya está desconectada.',
+    'mcp.style.unknown': '«{style}» no es un estilo de esta marca. Puede ser uno de estos: {styles}. Si es uno nuevo, pregúntale a la persona si lo añade a la marca (add_variant_style; solo administradores).',
+    'mcp.style.noneDefined': 'Esta marca no tiene estilos de variante. Deja el estilo vacío, o pregúntale a la persona si añade «{style}» a la marca (add_variant_style; solo administradores).',
+    'mcp.style.notInList': '«{style}» no está en la lista de estilos de esta marca: {styles}.',
   },
   en: {
     'mcp.approvalOff': 'In this brand an assistant cannot approve or request changes. An admin can allow it in Settings → Assistants (MCP).',
@@ -28,5 +31,8 @@ export const mcp = define({
     'mcp.request.stale': 'The authorization page has changed. Reload it and try again.',
     'mcp.request.noBrands': 'Choose at least one of your brands.',
     'mcp.connection.notFound': 'That connection does not exist or is already disconnected.',
+    'mcp.style.unknown': '“{style}” is not one of this brand’s styles. It can be one of these: {styles}. If it is a new one, ask the person whether to add it to the brand (add_variant_style; admins only).',
+    'mcp.style.noneDefined': 'This brand has no variant styles. Leave the style empty, or ask the person whether to add “{style}” to the brand (add_variant_style; admins only).',
+    'mcp.style.notInList': '“{style}” is not in this brand’s list of styles: {styles}.',
   },
 });

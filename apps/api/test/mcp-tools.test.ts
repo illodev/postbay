@@ -34,13 +34,14 @@ describe('the tools', () => {
     const r = await rpc(env, as.reader.access, 'tools/list');
     const names = r.body.result.tools.map((t: any) => t.name).sort();
     expect(names).toEqual([
-      'add_comment', 'add_variant', 'approve_version', 'calendar', 'cancel_publication', 'create_piece', 'finish_upload', 'get_piece', 'get_version',
-      'list_accounts', 'list_brands', 'list_comments', 'list_notifications', 'list_pieces', 'move_publication', 'pending_for_me', 'reply_to_comment',
-      'request_changes', 'resolve_comment', 'schedule_publication', 'start_upload',
+      'add_comment', 'add_variant', 'add_variant_style', 'approve_version', 'calendar', 'cancel_publication', 'create_piece', 'finish_upload', 'get_piece',
+      'get_version', 'list_accounts', 'list_brands', 'list_comments', 'list_notifications', 'list_pieces', 'move_publication', 'pending_for_me',
+      'remove_variant_style', 'reply_to_comment', 'request_changes', 'resolve_comment', 'schedule_publication', 'start_upload',
     ]);
     const byName = Object.fromEntries(r.body.result.tools.map((t: any) => [t.name, t]));
     expect(byName.list_pieces.annotations.readOnlyHint).toBe(true);
     expect(byName.cancel_publication.annotations.destructiveHint).toBe(true);
+    expect(byName.remove_variant_style.annotations.destructiveHint).toBe(true);
     expect(byName.approve_version.inputSchema.required).toEqual(expect.arrayContaining(['version_id', 'account_ids', 'confirm']));
   });
 
@@ -165,6 +166,39 @@ describe('pieces and uploads', () => {
     // The type and size limits are the web's.
     const pdf = await tool(env, as.producer.access, 'start_upload', { variant_id: variantId, files: [{ name: 'x.mp4', mime: 'video/mp4', bytes: 5 * 1024 ** 3, sha256: sha }] });
     expect(pdf.ok).toBe(false);
+  });
+});
+
+describe('variant styles', () => {
+  it("lists the brand's styles, lets an admin add and remove them, and a variant takes only one of them", async () => {
+    const styles = async () => (await tool(env, as.admin.access, 'list_brands', {})).data.brands[0].variant_styles;
+    expect(await styles()).toEqual([]);
+
+    // Only an admin changes the list, as in Settings → General; it is audited as done through the assistant.
+    expect((await tool(env, as.approver.access, 'add_variant_style', { style: 'Riso' })).error.code).toBe('forbidden');
+    const added = await tool(env, as.admin.access, 'add_variant_style', { style: 'Riso' });
+    expect(added.ok, JSON.stringify(added.error)).toBe(true);
+    expect(added.data.variant_styles).toEqual(['Riso']);
+    expect((await tool(env, as.admin.access, 'add_variant_style', { style: 'Collage', position: 1 })).data.variant_styles).toEqual(['Collage', 'Riso']);
+    expect((await tool(env, as.admin.access, 'add_variant_style', { style: 'riso' })).error.code).toBe('duplicate_style');
+    expect(await styles()).toEqual(['Collage', 'Riso']);
+    expect((await viaOf('brand.updated', env.brandId))!.via).toMatchObject({ client_name: 'Claude' });
+
+    // A variant's style is one of the list, written as the brand writes it; anything else is refused and the list is said.
+    const { pieceId } = await env.makePiece(env.users.producer);
+    const odd = await tool(env, as.producer.access, 'add_variant', { piece_id: pieceId, format: '1:1', style: 'Acuarela' });
+    expect(odd.error).toMatchObject({ code: 'unknown_style', details: { styles: ['Collage', 'Riso'] } });
+    expect(odd.error.message).toContain('Collage, Riso');
+    const v = await tool(env, as.producer.access, 'add_variant', { piece_id: pieceId, format: '1:1', style: 'RISO' });
+    expect(v.ok, JSON.stringify(v.error)).toBe(true);
+    expect(v.data.style).toBe('Riso');
+    expect((await tool(env, as.producer.access, 'add_variant', { piece_id: pieceId, format: '16:9' })).ok).toBe(true);
+
+    // Taking a style off the list leaves the variants that have it alone.
+    expect((await tool(env, as.admin.access, 'remove_variant_style', { style: 'Acuarela' })).error.code).toBe('unknown_style');
+    expect((await tool(env, as.admin.access, 'remove_variant_style', { style: 'riso' })).data.variant_styles).toEqual(['Collage']);
+    expect((await env.db.one<{ style: string }>('select style from variant where id = $1', [v.data.id]))!.style).toBe('Riso');
+    await env.call(env.users.admin, 'PATCH', brandUrl(), { rules: { variant_styles: [] } });
   });
 });
 

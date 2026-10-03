@@ -164,7 +164,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
 
   server.registerTool('list_brands', {
     title: 'List brands',
-    description: 'The brands this connection can use, with the person\'s role in each, the time zone, whether it is paused, its approval rules (how many approvals, the checklist an approver must confirm) and whether approving from an assistant is enabled there.',
+    description: 'The brands this connection can use, with the person\'s role in each, the time zone, whether it is paused, its approval rules (how many approvals, the checklist an approver must confirm), whether approving from an assistant is enabled there, and the styles a variant can have (variant_styles, in the order people pick from).',
     inputSchema: {},
     annotations: read,
   }, run(async () => {
@@ -175,6 +175,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
         return {
           id: b.id, name: b.name, workspace: b.workspace, role: b.role, timezone: b.timezone, paused: b.paused,
           approval: { required_approvals: rules.required_approvals, checklist: rules.checklist, assistant_can_approve: mcpOf(b).allow_approval },
+          variant_styles: rules.variant_styles,
         };
       }),
     };
@@ -501,12 +502,58 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
     inputSchema: {
       piece_id: uuid('The piece id'),
       format: z.enum(pieces.FORMATS),
-      style: z.string().trim().max(80).optional().describe('Optional label to tell two variants of the same format apart'),
+      style: z.string().trim().max(80).optional().describe('Optional: one of the brand\'s variant styles (list_brands → variant_styles), to tell two variants of the same format apart. Any other style is refused: a new one is added to the brand first, with the person\'s say-so (add_variant_style).'),
     },
     annotations: write,
   }, run(async (a) => {
-    const v = await pieces.addVariant(ctx, p, a.piece_id, { format: a.format, style: a.style ?? '' });
+    // As in the web's dialog, a style comes from the brand's list (written as the brand writes it); the agent's runner does the same.
+    let style = '';
+    if (a.style) {
+      const row = await ctx.db.one<{ approval_rules: unknown }>('select b.approval_rules from piece pc join brand b on b.id = pc.brand_id where pc.id = $1', [a.piece_id]);
+      const styles = row ? rulesOf(row).variant_styles : [];
+      const match = styles.find((s) => s.toLocaleLowerCase() === a.style!.toLocaleLowerCase());
+      if (row && !match) {
+        throw styles.length
+          ? badRequest('unknown_style', msg('mcp.style.unknown', { style: a.style, styles: styles.join(', ') }), { styles })
+          : badRequest('unknown_style', msg('mcp.style.noneDefined', { style: a.style }), { styles });
+      }
+      style = match ?? a.style;
+    }
+    const v = await pieces.addVariant(ctx, p, a.piece_id, { format: a.format, style });
     return { id: v.id, piece_id: a.piece_id, format: v.format, style: v.style || null, url: link.piece(a.piece_id) };
+  }));
+
+  server.registerTool('add_variant_style', {
+    title: 'Add a variant style to a brand',
+    description: 'Adds a style ("Riso", "Collage"…) to the brand\'s list of variant styles, the list people pick a variant\'s style from. Admins only, as in Settings → General. Ask the person before adding one: it shows for the whole team.',
+    inputSchema: {
+      brand: brandParam,
+      style: z.string().trim().min(1).max(40).describe('The style, as it should be written'),
+      position: z.number().int().min(1).max(30).optional().describe('Where in the list (1 is first). At the end when left out.'),
+    },
+    annotations: write,
+  }, run(async (a) => {
+    const b = await brandOf(a.brand);
+    const styles = rulesOf(await loadBrand(ctx.db, b.id)).variant_styles;
+    const next = [...styles];
+    next.splice(a.position ? a.position - 1 : next.length, 0, a.style);
+    // The web's own save: admins only, no two alike whatever their case, at most 30, audited.
+    const saved = await brandSvc.updateBrand(ctx, p, b.id, { rules: { variant_styles: next } });
+    return { brand: b.name, variant_styles: saved.rules.variant_styles, url: link.settings('general') };
+  }));
+
+  server.registerTool('remove_variant_style', {
+    title: 'Remove a variant style from a brand',
+    description: 'Takes a style off the brand\'s list of variant styles. Variants that already have it keep it. Admins only. Ask the person first.',
+    inputSchema: { brand: brandParam, style: z.string().trim().min(1).max(40) },
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  }, run(async (a) => {
+    const b = await brandOf(a.brand);
+    const styles = rulesOf(await loadBrand(ctx.db, b.id)).variant_styles;
+    const next = styles.filter((s) => s.toLocaleLowerCase() !== a.style.toLocaleLowerCase());
+    if (next.length === styles.length) throw badRequest('unknown_style', msg('mcp.style.notInList', { style: a.style, styles: styles.join(', ') || '—' }), { styles });
+    const saved = await brandSvc.updateBrand(ctx, p, b.id, { rules: { variant_styles: next } });
+    return { brand: b.name, variant_styles: saved.rules.variant_styles, url: link.settings('general') };
   }));
 
   server.registerTool('start_upload', {

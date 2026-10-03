@@ -150,7 +150,7 @@ links to the same thing in the web app, times in the brand's zone (`at_local`) a
 
 | Tool | What it does |
 | --- | --- |
-| `list_brands` | The brands this connection can use: the person's role, the zone, whether it is paused, the approval rules (how many approvals, the checklist) and whether approving from an assistant is on |
+| `list_brands` | The brands this connection can use: the person's role, the zone, whether it is paused, the approval rules (how many approvals, the checklist), whether approving from an assistant is on, and the brand's variant styles |
 | `list_pieces` | Pieces, newest first, filtered by state, campaign, made by the agent or not, and words in the title; each with its latest version and what is scheduled |
 | `get_piece` | A piece with its variants, every version (number, state, fingerprint, open comments) and its publications |
 | `get_version` | One version: files, fingerprint, who uploaded it, the decisions on it, the checklist, the accounts and what approving it would schedule |
@@ -159,7 +159,8 @@ links to the same thing in the web app, times in the brand's zone (`at_local`) a
 | `calendar` | Publications, free weekly slots and blocked days between two dates (the next 14 days by default) |
 | `list_accounts`, `list_notifications` | The brand's social accounts; the person's latest notifications |
 | `add_comment`, `reply_to_comment`, `resolve_comment` | Comment at a moment or span of a video, on a page or area of an image, carousel or PDF, or in general; reply; resolve |
-| `create_piece`, `add_variant` | A new piece (optionally with its first formats), or another format of one |
+| `create_piece`, `add_variant` | A new piece (optionally with its first formats), or another format of one; a variant's style must be one of the brand's |
+| `add_variant_style`, `remove_variant_style` | Add a style to the brand's list (at a position) or take one off it; admins only, as in Settings → General. Variants that have a removed style keep it |
 | `start_upload`, `finish_upload` | A new version in two steps, see below |
 | `schedule_publication` | Schedule an **approved** version on an account it was approved for, at `YYYY-MM-DDTHH:mm` in the brand's time; `dry_run` says first how it would go out and what would stop it |
 | `move_publication`, `cancel_publication` | Move or edit, or cancel, a scheduled publication |
