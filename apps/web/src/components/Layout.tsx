@@ -30,7 +30,10 @@ function RailLink({ to, icon, label, end, dot }: { to: string; icon: IconName; l
   );
 }
 
-function Notifications() {
+/** On a phone they sit in the top bar, so they open downwards and fit the screen; on a desktop they open beside the rail. */
+const PHONE_FLOAT = { side: 'bottom', align: 'end', width: 'min(380px, calc(100vw - 16px))' } as const;
+
+function Notifications({ phone }: { phone?: boolean }) {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -48,9 +51,9 @@ function Notifications() {
     <Popover
       open={open}
       onOpenChange={setOpen}
-      side="right"
-      align="start"
-      width={380}
+      side={phone ? PHONE_FLOAT.side : 'right'}
+      align={phone ? PHONE_FLOAT.align : 'start'}
+      width={phone ? PHONE_FLOAT.width : 380}
       label={t('notif.title')}
       trigger={
         <button className="rail-btn" aria-label={unread ? t('notif.buttonUnread', { count: unread }) : t('notif.button')}>
@@ -86,7 +89,7 @@ function Notifications() {
   );
 }
 
-function AccountMenu() {
+function AccountMenu({ phone }: { phone?: boolean }) {
   const { me } = useSession();
   const { locale, setLocale } = useLocale();
   const qc = useQueryClient();
@@ -104,12 +107,12 @@ function AccountMenu() {
   };
   return (
     <Menu
-      side="right"
+      side={phone ? PHONE_FLOAT.side : 'right'}
       align="end"
       width={260}
       trigger={
         <button className="rail-btn" aria-label={t('layout.account')}>
-          <Avatar name={me.user.name ?? me.user.email} size={30} />
+          <Avatar name={me.user.name ?? me.user.email} size={phone ? 28 : 30} />
         </button>
       }
     >
@@ -367,6 +370,8 @@ function Shell() {
           </button>
           <span className="mobilebar-brand">{brand.name}</span>
           <button className="icon-btn" onClick={palette.open} aria-label={t('layout.palette.title')}><Icon name="search" size={18} /></button>
+          <Notifications phone />
+          <AccountMenu phone />
         </header>
         {deactivatedBrand && (
           <div className="fx-banner" role="status"><Icon name="ban" />{t('deactivated.banner', { brand: deactivatedBrand.name })}</div>
