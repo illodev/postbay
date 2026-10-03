@@ -35,7 +35,14 @@ You act as the signed-in person, with their role in each brand. Rules that alway
 - Nothing is published without a person's approval of that exact version. You can only schedule a version that is already approved, on an account it was approved for.
 - Approving or requesting changes from here is allowed only where a brand admin has enabled it, and only for people whose role can already do it. Before calling approve_version or request_changes, show the person the piece, the version number and its fingerprint (first 12 characters, as the web shows it), get their explicit go-ahead, and pass those values back in "confirm".
 - Times are in each brand's own time zone unless you give an ISO time with an offset. Say times to the person in the brand's zone.
-- Ids come from earlier results: list_pieces or pending_for_me → get_piece → versions and comments. Every result has a "url" to open the same thing in the web app; share it when useful.`;
+- Ids come from earlier results: list_pieces or pending_for_me → get_piece → versions and comments. Every result has a "url" to open the same thing in the web app; share it when useful.
+
+Working on a review (making the next version from people's comments):
+1. list_comments with status "open" on the version: read each thread's text, where it points (\`anchor\`) and, for a moment of a video, its \`frame_url\` image. Leave threads marked people_only to people.
+2. get_version for the files (\`download_url\`), or work on the piece's own project if it has one (get_piece → source).
+3. Make the new files, then start_upload and finish_upload on the same variant, with \`notes\` saying what changed and \`resolves_comment_ids\` listing only the threads the new version really fixes.
+4. reply_to_comment on every open thread with \`kind\`: fixed, cannot_do (say why) or needs_human.
+5. Never approve the result. If you act as the person who will approve it, tell them they cannot approve their own upload: an agent that makes versions should sign in to Postbay with an account of its own (a member with the producer role).`;
 
 type Out = Record<string, unknown>;
 
@@ -253,7 +260,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
 
   server.registerTool('get_version', {
     title: 'Get a version',
-    description: 'One version of a piece: its files, fingerprint, who uploaded it, the decisions taken on it, the brand\'s approval rules (checklist), the accounts it could be approved for, and what approving it would schedule. Use it before approving.',
+    description: 'One version of a piece: its files (each with a download_url, valid for an hour, to fetch its exact bytes: to look at it, edit it or render the next version from it), fingerprint, who uploaded it, the decisions taken on it, the brand\'s approval rules (checklist), the accounts it could be approved for, and what approving it would schedule. Use it before approving.',
     inputSchema: { version_id: uuid('The version id') },
     annotations: read,
   }, run(async (a) => {
@@ -268,7 +275,10 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
       piece: { id: v.piece?.id, title: v.piece?.title, kind: v.piece?.kind, ai_generated: v.piece?.ai_generated },
       variant: { id: v.variant.id, format: v.variant.format, style: v.variant.style || null },
       uploaded_at: v.created_at, author: v.author, by_agent: v.by_agent, notes: v.notes || null,
-      files: v.assets.map((f) => ({ kind: f.kind, position: f.position, name: f.name, mime: f.mime, width: f.width, height: f.height, duration_seconds: seconds(f.duration_ms), bytes: f.bytes })),
+      files: v.assets.map((f) => ({
+        kind: f.kind, position: f.position, name: f.name, mime: f.mime, width: f.width, height: f.height, duration_seconds: seconds(f.duration_ms), fps: f.fps,
+        bytes: f.bytes, sha256: f.sha256, download_url: f.url, download_expires_in_seconds: 3600,
+      })),
       open_comments: open,
       decisions: v.approvals.map((x: Out) => ({ by: x.approver, decision: x.decision, note: x.note || null, at: x.created_at, still_counts: x.matches_fingerprint })),
       approval_rules: { required_approvals: rules.required_approvals, checklist: rules.checklist, assistant_can_approve: mcpOf(brand).allow_approval },
@@ -322,7 +332,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
 
   server.registerTool('list_comments', {
     title: 'Comments of a version',
-    description: 'The comment threads of a version, with replies, including threads still open from earlier versions of the same variant. Each says where it points, in words (a moment or span of the video, a subtitle line, a page or area of an image or PDF).',
+    description: 'The comment threads of a version, with replies, including threads still open from earlier versions of the same variant. Each says where it points, in words (a moment or span of the video, a subtitle line, a page or area of an image or PDF), and exactly, in `anchor`: times in seconds; points, areas and drawings as fractions of the picture (0–1, from its top-left corner; a drawing\'s shapes are in `anchor.drawing`). A comment on a moment of a video also has `frame_url`: the frame it points at, as an image, valid for an hour, so you can see what the person saw.',
     inputSchema: {
       version_id: uuid('The version id'),
       status: z.enum(['open', 'resolved', 'all']).default('all'),
@@ -333,7 +343,8 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
     return {
       version_id: a.version_id, url: link.review(a.version_id),
       threads: rows.map((c) => ({
-        id: c.id, status: c.status, where: describeAnchor(c.anchor as Anchor | null), text: c.body, author: c.author, at: c.created_at,
+        id: c.id, status: c.status, where: describeAnchor(c.anchor as Anchor | null), anchor: c.anchor ?? null, frame_url: c.frame_url ?? null,
+        text: c.body, author: c.author, at: c.created_at,
         on_version: c.version_number, carried_from_earlier_version: c.carried, people_only: c.people_only,
         resolved_by: c.resolved_by, resolved_in_version: c.resolved_in_number,
         replies: (c.replies as Out[]).map((r) => ({ id: r.id, text: r.body, author: r.author, by_agent: r.by_agent, at: r.created_at, kind: r.reply_kind })),
@@ -445,11 +456,15 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
 
   server.registerTool('reply_to_comment', {
     title: 'Reply to a comment',
-    description: 'Replies to a comment thread, as the person. Use the thread\'s id (the top comment).',
-    inputSchema: { comment_id: uuid('The thread (top comment) id'), text: z.string().trim().min(1).max(5000) },
+    description: 'Replies to a comment thread, as the person. Use the thread\'s id (the top comment). When working on a review, say with `kind` what became of it: fixed (in the version you uploaded), cannot_do (and why, in the text) or needs_human (it is a decision for a person); the web shows it on the reply.',
+    inputSchema: {
+      comment_id: uuid('The thread (top comment) id'),
+      text: z.string().trim().min(1).max(5000),
+      kind: z.enum(['fixed', 'cannot_do', 'needs_human']).optional().describe('What became of the comment, when answering it as work done on a review'),
+    },
     annotations: write,
   }, run(async (a) => {
-    const row = await comments.replyToComment(ctx, p, a.comment_id, { body: a.text });
+    const row = await comments.replyToComment(ctx, p, a.comment_id, { body: a.text, kind: a.kind });
     return { id: row.id, thread_id: a.comment_id, url: link.review(row.version_id) };
   }));
 

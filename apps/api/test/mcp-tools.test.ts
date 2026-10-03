@@ -169,6 +169,35 @@ describe('pieces and uploads', () => {
   });
 });
 
+describe('working on a review', () => {
+  it("gives the files to download, each comment's exact anchor and frame, and replies that say what became of a comment", async () => {
+    const v = await inReview();
+    const ver = await tool(env, as.producer.access, 'get_version', { version_id: v.versionId });
+    expect(ver.ok, JSON.stringify(ver.error)).toBe(true);
+    const file = ver.data.files[0];
+    expect(file).toMatchObject({ download_expires_in_seconds: 3600 });
+    expect(file.sha256).toMatch(/^[0-9a-f]{64}$/);
+    // The link gives the very bytes of the version.
+    const url = new URL(file.download_url);
+    const got = await env.app.inject({ method: 'GET', url: url.pathname + url.search });
+    expect(got.statusCode).toBe(200);
+    expect(createHash('sha256').update(got.rawPayload).digest('hex')).toBe(file.sha256);
+
+    const anchor = { type: 'region', page: 1, x: 0.1, y: 0.2, w: 0.3, h: 0.25 };
+    const made = await tool(env, as.reviewer.access, 'add_comment', { version_id: v.versionId, text: 'Más contraste aquí', page: 1, x: 0.1, y: 0.2, width: 0.3, height: 0.25 });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    const listed = await tool(env, as.producer.access, 'list_comments', { version_id: v.versionId, status: 'open' });
+    const thread = listed.data.threads.find((t: any) => t.id === made.data.id);
+    expect(thread.anchor).toMatchObject(anchor);
+    expect(thread).toHaveProperty('frame_url');
+
+    const replied = await tool(env, as.producer.access, 'reply_to_comment', { comment_id: made.data.id, text: 'Hecho en la siguiente versión', kind: 'fixed' });
+    expect(replied.ok, JSON.stringify(replied.error)).toBe(true);
+    const again = await tool(env, as.producer.access, 'list_comments', { version_id: v.versionId, status: 'open' });
+    expect(again.data.threads.find((t: any) => t.id === made.data.id).replies[0]).toMatchObject({ text: 'Hecho en la siguiente versión', kind: 'fixed' });
+  });
+});
+
 describe('variant styles', () => {
   it("lists the brand's styles, lets an admin add and remove them, and a variant takes only one of them", async () => {
     const styles = async () => (await tool(env, as.admin.access, 'list_brands', {})).data.brands[0].variant_styles;

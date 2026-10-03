@@ -31,12 +31,12 @@ links to the same thing in the web app, times in the brand's zone (`at_local`) a
 | `list_brands` | The brands this connection can use: the person's role, the zone, whether it is paused, the approval rules (how many approvals, the checklist), whether approving from an assistant is on, and the brand's variant styles |
 | `list_pieces` | Pieces, newest first, filtered by state, campaign, made by the agent or not, and words in the title; each with its latest version and what is scheduled |
 | `get_piece` | A piece with its variants, every version (number, state, fingerprint, open comments) and its publications |
-| `get_version` | One version: files, fingerprint, who uploaded it, the decisions on it, the checklist, the accounts and what approving it would schedule ([scheduling after approval](publishing.md#scheduling-after-approval)) |
+| `get_version` | One version: files (each with a `download_url`, valid for an hour, and its sha256), fingerprint, who uploaded it, the decisions on it, the checklist, the accounts and what approving it would schedule ([scheduling after approval](publishing.md#scheduling-after-approval)) |
 | `pending_for_me` | Versions waiting for the person's decision, open comments on their uploads and replies to their comments, and publications that failed, are on hold or wait for a confirmation |
-| `list_comments` | The threads of a version (and those still open from earlier versions), each saying where it points in words: "from 0:03.5 to 0:05", "page 2, an area in the top-right…", a subtitle line |
+| `list_comments` | The threads of a version (and those still open from earlier versions), each saying where it points in words: "from 0:03.5 to 0:05", "page 2, an area in the top-right…", a subtitle line; and exactly, in `anchor` (seconds; points, areas and drawings as fractions of the picture), with `frame_url`, the frame a video comment points at |
 | `calendar` | Publications, free weekly slots and blocked days between two dates (the next 14 days by default) |
 | `list_accounts`, `list_notifications` | The brand's social accounts; the person's latest notifications |
-| `add_comment`, `reply_to_comment`, `resolve_comment` | Comment at a moment or span of a video, on a page or area of an image, carousel or PDF, or in general; reply; resolve |
+| `add_comment`, `reply_to_comment`, `resolve_comment` | Comment at a moment or span of a video, on a page or area of an image, carousel or PDF, or in general; reply, saying with `kind` what became of it (`fixed`, `cannot_do`, `needs_human`); resolve |
 | `create_piece`, `add_variant` | A new piece (optionally with its first formats), or another format of one; a variant's style must be one of the brand's |
 | `add_variant_style`, `remove_variant_style` | Add a style to the brand's list (at a position) or take one off it; admins only, as in Settings → General. Variants that have a removed style keep it |
 | `start_upload`, `finish_upload` | A new version in two steps, see below |
@@ -50,6 +50,28 @@ a signed URL per file; the assistant sends the bytes there with `PUT` (storage r
 calls `finish_upload`, which re-reads what was stored and closes the version. The limits are the web's: video, images, PDF, subtitles and
 covers, up to 4 GB each. This needs an assistant that can read local files and make HTTP requests, such as Claude Code; claude.ai cannot
 upload files this way.
+
+## Your own agent on a review
+
+Postbay's own [agent runner](agents.md) turns a request for changes into a new version by itself. An agent of your own (Claude
+Code, for example) can do the same work through the MCP, on your terms:
+
+1. **Read what was asked.** `list_comments` with `status: "open"`: each thread's text, where it points in words and exactly
+   (`anchor`), and, for a moment of a video, `frame_url`: the frame the reviewer was looking at, as an image. Threads marked
+   *people only* are left to people.
+2. **Get the material.** `get_version` gives each file's `download_url` (an hour) and sha256, to edit the files themselves; or the
+   agent works on the piece's own project, if it has one ([pieces made with code](agents.md)).
+3. **Upload the next version.** `start_upload` and `finish_upload` on the same variant, with `notes` saying what changed and
+   `resolves_comment_ids` listing only the threads the new version really fixes.
+4. **Answer every thread.** `reply_to_comment` with `kind`: `fixed`, `cannot_do` (and why) or `needs_human`. The review screen shows it.
+
+**Give the agent an account of its own.** Whatever an assistant uploads is uploaded by the person it signed in as, and nobody approves
+their own upload. So an agent that makes versions should not use the approver's account: add it to the brand as a member with the
+**producer** role (for example "Claude (agent)", with an email address you read), and connect the MCP signed in as that member. Its
+versions then carry its name, go through review like anyone's, and you approve them.
+
+It does not hear about new comments by itself: ask it ("work through the open comments on the roasters video"), or have it check
+`pending_for_me` from time to time.
 
 ## Approving from an assistant
 
