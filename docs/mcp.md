@@ -48,8 +48,9 @@ links to the same thing in the web app, times in the brand's zone (`at_local`) a
 | `list_accounts`, `list_notifications` | The brand's social accounts; the person's latest notifications |
 | `add_comment`, `reply_to_comment`, `resolve_comment` | Comment at a moment or span of a video, on a page or area of an image, carousel or PDF, or in general; reply, saying with `kind` what became of it (`fixed`, `cannot_do`, `needs_human`); resolve |
 | `create_piece`, `add_variant` | A new piece (optionally with its first formats), or another format of one; a variant's style must be one of the brand's |
+| `list_campaigns`, `create_campaign`, `update_piece` | The brand's campaigns; a new one (no two with the same name); change a piece's title, brief, campaign, target date or AI label |
 | `add_variant_style`, `remove_variant_style` | Add a style to the brand's list (at a position) or take one off it; admins only, as in Settings → General. Variants that have a removed style keep it |
-| `start_upload`, `finish_upload` | A new version in two steps, see below |
+| `start_upload`, `finish_upload` | A new version in two steps, see below. `start_uploads` and `finish_uploads` do the same for up to 50 variants per call, each item answering on its own |
 | `schedule_publication` | Schedule an **approved** version on an account it was approved for, at `YYYY-MM-DDTHH:mm` in the brand's time; `dry_run` says first how it would go out and what would stop it |
 | `move_publication`, `cancel_publication` | Move or edit, or cancel, a scheduled publication |
 | `approve_version`, `request_changes` | Decide on a version, only where the brand allows it (below) |

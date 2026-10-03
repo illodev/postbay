@@ -1,10 +1,19 @@
 {
   "name": "postbay",
   "displayName": "Postbay",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Work in Postbay from Claude Code: see what waits for you, review, work through comments into a new version, upload, schedule and approve. Connects to your Postbay with your own account.",
-  "author": { "name": "illodev" },
+  "author": {
+    "name": "illodev"
+  },
   "homepage": "https://github.com/illodev/postbay",
   "repository": "https://github.com/illodev/postbay",
-  "keywords": ["postbay", "social media", "content review", "approval", "scheduling", "mcp"]
+  "keywords": [
+    "postbay",
+    "social media",
+    "content review",
+    "approval",
+    "scheduling",
+    "mcp"
+  ]
 }

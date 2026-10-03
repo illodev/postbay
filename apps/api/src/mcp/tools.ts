@@ -149,6 +149,15 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
 
   const zoneOf = async (brandId: string) => (await loadBrand(ctx.db, brandId)).timezone as string;
 
+  /** A campaign of the brand by its id or its name (any case); refused, naming the ones there are, when there is none. */
+  const campaignOf = async (brandId: string, named: string): Promise<string> => {
+    const list = (await brandSvc.listCampaigns(ctx, p, brandId)) as { id: string; name: string }[];
+    const wanted = named.trim().toLowerCase();
+    const c = list.find((x) => x.id === named || x.name.toLowerCase() === wanted);
+    if (!c) throw badRequest('unknown_campaign', msg('mcp.unknownCampaign', { campaign: named }), { campaigns: list.map((x) => x.name) });
+    return c.id;
+  };
+
   /** A time the person said: brand-local "2026-10-06T19:00" (or with a space), or an ISO instant with its zone. */
   const when = (at: string, zone: string): string => {
     const s = at.trim();
@@ -202,13 +211,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
     annotations: read,
   }, run(async (a) => {
     const brand = await brandOf(a.brand);
-    let campaignId: string | undefined;
-    if (a.campaign) {
-      const list = (await brandSvc.listCampaigns(ctx, p, brand.id)) as { id: string; name: string }[];
-      const c = list.find((x) => x.id === a.campaign || x.name.toLowerCase() === a.campaign!.trim().toLowerCase());
-      if (!c) throw badRequest('unknown_campaign', msg('mcp.unknownCampaign', { campaign: a.campaign }));
-      campaignId = c.id;
-    }
+    const campaignId = a.campaign ? await campaignOf(brand.id, a.campaign) : undefined;
     const rows = await pieces.listPieces(ctx, p, brand.id, { state: a.state, q: a.search, campaignId, byAgent: a.by_agent });
     return {
       brand: brand.name, total: rows.length,
@@ -488,7 +491,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
       title: z.string().trim().min(1).max(200),
       kind: z.enum(pieces.KINDS),
       brief: z.string().max(10_000).optional(),
-      campaign: z.string().max(200).optional().describe('Campaign name or id'),
+      campaign: z.string().max(200).optional().describe('Campaign name or id (list_campaigns; create_campaign for a new one)'),
       target_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD'),
       ai_generated: z.boolean().optional().describe('Whether the content is made with AI (it goes out labelled as such)'),
       formats: z.array(z.enum(pieces.FORMATS)).max(6).optional().describe('Variants to add right away, e.g. ["9:16", "1:1"]'),
@@ -496,19 +499,76 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
     annotations: write,
   }, run(async (a) => {
     const brand = await brandOf(a.brand);
-    let campaignId: string | null = null;
-    if (a.campaign) {
-      const list = (await brandSvc.listCampaigns(ctx, p, brand.id)) as { id: string; name: string }[];
-      const c = list.find((x) => x.id === a.campaign || x.name.toLowerCase() === a.campaign!.trim().toLowerCase());
-      if (!c) throw badRequest('unknown_campaign', msg('mcp.unknownCampaign', { campaign: a.campaign }));
-      campaignId = c.id;
-    }
+    const campaignId = a.campaign ? await campaignOf(brand.id, a.campaign) : null;
     const piece = await pieces.createPiece(ctx, p, brand.id, {
       title: a.title, kind: a.kind, brief: a.brief ?? '', campaignId, targetDate: a.target_date ?? null, aiGenerated: a.ai_generated ?? false,
     });
     const variants = [];
     for (const format of a.formats ?? []) variants.push(await pieces.addVariant(ctx, p, piece.id, { format }));
     return { id: piece.id, title: piece.title, kind: piece.kind, brand: brand.name, variants: variants.map((v) => ({ id: v.id, format: v.format })), url: link.piece(piece.id) };
+  }));
+
+  server.registerTool('list_campaigns', {
+    title: 'List campaigns',
+    description: 'The campaigns of a brand, newest first, with their dates and objective, and how many pieces each has.',
+    inputSchema: { brand: brandParam },
+    annotations: read,
+  }, run(async (a) => {
+    const brand = await brandOf(a.brand);
+    const list = (await brandSvc.listCampaigns(ctx, p, brand.id)) as Out[];
+    const counts = await ctx.db.query<{ campaign_id: string; n: number }>(
+      `select campaign_id, count(*)::int as n from piece where brand_id = $1 and campaign_id is not null and discarded_at is null group by campaign_id`, [brand.id],
+    );
+    const n = new Map(counts.map((c) => [c.campaign_id, c.n]));
+    return {
+      brand: brand.name,
+      campaigns: list.map((c) => ({ id: c.id, name: c.name, starts_on: c.starts_on ?? null, ends_on: c.ends_on ?? null, objective: c.objective ?? null, pieces: n.get(c.id as string) ?? 0 })),
+    };
+  }));
+
+  server.registerTool('create_campaign', {
+    title: 'Create a campaign',
+    description: 'Creates a campaign in a brand, to group pieces (anyone who can create pieces can). Check list_campaigns first: a campaign with the same name is refused. Ask the person before creating one: the whole team sees it.',
+    inputSchema: {
+      brand: brandParam,
+      name: z.string().trim().min(1).max(200),
+      starts_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD'),
+      ends_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD'),
+      objective: z.string().max(2000).optional(),
+    },
+    annotations: write,
+  }, run(async (a) => {
+    const brand = await brandOf(a.brand);
+    const existing = (await brandSvc.listCampaigns(ctx, p, brand.id)) as { id: string; name: string }[];
+    const same = existing.find((c) => c.name.toLowerCase() === a.name.toLowerCase());
+    if (same) throw new AppError(409, 'campaign_exists', msg('mcp.campaignExists', { campaign: same.name }), { id: same.id });
+    const c = (await brandSvc.createCampaign(ctx, p, brand.id, { name: a.name, startsOn: a.starts_on ?? null, endsOn: a.ends_on ?? null, objective: a.objective ?? null })) as Out;
+    return { id: c.id, name: c.name, brand: brand.name, starts_on: c.starts_on ?? null, ends_on: c.ends_on ?? null };
+  }));
+
+  server.registerTool('update_piece', {
+    title: 'Edit a piece',
+    description: 'Changes a piece\'s title, brief, campaign, target date or its "made with AI" label, as the person (as in the web, the label cannot be taken off once a version is approved). Only the fields given change; campaign "none" takes it out of its campaign.',
+    inputSchema: {
+      piece_id: uuid('The piece id'),
+      title: z.string().trim().min(1).max(200).optional(),
+      brief: z.string().max(10_000).optional(),
+      campaign: z.string().max(200).optional().describe('Campaign name or id, or "none"'),
+      target_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional().describe('YYYY-MM-DD, or null to clear it'),
+      ai_generated: z.boolean().optional(),
+    },
+    annotations: write,
+  }, run(async (a) => {
+    const row = await ctx.db.one<{ brand_id: string }>('select brand_id from piece where id = $1', [a.piece_id]);
+    if (!row) throw new AppError(404, 'not_found', 'Not found: check the id');
+    const patch: Record<string, unknown> = {};
+    if (a.title !== undefined) patch.title = a.title;
+    if (a.brief !== undefined) patch.brief = a.brief;
+    if (a.target_date !== undefined) patch.targetDate = a.target_date;
+    if (a.ai_generated !== undefined) patch.aiGenerated = a.ai_generated;
+    if (a.campaign !== undefined) patch.campaignId = a.campaign.trim().toLowerCase() === 'none' ? null : await campaignOf(row.brand_id, a.campaign);
+    const piece = (await pieces.updatePiece(ctx, p, a.piece_id, patch)) as Out;
+    return { id: piece.id, title: piece.title, campaign_id: piece.campaign_id ?? null, target_date: piece.target_date ?? null, ai_generated: piece.ai_generated, url: link.piece(a.piece_id) };
   }));
 
   server.registerTool('add_variant', {
@@ -615,6 +675,66 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
   }));
 
   // ───────────────────────────── the calendar ─────────────────────────────
+
+  const uploadFile = z.object({
+    name: z.string().trim().min(1).max(200),
+    mime: z.string().min(3).max(100),
+    bytes: z.number().int().positive(),
+    sha256: z.string().regex(/^[0-9a-fA-F]{64}$/),
+  });
+  const closeFile = z.object({
+    upload_id: z.string().uuid(),
+    kind: z.enum(versions.ASSET_KINDS),
+    position: z.number().int().min(0).max(100).default(0),
+  });
+  /** One item of a batch: its result, or its error, so one refused item does not stop the others. */
+  const each = async <I, R>(items: I[], fn: (item: I) => Promise<R>) => {
+    const out: ({ ok: true } & R | { ok: false; error: { code: string; message: string } })[] = [];
+    for (const item of items) {
+      try {
+        out.push({ ok: true, ...(await fn(item)) });
+      } catch (err) {
+        if (err instanceof AppError) out.push({ ok: false, error: { code: err.code, message: err.text ? render(locale, err.text, err.message) : err.message } });
+        else if (err instanceof ZodError) out.push({ ok: false, error: { code: 'validation_error', message: err.issues.map((i) => i.message).join('; ') } });
+        else throw err;
+      }
+    }
+    return out;
+  };
+
+  server.registerTool('start_uploads', {
+    title: 'Start uploading several versions at once',
+    description: 'start_upload for many variants in one call (up to 50): for a folder of files, a batch of pieces, a whole campaign. Each item answers on its own, with its uploads or its error. Then PUT every file (the postbay-upload skill has a script that sends them all) and call finish_uploads.',
+    inputSchema: { items: z.array(z.object({ variant_id: z.string().uuid(), files: z.array(uploadFile).min(1).max(30) })).min(1).max(50) },
+    annotations: write,
+  }, run(async (a) => ({
+    items: await each(a.items, async (it) => {
+      const ups = await versions.requestUploads(ctx, p, it.variant_id, { files: it.files.map((f) => ({ ...f, resumable: false })) });
+      return { variant_id: it.variant_id, uploads: (ups as Out[]).map((u) => ({ upload_id: u.uploadId, name: u.name, method: u.method, url: u.url, headers: u.headers })) };
+    }),
+    expires_in_seconds: 3600,
+  })));
+
+  server.registerTool('finish_uploads', {
+    title: 'Finish uploading several versions at once',
+    description: 'finish_upload for many variants in one call (up to 50), after their files were sent. Each item answers on its own: the new version, or its error.',
+    inputSchema: {
+      items: z.array(z.object({
+        variant_id: z.string().uuid(),
+        files: z.array(closeFile).min(1).max(30),
+        notes: z.string().max(5000).optional(),
+        resolves_comment_ids: z.array(z.string().uuid()).max(200).optional(),
+      })).min(1).max(50),
+    },
+    annotations: write,
+  }, run(async (a) => ({
+    items: await each(a.items, async (it) => {
+      const v = await versions.closeVersion(ctx, p, it.variant_id, {
+        files: it.files.map((f) => ({ uploadId: f.upload_id, kind: f.kind, position: f.position })), notes: it.notes ?? '', resolves: it.resolves_comment_ids ?? [],
+      });
+      return { variant_id: it.variant_id, id: v.id, number: v.number, state: v.review_state, fingerprint: shortFp(v.fingerprint), url: link.review(v.id) };
+    }),
+  })));
 
   server.registerTool('schedule_publication', {
     title: 'Schedule an approved version',

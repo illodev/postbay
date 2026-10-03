@@ -34,9 +34,10 @@ describe('the tools', () => {
     const r = await rpc(env, as.reader.access, 'tools/list');
     const names = r.body.result.tools.map((t: any) => t.name).sort();
     expect(names).toEqual([
-      'add_comment', 'add_variant', 'add_variant_style', 'approve_version', 'calendar', 'cancel_publication', 'create_piece', 'finish_upload', 'get_piece',
-      'get_version', 'list_accounts', 'list_brands', 'list_comments', 'list_notifications', 'list_pieces', 'move_publication', 'pending_for_me',
-      'remove_variant_style', 'reply_to_comment', 'request_changes', 'resolve_comment', 'schedule_publication', 'start_upload',
+      'add_comment', 'add_variant', 'add_variant_style', 'approve_version', 'calendar', 'cancel_publication', 'create_campaign', 'create_piece',
+      'finish_upload', 'finish_uploads', 'get_piece', 'get_version', 'list_accounts', 'list_brands', 'list_campaigns', 'list_comments',
+      'list_notifications', 'list_pieces', 'move_publication', 'pending_for_me', 'remove_variant_style', 'reply_to_comment', 'request_changes',
+      'resolve_comment', 'schedule_publication', 'start_upload', 'start_uploads', 'update_piece',
     ]);
     const byName = Object.fromEntries(r.body.result.tools.map((t: any) => [t.name, t]));
     expect(byName.list_pieces.annotations.readOnlyHint).toBe(true);
@@ -166,6 +167,48 @@ describe('pieces and uploads', () => {
     // The type and size limits are the web's.
     const pdf = await tool(env, as.producer.access, 'start_upload', { variant_id: variantId, files: [{ name: 'x.mp4', mime: 'video/mp4', bytes: 5 * 1024 ** 3, sha256: sha }] });
     expect(pdf.ok).toBe(false);
+  });
+});
+
+describe('campaigns and many uploads at once', () => {
+  it('creates a campaign once, files a piece in it or out of it, and refuses a campaign that is not there', async () => {
+    const made = await tool(env, as.producer.access, 'create_campaign', { name: 'Otoño', objective: 'Lanzamiento' });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    expect((await tool(env, as.producer.access, 'create_campaign', { name: 'otoño' })).error.code).toBe('campaign_exists');
+    expect((await tool(env, as.reader.access, 'create_campaign', { name: 'Invierno' })).error.code).toBe('forbidden');
+    const { pieceId } = await env.makePiece(env.users.producer);
+    const moved = await tool(env, as.producer.access, 'update_piece', { piece_id: pieceId, campaign: 'OTOÑO', title: 'Reel de otoño' });
+    expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    expect(moved.data).toMatchObject({ campaign_id: made.data.id, title: 'Reel de otoño' });
+    const listed = await tool(env, as.reader.access, 'list_campaigns', {});
+    expect(listed.data.campaigns.find((c: any) => c.id === made.data.id)).toMatchObject({ name: 'Otoño', objective: 'Lanzamiento', pieces: 1 });
+    const missing = await tool(env, as.producer.access, 'update_piece', { piece_id: pieceId, campaign: 'Primavera' });
+    expect(missing.error.code).toBe('unknown_campaign');
+    expect(missing.error.details.campaigns).toContain('Otoño');
+    expect((await tool(env, as.producer.access, 'update_piece', { piece_id: pieceId, campaign: 'none' })).data.campaign_id).toBeNull();
+  });
+
+  it('uploads several versions in two calls, each item answering on its own', async () => {
+    const a1 = await env.makePiece(env.users.producer);
+    const a2 = await env.makePiece(env.users.producer);
+    const files = [randomBytes(128), randomBytes(160)];
+    const fact = (b: Buffer, i: number) => ({ name: `v${i}.mp4`, mime: 'video/mp4', bytes: b.length, sha256: createHash('sha256').update(b).digest('hex') });
+    const started = await tool(env, as.producer.access, 'start_uploads', { items: [
+      { variant_id: a1.variantId, files: [fact(files[0]!, 0)] },
+      { variant_id: a2.variantId, files: [fact(files[1]!, 1)] },
+      { variant_id: '00000000-0000-4000-8000-000000000000', files: [fact(files[1]!, 2)] },
+    ] });
+    expect(started.ok, JSON.stringify(started.error)).toBe(true);
+    expect(started.data.items.map((i: any) => i.ok)).toEqual([true, true, false]);
+    for (const [i, item] of started.data.items.slice(0, 2).entries()) {
+      const up = item.uploads[0]; const url = new URL(up.url);
+      expect((await env.app.inject({ method: 'PUT', url: url.pathname + url.search, headers: up.headers, payload: files[i] })).statusCode).toBe(200);
+    }
+    const done = await tool(env, as.producer.access, 'finish_uploads', { items: started.data.items.slice(0, 2).map((it: any) => ({
+      variant_id: it.variant_id, files: [{ upload_id: it.uploads[0].upload_id, kind: 'video' }], notes: 'Lote',
+    })) });
+    expect(done.ok, JSON.stringify(done.error)).toBe(true);
+    expect(done.data.items.map((i: any) => [i.ok, i.number, i.state])).toEqual([[true, 1, 'in_review'], [true, 1, 'in_review']]);
   });
 });
 
