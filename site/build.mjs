@@ -33,12 +33,145 @@ function netLogo(n) {
     default: return '';
   }
 }
+/** The same logos in one colour, for the strip under the hero. */
+function netMono(n) {
+  const svg = (inner) => `<svg viewBox="0 0 24 24" aria-hidden="true">${inner}</svg>`;
+  if (n === 'linkedin') return svg(`<rect width="24" height="24" rx="4" fill="currentColor"/><path fill="var(--bg)" d="${net.linkedin_in}"/>`);
+  return svg(`<path fill="currentColor" fill-rule="evenodd" d="${net[n]}"/>`);
+}
 const NETWORKS = [['instagram', 'Instagram'], ['facebook', 'Facebook'], ['youtube', 'YouTube'], ['tiktok', 'TikTok'], ['linkedin', 'LinkedIn'], ['x', 'X'], ['threads', 'Threads'], ['pinterest', 'Pinterest'], ['bluesky', 'Bluesky']];
 
 const check = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.4 3 3 6-6.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const points = (list) => `<ul class="points">${list.map((p) => `<li>${check}<span>${esc(p)}</span></li>`).join('')}</ul>`;
 const arrow = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const robot = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8V5M9.5 13h.01M14.5 13h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+const chevron = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const back = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3m4-4L3 8l4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const play = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7.5-4.5z" fill="currentColor"/></svg>';
 const gh = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>';
+
+/** The hero: a review window that plays one round, from a comment to an approval (site.js drives the steps). */
+function heroWindow(t, prefix) {
+  const w = t.hero.win;
+  const p = (f) => `${prefix}assets/img/p/${f}`;
+  const strip = ['roast-1', 'roast-1', 'roast-1', 'roast-2', 'roast-2', 'roast-2', 'roast-2', 'roast-3', 'roast-3', 'roast-3']
+    .map((f) => `<img src="${p(f + '-thumb.jpg')}" alt="" width="96" height="170">`).join('');
+  return `<div class="stage" data-hw aria-hidden="true">
+    <div class="hw">
+      <div class="hw-bar">
+        <span class="hw-crumbs">${back}<span class="muted hide-sm">${w.show}</span><span class="sep hide-sm">/</span><b>${w.piece}</b></span>
+        <span class="hw-ver"><span class="v v1">v1</span><span class="v v2">v2</span>${chevron}</span>
+        <span class="hw-sp"></span>
+        <span class="hw-status hide-sm"><i></i><span class="st st-review">${w.inReview}</span><span class="st st-ok">${w.approved}</span></span>
+        <span class="hw-avs hide-sm"><span class="av av-maya">MO</span><span class="av av-leo">LP</span><span class="av av-agent">${robot}</span></span>
+        <span class="hw-btn hide-sm">${w.requestChanges}</span>
+        <span class="hw-btn hw-approve">${check}${w.approve}</span>
+      </div>
+      <div class="hw-main">
+        <div class="hw-stage">
+          <div class="hw-frame">
+            <img class="fr fr-1" src="${p('roast-1.jpg')}" alt="" width="540" height="960" fetchpriority="high">
+            <img class="fr fr-2" src="${p('roast-2.jpg')}" alt="" width="540" height="960">
+            <img class="fr fr-2b" src="${p('roast-2b.jpg')}" alt="" width="540" height="960">
+            <svg class="hw-draw" viewBox="0 0 100 177.78"><path pathLength="1" d="M45 31.1C60 22.8 92 23.8 98 39.8C103 54.4 80 62.2 64 61.5C46 60.8 33 55.1 35 43.7C36.4 35.9 44 29.5 57 29"/></svg>
+            <span class="hw-pin av av-maya">MO</span>
+          </div>
+          <div class="hw-tl">
+            <div class="hw-ctl">${play}<span class="hw-time"><b data-now>0:00.0</b> / 0:09.2</span></div>
+            <div class="hw-track">
+              <div class="hw-strip">${strip}</div>
+              <span class="mk mk-0 av av-maya" style="left:8.7%">MO</span>
+              <span class="mk mk-1 av av-maya" style="left:37%">MO</span>
+              <span class="hw-head" data-head></span>
+            </div>
+          </div>
+        </div>
+        <div class="hw-side">
+          <div class="hw-tabs"><span class="on">${w.comments}</span><span>${w.details}</span></div>
+          <div class="hw-threads">
+            <div class="th th-0">
+              <div class="th-head"><span class="av av-maya">MO</span><b>${w.maya}</b><span class="faint">${w.ago}</span><span class="th-done">${check}</span></div>
+              <p><span class="tc">0:00.8</span> ${esc(w.first)}</p>
+            </div>
+            <div class="th th-1">
+              <div class="th-head"><span class="av av-maya">MO</span><b>${w.maya}</b><span class="faint">${w.now}</span><span class="th-done">${check}</span></div>
+              <p><span class="tc">0:03.4</span> ${esc(w.comment)}</p>
+              <div class="grow g-work"><div><div class="th-work"><span class="av av-agent">${robot}</span><span>${w.working}</span><span class="dots"><i></i><i></i><i></i></span></div></div></div>
+              <div class="grow g-reply"><div><div class="th-reply">
+                <div class="th-head"><span class="av av-agent">${robot}</span><b class="agent">${w.agent}</b><span class="chip chip-good">${w.fixed}</span></div>
+                <p>${esc(w.reply)}</p>
+              </div></div></div>
+              <div class="grow g-res"><div><div class="th-res">${check}${w.resolved}</div></div></div>
+            </div>
+          </div>
+          <div class="hw-compose"><span class="tc" data-now>0:00.0</span><span>${w.compose}</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="hw-toast">
+      <span class="ok">${check}</span>
+      <div><b>${w.approvedFor} <span class="net net-xs">${netLogo('instagram')}</span> @lumen.coffee</b><span class="muted">${w.by}<span class="hide-sm"> · <code>9b17539dcacb</code></span></span></div>
+    </div>
+  </div>`;
+}
+
+function reviewTiles(t, prefix) {
+  const r = t.review;
+  const p = (f) => `${prefix}assets/img/p/${f}`;
+  const strip = Array.from({ length: 18 }, (_, i) => `<img src="${p(['roast-1', 'roast-2', 'roast-3'][Math.floor(i / 6)] + '-thumb.jpg')}" alt="" width="96" height="170" loading="lazy">`).join('');
+  const caption = (c) => `<div class="tile-cap"><h3>${esc(c.title)}</h3><p>${esc(c.text)}</p></div>`;
+  return `<div class="tiles">
+    <article class="tile tile-wide">
+      <div class="tile-art art-span" aria-hidden="true">
+        <div class="sp-card"><span class="av av-leo">LP</span><div><b>${r.span.who}</b> <span class="tc">0:02.1 – 0:04.8</span><p>${esc(r.span.comment)}</p></div></div>
+        <div class="sp-track">
+          <div class="sp-strip">${strip}</div>
+          <span class="sp-range"></span>
+          <span class="sp-head"></span>
+        </div>
+        <div class="sp-scale">${[0, 2, 4, 6, 8].map((n) => `<span style="left:${(n / 9.2) * 100}%">0:0${n}</span>`).join('')}</div>
+      </div>
+      ${caption(r.span)}
+    </article>
+    <article class="tile">
+      <div class="tile-art art-compare" aria-hidden="true">
+        <div class="seg"><span>${r.compare.side}</span><span class="on">${r.compare.wipe}</span></div>
+        <div class="wipe-wrap">
+          <span class="wipe-tag">v1</span>
+          <div class="wipe">
+            <img src="${p('roast-2.jpg')}" alt="" width="540" height="960" loading="lazy">
+            <img class="wipe-top" src="${p('roast-2b.jpg')}" alt="" width="540" height="960" loading="lazy">
+            <span class="wipe-line"><i></i></span>
+          </div>
+          <span class="wipe-tag">v2</span>
+        </div>
+      </div>
+      ${caption(r.compare)}
+    </article>
+    <article class="tile">
+      <div class="tile-art art-cover" aria-hidden="true">
+        <div class="seg seg-3"><span class="c1">Reels</span><span class="c2">TikTok</span><span class="c3">Shorts</span><i class="seg-on"></i></div>
+        <div class="cover">
+          <img src="${p('roast-1.jpg')}" alt="" width="540" height="960" loading="lazy">
+          <div class="ghost g-reels"><b class="g-title">Reels</b><span class="g-col"><i></i><i></i><i></i><i></i></span><span class="g-cap"><i class="g-av"></i><i></i><i class="short"></i></span></div>
+          <div class="ghost g-tiktok"><span class="g-tabs"><i></i><i></i></span><span class="g-col"><i class="g-av"></i><i></i><i></i><i></i><i></i></span><span class="g-cap"><i></i><i class="short"></i></span></div>
+          <div class="ghost g-shorts"><span class="g-col"><i></i><i></i><i></i><i></i></span><span class="g-cap"><i class="g-av"></i><i class="g-sub"></i><i class="short"></i></span></div>
+        </div>
+      </div>
+      ${caption(r.cover)}
+    </article>
+    <article class="tile tile-wide">
+      <div class="tile-art art-pins" aria-hidden="true">
+        <div class="slides">
+          ${['latte-1', 'latte-2', 'latte-3', 'latte-4'].map((f) => `<div class="slide"><img src="${p(f + '.jpg')}" alt="" width="540" height="675" loading="lazy"></div>`).join('')}
+          <span class="pin pin-a" style="--x:16.5%;--y:50%"><i class="av av-sam">SR</i><span class="bubble">${esc(r.pins.a)}</span></span>
+          <span class="pin pin-b" style="--x:62%;--y:50%"><i class="av av-leo">LP</i><span class="bubble">${esc(r.pins.b)}</span></span>
+        </div>
+      </div>
+      ${caption(r.pins)}
+    </article>
+  </div>`;
+}
 
 function page(t, prefix) {
   const img = (name) => `${prefix}assets/img/${name}-${t.img}.jpg`;
@@ -76,45 +209,39 @@ function page(t, prefix) {
     </nav>
     <div class="nav-end">
       <a class="lang" href="${t.switchTo.href}" hreflang="${other}" lang="${other}">${t.switchTo.label}</a>
-      <a class="btn btn-ghost" href="${REPO}">${gh}<span>${t.nav.github}</span></a>
+      <a class="btn btn-light btn-sm" href="${REPO}">${gh}<span>${t.nav.github}</span></a>
     </div>
   </div>
 </header>
 
 <main>
 <section class="hero">
-  <div class="wrap hero-text">
-    <p class="eyebrow">${t.hero.eyebrow}</p>
-    <h1>${esc(t.hero.title)}</h1>
-    <p class="lead">${esc(t.hero.lead)}</p>
-    <div class="cta">
-      <a class="btn btn-primary" href="#self-host">${t.hero.primary}${arrow}</a>
-      <a class="btn" href="${REPO}">${gh}${t.hero.secondary}</a>
+  <div class="wrap">
+    <h1>${t.hero.lines.map(esc).join('<br class="br"> ')}</h1>
+    <div class="hero-row">
+      <p class="lead">${esc(t.hero.lead)}</p>
+      <div class="hero-actions">
+        <a class="btn btn-light" href="#self-host">${t.hero.primary}</a>
+        <a class="quiet" href="${REPO}">${t.hero.quiet}${arrow}</a>
+      </div>
     </div>
   </div>
-  <div class="wrap hero-shot">
-    <div class="window"><img src="${img('review')}" alt="" width="2400" height="1500" fetchpriority="high"></div>
-    <div class="float f-comment" aria-hidden="true"><span class="av av-maya">MO</span><div><b>${t.hero.cards.comment.who}</b> <span class="tc">0:03.4</span><p>${esc(t.hero.cards.comment.text)}</p></div></div>
-    <div class="float f-agent" aria-hidden="true"><span class="av av-agent"><svg viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8V5M9.5 13h.01M14.5 13h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><div><b>${t.hero.cards.agent.who}</b> <span class="chip chip-good">${t.lang === 'en' ? 'Fixed' : 'Arreglado'}</span><p>${esc(t.hero.cards.agent.text)}</p></div></div>
-    <div class="float f-approved" aria-hidden="true">${check}<span>${esc(t.hero.cards.approved)}</span></div>
-  </div>
-  <div class="wrap networks">
-    <span>${t.networks}</span>
-    <ul>${NETWORKS.map(([id, name]) => `<li title="${name}"><span class="net">${netLogo(id)}</span><span class="sr">${name}</span></li>`).join('')}</ul>
+  <div class="wrap hero-stage">${heroWindow(t, prefix)}</div>
+  <div class="wrap strip">
+    <ul>${NETWORKS.map(([id, name]) => `<li><span class="mono">${netMono(id)}</span><span class="sr">${name}</span></li>`).join('')}</ul>
+    <p>${t.networks}</p>
   </div>
 </section>
 
-<section id="features" class="wrap features">
-  <article class="feature" data-reveal>
-    <div class="feature-text">
-      <p class="kicker">${t.features.review.kicker}</p>
-      <h2>${esc(t.features.review.title)}</h2>
-      <p>${esc(t.features.review.text)}</p>
-      ${points(t.features.review.points)}
-    </div>
-    <div class="feature-media"><div class="window"><img src="${img('pieces')}" alt="" loading="lazy" width="2400" height="1500"></div></div>
-  </article>
+<section id="features" class="wrap section review">
+  <header class="sec-head" data-reveal>
+    <h2>${t.review.lines.map(esc).join('<br class="br"> ')}</h2>
+    <div><p>${esc(t.review.text)}</p><a class="quiet" href="${REPO}/blob/main/docs/review.md">${t.review.link}${arrow}</a></div>
+  </header>
+  <div data-reveal>${reviewTiles(t, prefix)}</div>
+</section>
 
+<section class="wrap features">
   <article class="feature reverse" data-reveal>
     <div class="feature-text">
       <p class="kicker">${t.features.approve.kicker}</p>
