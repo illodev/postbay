@@ -1,223 +1,49 @@
-<p><img src="docs/brand/postbay-logo-light.svg#gh-light-mode-only" alt="Postbay" height="48"><img src="docs/brand/postbay-logo-dark.svg#gh-dark-mode-only" alt="Postbay" height="48"></p>
+<p align="center">
+  <img src="docs/brand/banner.jpg" alt="Postbay: review, approve and publish your social content, with your team and your AI agents" width="100%">
+</p>
 
 # Postbay
 
-A self-hosted studio that connects three things that usually live apart: whoever produces the content, the team that
-reviews it, and the networks where it goes out. Producers upload videos, carousels, posts, stories and PDFs. The team
-comments on the exact spot, approves each version for specific accounts and dates, and the app keeps the whole trail.
+Postbay is a self-hosted studio for social content. Whoever makes it (a designer, an agency or an AI agent) uploads it;
+your team reviews it on the exact frame and approves it for specific accounts; Postbay puts it on the calendar and
+publishes it, or tells a person when it is their turn to post.
 
-It does not generate content, it orchestrates it. The producer can be an AI agent or a person: to the app both are the
-same kind of client (a producer token or a signed-in user). It serves one brand or several, and nothing in it is
-specific to any client: names, time zones, languages and review rules are configuration, never code.
+It does not generate content: it is where content gets checked, agreed and sent out. One brand or many, in Spanish or
+English, on your own server.
 
-> **Status: the four phases of the plan are done, plus a fifth that the plan did not have.** Review, approval, calendar and assisted publishing work end to end (phase 1); the app can
-> publish by itself to Instagram, Facebook Pages and YouTube (phase 2); a comment can become a new version without
-> anyone's hands: signed webhooks, an agent runner with safeguards, and automatic checks (phase 3); and it now also
-> publishes to TikTok, LinkedIn, X, Threads, Pinterest and Bluesky, reads the numbers each post earned, and gives prizes
-> to people who comment a keyword (phase 4). Phase 5 makes it ready for a first real run and for a team: a command that checks
-> a real setup, single sign-on and a second factor, Slack and push notifications, subtitles beside the video, big uploads that
-> resume, and YouTube watch time. **Phases 2, 4 and 5 were built and tested against stand-ins for the networks, the identity
-> provider, Slack and the push services that I wrote from their documentation: none of them was reachable, so a first run with
-> real accounts is still to do for every one of them, and TikTok in particular may refuse an app like this. Phase 3 was proven in
-> a browser with a scripted agent and with real Claude Code on a few simple requests.** See [docs/phase-1.md](docs/phase-1.md),
-> [docs/phase-2.md](docs/phase-2.md), [docs/phase-3.md](docs/phase-3.md), [docs/phase-4.md](docs/phase-4.md) and
-> [docs/phase-5.md](docs/phase-5.md) for exactly what is done, what is left out, and the decisions taken where the spec left room.
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/review.jpg" alt="Reviewing a video: comments on the timeline, the agent's new version, and what changed"></td>
+    <td width="50%"><img src="docs/screenshots/pieces.jpg" alt="All the pieces of a brand, with their state, version and comments"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/calendar.jpg" alt="The calendar with scheduled posts and free weekly slots"></td>
+    <td width="50%"><img src="docs/screenshots/home.jpg" alt="For you: what waits for your approval, and the team's activity"></td>
+  </tr>
+</table>
 
-## What phase 1 does
+## What it does
 
-- **Pieces, variants and versions.** One piece goes out in several shapes (9:16, 4:5, 1:1, 16:9, carousel, document).
-  Each variant has numbered, immutable versions made of one or more files.
-- **Review where it happens.** A viewer for video (frame by frame, comments on a moment or a span, marks on the
-  timeline), images and carousels (a point or an area), and PDFs (a page and an area). Every comment on a video keeps the
-  frame it points at. Versions can be compared side by side, with synchronised playback, or flipped.
-- **Approval that means something.** An approval is tied to the sha256 fingerprint of the files of one version. Change a
-  byte and it stops counting. Nobody can approve what they uploaded, nothing is approved with open comments, and a brand
-  can require several approvers and a checklist.
-- **Calendar.** Month, week and list views per brand and network, fixed weekly slots that show up as requests for
-  content, blocked dates, drag to move, and a pause button that freezes everything scheduled.
-- **Assisted publishing.** At the scheduled time the approvers are told, and the app has the files, text and first
-  comment ready to copy. A person posts and records it here, with the link.
-- **Roles per brand.** Admin, approver, reviewer, producer, reader. The same person can hold different roles in
-  different brands, and nothing crosses from one workspace to another.
-- **Audit log** that can only be added to, and **notifications** in the app and by email.
+**Review where it happens.** Comment on a moment or a span of a video, a point or an area of an image, a page of a PDF,
+and draw on the frame. Compare two versions side by side or with a wipe. See what each network's own interface will cover
+before it goes out.
 
-## What phase 2 adds
+**Approvals that mean something.** An approval is bound to the exact files of a version: change one byte and it no longer
+counts. Nobody approves their own upload, open comments block an approval, and a brand can ask for several approvers and a
+checklist.
 
-- **Connect accounts.** Sign in with Meta or Google from *Settings → Accounts*, choose which Pages, Instagram accounts
-  and channels this brand publishes to, and reconnect or disconnect later. Tokens are sealed with AES-256-GCM.
-- **Publish by itself.** A connected account is published to by a worker: it prepares the post shortly before the hour
-  (converting the file only when the network would not take it as it is), publishes at the hour, then checks the post is
-  really live. Facebook and YouTube hold the post themselves until the hour, so those go out even if the app is down.
-- **Failures with a plan.** Revoked connection, rate limit, refused file, temporary error, unsupported content and a
-  missed hour each have their own handling, and every attempt is on record. A failed post can be tried again or handed to
-  a person.
-- **Per-network editing.** The schedule dialog says whether the app or a person will publish, shows each network's limits
-  next to the text, what the feed shows before "more", and what would block publishing. The review screen can draw what
-  each network's own interface covers over the picture.
-- **YouTube before Google's audit.** Uploads are private until the project passes the audit; the app treats that as a
-  state, tells the team, and lets an admin flip the account once it passes.
+**Plan and publish.** A calendar per brand with weekly slots, blocked dates and a pause button. Postbay publishes by itself to
+Instagram, Facebook, YouTube, TikTok, LinkedIn, X, Threads, Pinterest and Bluesky, or gets the files, text and first comment
+ready for a person to post. Afterwards it reads the numbers each post earned.
 
-## What phase 3 adds
+**Made for AI agents, safely.** Signed webhooks and an agent runner turn a request for changes into a new version, with a
+limit of rounds and a budget per piece and per month. An agent can upload and reply; it never approves.
 
-- **Signed webhooks.** *Settings → Webhooks*: subscribe an address to events (changes requested, approved, rejected, a
-  comment, an empty slot, a post published or failed). Every delivery is signed (HMAC-SHA256, a secret per webhook, shown
-  once), carries a unique id, and is retried with growing waits for up to 24 hours. Every attempt can be inspected and sent
-  again.
-- **The agent runner** ([apps/runner](apps/runner/README.md)): a separate program that turns a request for changes into a new
-  version. It prepares a workspace with the comments, the frame each one points at, the last version and what each network
-  accepts; runs your agent's command (Claude Code, for example) on a template you write per brand; checks the result (length,
-  aspect ratio, loudness, weight, text under a network's interface); uploads it; and replies to every comment.
-- **Safeguards the studio enforces**, so no runner can skip them: a round cap per piece (3 by default, then a person), budgets
-  per piece and per month (the agent does not start until both are set), a longest run, one run per piece, comments marked
-  *only people* that the agent cannot answer or resolve, and a token that can never approve (nor schedule, unless the brand allows
-  it to schedule what people approved).
-- **A ledger.** Every run, its cost and what it did, in *Settings → Agent* and on the piece page, with the month's spending
-  against its budget. Approvers and admins are told when a piece goes to a person.
-- **Pieces made with code.** A piece can say where its project lives (a folder of code and material a tool renders into the video). The
-  agent then changes the project and renders it again, in a git worktree and branch of the piece's own, and the new version names the
-  commit it came from. The runner has [its own Docker image](apps/runner/README.md#running-the-runner-on-any-machine), with Claude Code,
-  Chromium and a rendering engine next to it.
-- **Empty slots ask for content.** A slot still empty a few days before its date is announced, with the campaign's brief, so an
-  agent can fill it.
+**Use it from Claude.** Postbay is an [MCP](https://modelcontextprotocol.io) server: ask Claude what is pending for you, leave a
+comment, upload a version or schedule an approved post. Claude signs in as you, with your role; no keys to copy.
 
-## What phase 4 adds
-
-- **Six more networks.** Threads, X, LinkedIn, Pinterest and TikTok connect through their sign-in pages; Bluesky with a handle and an
-  app password. Each declares the settings it needs (who can see a TikTok post, alt text, a Pinterest link…) and the schedule dialog
-  asks for them. A network that holds posts back until it approves the app (TikTok, Pinterest, YouTube) is shown as *Private*, in its
-  own words, until an admin says it has.
-- **Results.** Each post is read 1 hour, 1 day, 7 days and 28 days after it goes live (a story: 1, 6 and 22 hours). *Results* shows
-  each network on its own and never adds networks together.
-- **Prizes for commenting.** A post can carry a prize: whoever comments the keyword gets a file or a link by private message on
-  Instagram and Facebook (a public page on the other networks). Switched on per brand, with a confirmation that the post says the reply
-  is automatic, Meta's signed webhook, data kept for as short a time as you set, and erasing a person on request or when Meta says so.
-
-## What phase 5 adds
-
-- **A way to check a real setup.** `npm run check` looks at the server (addresses, keys, ffmpeg, the LinkedIn version) and at every
-  connected account (is the token accepted, were all the permissions granted, can the numbers be read), and says what to fix. It
-  can make one real test post per account, and write a transcript of everything it sent with the secrets removed, so a disagreement
-  with a real network can be reported. The same read-only checks are buttons in *Settings → Accounts*.
-- **Signing in safely.** Single sign-on with any OpenID Connect provider (Google Workspace, Microsoft Entra), for people who already
-  exist; and an authenticator app with recovery codes, required of admins and approvers in production.
-- **Slack and push.** A brand posts chosen events to a Slack channel once for the team; each person chooses what they get by email
-  and by push in each browser they turned it on in.
-- **Review polish.** Subtitle files are shown beside the video, the line being said is marked, and a comment can be written on a line.
-  Files of 64 MB and more are sent in pieces that resume after a dropped connection or a closed tab. With one setting on, YouTube watch
-  time appears in the results.
-
-## What came after the phases
-
-- **Deactivating a member.** Besides removing someone, an admin can deactivate them in a brand and reactivate them later. While
-  deactivated they cannot open the brand (and are told why), are told nothing about it, and the API tokens they made for it are revoked
-  (and stay revoked). Everything they did keeps their name. The member list says who deactivated them and when.
-- **Scheduling after approval.** A piece made for a slot (an agent filling an empty slot makes one) is scheduled at that slot when it is
-  approved, unless the approver unticks it; the approval dialog can say beforehand what will happen. A brand can let the studio put
-  approved versions into its free weekly slots by itself, and can let the agent schedule what is approved. Always after a person's
-  approval of that very version, and every post says who scheduled it.
-- **Prizes from the studio.** A prize can be a piece of the studio (the recommended kind): whoever downloads it gets the main file of
-  the piece's latest approved version at that moment.
-
-[docs/after-the-phases.md](docs/after-the-phases.md) has the details and the decisions taken.
-
-## Using Postbay from Claude (MCP)
-
-Someone on the team can ask an AI assistant "what is pending for me to review?", "upload this version" or "schedule the approved reel
-for Tuesday at 19:00", and the assistant does it in Postbay **as that person, with their role in each brand**, exactly as the web would
-let them. Postbay is a remote [MCP](https://modelcontextprotocol.io) server (Streamable HTTP) at **`$APP_URL/api/mcp`**; the address is
-also in *Settings → Assistants (MCP)* and in *Your account*, with a copy button.
-
-**Nobody handles a key.** The assistant registers itself, sends the person to Postbay to sign in with their own account (the same sign-in
-as the web: emailed link, single sign-on, the development sign-in, and the second factor where it applies), and the person says which
-assistant it is and which of their brands it may use. Producer tokens stay what they were: for the agent runner only.
-
-### Adding it
-
-- **claude.ai or Claude Desktop**: *Settings → Connectors → Add custom connector*, give it a name ("Postbay") and the address
-  `https://your-postbay.example/api/mcp`. Leave the OAuth client id and secret empty: Claude registers itself. Click *Connect*, sign in
-  to Postbay and allow it. These connect from Anthropic's servers, so the address has to be public and served over https.
-- **Claude Code**: `claude mcp add --transport http postbay https://your-postbay.example/api/mcp`, then `/mcp` in a session and
-  *Authenticate*: a browser opens on the same consent page. Claude Code connects from your own machine, so a local Postbay works too.
-
-The consent page shows the assistant's name and, above all, **the host it will send the answer to** (the one thing a client cannot make
-up; `claude.ai` for claude.ai and Claude Desktop, `localhost:…` for Claude Code, with a warning that any program on the computer could use
-such an address). The person picks the brands; with one brand there is nothing to pick.
-
-### The tools
-
-Each takes the brand by name or id where it matters, and leaves it out when the person allowed only one. Every result carries `url`
-links to the same thing in the web app, times in the brand's zone (`at_local`) and in UTC.
-
-| Tool | What it does |
-| --- | --- |
-| `list_brands` | The brands this connection can use: the person's role, the zone, whether it is paused, the approval rules (how many approvals, the checklist), whether approving from an assistant is on, and the brand's variant styles |
-| `list_pieces` | Pieces, newest first, filtered by state, campaign, made by the agent or not, and words in the title; each with its latest version and what is scheduled |
-| `get_piece` | A piece with its variants, every version (number, state, fingerprint, open comments) and its publications |
-| `get_version` | One version: files, fingerprint, who uploaded it, the decisions on it, the checklist, the accounts and what approving it would schedule |
-| `pending_for_me` | Versions waiting for the person's decision, open comments on their uploads and replies to their comments, and publications that failed, are on hold or wait for a confirmation |
-| `list_comments` | The threads of a version (and those still open from earlier versions), each saying where it points in words: "from 0:03.5 to 0:05", "page 2, an area in the top-right…", a subtitle line |
-| `calendar` | Publications, free weekly slots and blocked days between two dates (the next 14 days by default) |
-| `list_accounts`, `list_notifications` | The brand's social accounts; the person's latest notifications |
-| `add_comment`, `reply_to_comment`, `resolve_comment` | Comment at a moment or span of a video, on a page or area of an image, carousel or PDF, or in general; reply; resolve |
-| `create_piece`, `add_variant` | A new piece (optionally with its first formats), or another format of one; a variant's style must be one of the brand's |
-| `add_variant_style`, `remove_variant_style` | Add a style to the brand's list (at a position) or take one off it; admins only, as in Settings → General. Variants that have a removed style keep it |
-| `start_upload`, `finish_upload` | A new version in two steps, see below |
-| `schedule_publication` | Schedule an **approved** version on an account it was approved for, at `YYYY-MM-DDTHH:mm` in the brand's time; `dry_run` says first how it would go out and what would stop it |
-| `move_publication`, `cancel_publication` | Move or edit, or cancel, a scheduled publication |
-| `approve_version`, `request_changes` | Decide on a version, only where the brand allows it (below) |
-
-**Uploading.** Postbay cannot read the person's disk and does not fetch files from addresses it is given (that would let anyone make the
-server request any address). It works as the web does: `start_upload` takes each file's name, type, exact size and sha256 and answers with
-a signed URL per file; the assistant sends the bytes there with `PUT` (storage refuses any byte that differs from what was declared) and
-calls `finish_upload`, which re-reads what was stored and closes the version. The limits are the web's: video, images, PDF, subtitles and
-covers, up to 4 GB each. This needs an assistant that can read local files and make HTTP requests, such as Claude Code; claude.ai cannot
-upload files this way.
-
-### Approving from an assistant
-
-Off unless an admin turns on **"Permitir aprobar desde asistentes (MCP)"** in *Settings → Assistants (MCP)* for the brand. While it is
-off, `approve_version` and `request_changes` refuse (`assistant_approval_off`) and say an admin can turn it on there. While it is on:
-
-- they work only for people whose role already can (approving: an approver or admin; requesting changes: a reviewer and up), with every
-  rule of the web: never one's own upload, never with open comments, the checklist confirmed item by item, the approval bound to the
-  version's fingerprint;
-- the assistant has to say back what is being decided on, in `confirm`: the piece (title or id), the version number and the fingerprint as
-  the web shows it (its first 12 characters, or all of it). If it is not the very version, nothing happens (`confirmation_mismatch`, with
-  what the version actually is, so the assistant can ask the person again).
-
-Nothing changes about publishing: only what a person approved goes on the calendar, through the same checks as the web.
-
-### What is kept, and what can be undone
-
-- **Everything is the person's, via the assistant.** Every change goes through the same services as the web and is in the audit log as
-  the person, with `via: { channel: "mcp", client_id, client_name }`. The activity on *For you* says "vía Claude" (or the assistant's
-  name), and webhook payloads name it in the actor's `via`.
-- **Disconnecting works at once, from either side.** The person disconnects an assistant in *Your account*; an admin disconnects someone's
-  assistant from the brand in *Settings → Assistants (MCP)* (if it had other brands, it keeps those). Either way its tokens stop working
-  on the next request. A member deactivated in a brand loses it through the assistant at once too, and gets it back if reactivated, as in
-  the web.
-- **Tokens.** Access tokens last 30 minutes; refresh tokens 30 days and are used once (each refresh gives a new one, and one used twice
-  ends the whole connection). Codes last two minutes and work once. Client secrets, codes and tokens are stored only as their sha256. A
-  token is valid only at `/api/mcp` and never for the rest of the API; the rest of the API never accepts it, nor a cookie at `/api/mcp`.
-- **The OAuth details**, for whoever checks them: protected-resource metadata (RFC 9728) at
-  `/.well-known/oauth-protected-resource/api/mcp` (and at the root), authorization-server metadata (RFC 8414) at
-  `/.well-known/oauth-authorization-server`, dynamic client registration (RFC 7591) at `/api/mcp/oauth/register`, the authorization code
-  flow with PKCE (S256 only, required), exact redirect URIs (https, or http on localhost), `state` returned as given and `iss` added
-  (RFC 9207), resource indicators (RFC 8707), refresh rotation and revocation (RFC 7009) at `/api/mcp/oauth/revoke`. The consent answer
-  carries a nonce made for that person and that request. What a client calls is open to any origin without credentials (CORS), for
-  browser-based clients; the web's own API, cookies and Content-Security-Policy are unchanged. Registration, the token endpoint and the
-  consent are rate limited per address, the MCP endpoint per connection.
-- In development Vite also proxies `/.well-known` to the API, so `http://localhost:5173/api/mcp` works with Claude Code.
-
-## Languages
-
-The studio speaks **Spanish** (the default) **and English**. What the API says while answering (a check's result, a scheduling issue,
-an error) follows the request's `Accept-Language` (`en` and its variants for English, anything else for Spanish). What it keeps to be read
-later (why a post is on hold or failed, the attempt history, why a prize was not sent, the studio's note on an agent run) is kept as a code
-next to the English, and read in each reader's language; rows from before keep their English. Emails, Slack and push go in the person's
-own language if they chose one (`PUT /api/notifications/locale`), otherwise in the brand's (its *Language* setting; Slack always in the
-brand's). The words are in [`apps/api/src/i18n/messages`](apps/api/src/i18n/messages), both languages side by side. What a network says
-in its own words, and the agent's own notes, are passed on as they came.
+**Built for a team.** Roles per brand (admin, approver, reviewer, producer, reader), several brands per workspace, single
+sign-on and a second factor, an audit log that can only grow, and notifications in the app, by email, on Slack and as push.
 
 ## Quick start
 
@@ -225,192 +51,40 @@ You need Node 22, PostgreSQL 16 and ffmpeg.
 
 ```sh
 npm install
-cp .env.example .env                      # the dev scripts read it; edit DATABASE_URL and SECRET
-createdb estudio                          # and point DATABASE_URL at it
-npm run bootstrap -- --workspace "Acme" --brand "Acme Spain" --timezone Europe/Madrid --admin you@example.com
+cp .env.example .env            # set DATABASE_URL and SECRET
+createdb estudio                # the database DATABASE_URL points at
+npm run bootstrap -- --workspace "Acme" --brand "Acme" --timezone Europe/Madrid --admin you@example.com
 
-npm run dev:api                           # http://localhost:3000, applies migrations on start
-npm run dev:web                           # http://localhost:5173, proxies /api and /media to the API
+npm run dev:api                 # http://localhost:3000, applies migrations on start
+npm run dev:web                 # http://localhost:5173
 ```
 
-Set `AUTH_DEV_LOGIN=true` to sign in with just an email while developing; otherwise sign-in links are emailed (or, outside
-production, written to the server log when `SMTP_URL` is not set). Dev sign-in is ignored when `NODE_ENV=production`.
+Set `AUTH_DEV_LOGIN=true` in `.env` to sign in with just your email while you try it out. Connecting real social accounts
+needs each network's developer app: see [Networks](docs/networks.md).
 
-For a single-origin run, the way production works:
+## Running it for real
 
-```sh
-npm run build
-WEB_DIST=apps/web/dist APP_URL=http://localhost:3000 MEDIA_URL=http://localhost:3000 node apps/api/dist/server.js
-```
+[`deploy/`](deploy) has a Docker Compose setup with PostgreSQL, MinIO, the app, a worker and Caddy for TLS. The steps, the
+media domain the networks download files from, and the agent runner's own image are in [Deploying](docs/deploying.md); every
+setting is in [Configuration](docs/configuration.md).
 
-## How it is built
+## Documentation
 
-```
-apps/api    Node 22, TypeScript, Fastify, PostgreSQL (plain SQL), zod
-  src/domain      the rules, with no I/O: roles, fingerprint, review states, anchors, time zones
-  src/services    one module per concern; every write is a transaction that also writes the audit log
-  src/routes      thin HTTP layer
-  src/storage     signed-URL storage: local disk for development, S3-compatible (MinIO, S3, R2) for real use
-  src/connectors  one connector per network behind a common interface (Instagram, Facebook, YouTube, TikTok, LinkedIn, X, Threads, Pinterest, Bluesky), file profiles, validators
-  src/i18n        what the API says to people, in Spanish and English (the request's language, texts kept as codes)
-  src/worker.ts   the queue (pg-boss): wakes the publisher and delivers webhooks; all state lives in ordinary rows
-  src/net.ts      the address policy for webhooks (checked after DNS resolution)
-  src/migrations  SQL; the database itself refuses edits to versions, files, approvals and the audit log
-apps/web    React, Vite, TanStack Query; plain CSS, light and dark, works on a phone
-apps/runner Node, TypeScript: the agent runner. Listens to webhooks, runs the agent's command, checks and uploads
-e2e         real-browser tests: phase 1's flow, phase 2's publishing against fake networks, phase 3's agent loop, phase 4's networks, results and prizes, phase 5's sign-in and notifications
-deploy      Docker Compose with PostgreSQL, MinIO, Caddy (TLS), the app and a worker; deploy/runner: the agent runner's own image
-```
-
-Files never pass through the app: the producer asks for signed URLs and uploads straight to storage, then closes the
-version with each file's sha256. The app re-reads what was stored and refuses anything that does not match what was
-declared.
-
-### The rules that hold everywhere
-
-| Rule | Where it is enforced |
+| | |
 | --- | --- |
-| A version cannot change after it is created | database trigger, plus no code path edits it |
-| A version's files, approvals, the record of when it reached its approval, the attempt log and the audit log are append-only | database triggers (also against `TRUNCATE`) |
-| An approval counts only for the exact files it was given for | fingerprint recomputed from the file records, and each stored object's size and sha256 read back from storage, on every approve, schedule and publish (`services/versions.ts`) |
-| What goes out with the files (the title, the AI label) is what was approved; a producer can add the AI label but never take it away once a version is approved | the approval records both, the publication takes them from it (`services/approvals.ts`, `services/publications.ts`, `services/pieces.ts`) |
-| Nobody approves their own upload, whatever their role. What a producer token uploads is the token's, not its maker's: the version and the approval's record name both | `services/approvals.ts` |
-| No approval with open comments, an incomplete checklist or no accounts | `services/approvals.ts` |
-| A new version voids the previous approval and puts anything scheduled on hold | `services/versions.ts` |
-| Only what is approved, for the accounts approved, can be scheduled, even while a new version is being closed | `services/publications.ts` (the variant's lock) |
-| Once a version is approved or anything is scheduled, only an approver can discard the piece | `services/pieces.ts` |
-| A producer token never approves or manages anything, and never cancels or moves a post. It schedules only where the brand lets the agent schedule what is approved, from inside an agent run on that piece | role resolution in `auth/principal.ts`, `services/publications.ts` |
-| Whatever schedules without a person at that moment (the approval of a piece made for a slot, filling free slots, the agent) schedules only a version that is approved, for an account it was approved for, through every check a person's scheduling goes through; each post says who scheduled it (`scheduled_by`: person, auto or agent) | `services/scheduling.ts`, `services/publications.ts` |
-| An approver can keep a version out of all of that (`autoSchedule: false`), and the studio never fills a slot with something approved before it was asked to, or that a person cancelled | `services/approvals.ts`, `services/scheduling.ts` |
-| A slot occurrence is filled once | a unique index, and a lock per brand while free slots are filled |
-| A producer token stops working when the admin who made it leaves the brand, stops being its admin or is deactivated in it | `services/auth.ts`, `services/brand.ts` |
-| A member deactivated in a brand cannot open it, is notified of nothing in it, and keeps their name on everything they did; nobody deactivates themselves, and a brand always keeps an active admin (also on removal and demotion) | `auth/principal.ts`, `services/brand.ts`, `services/notify.ts` |
-| Times are stored in UTC with the brand's IANA zone, so 19:00 stays 19:00 after a clock change | `domain/time.ts`, tested across both clock changes |
-| The approval is re-checked from the stored files right before anything is sent to a network | `services/publisher.ts` |
-| A post that would go out after its hour plus the tolerance is not sent late. Before any repeated send the network is asked, without sending anything, whether it already has the post: if it does the send is finished from it, never made again; if it does not, past the tolerance nothing is sent | `services/publisher.ts`, each connector's `find` |
-| While a brand is paused or a date is blocked nothing is prepared or published; what a network holds is taken down, and prepared again afterwards (or handed to a person if its hour passed). Pausing, blocking and unblocking wake the posts concerned at once | `services/publisher.ts`, `services/brand.ts`, the worker's sweep |
-| A post that depends on another is not prepared before that one is out, and is held if it will not go out | `services/publisher.ts`, `services/publications.ts` |
-| Whatever a network holds for a post that is cancelled, held or failed is taken down, also while it is still being prepared | `services/publisher.ts`, `services/publications.ts`, `services/versions.ts` |
-| One worker at a time per post: its lease is renewed while it works and every write it makes is fenced by it | `services/publisher.ts` |
-| Network tokens are sealed, bound to their account, and never returned, logged or stored in the attempt history | `crypto.ts`, `connectors/http.ts` |
-| An event is written in the same transaction as the change it describes | `services/events.ts`, and the publisher's own steps |
-| The request log never holds a secret from a URL: query values (sign-in links, OAuth and sign-on codes and states, signed media) and prize links are redacted | `app.ts` |
-| A webhook never reaches cloud metadata or link-local addresses, and in production only public ones over https (unless allowed) | `net.ts` |
-| The agent cannot start without both budgets, past its rounds, over a budget (counting what runs in progress were given), or on a piece that already has a run. A run that only schedules what is approved (`version.approved`) is not a round | `services/agent.ts`, a unique index |
-| A producer token uploads a version only inside a run it started on that piece (never one that only schedules), and no run outlives its longest time | `services/versions.ts`, `services/agent.ts` |
-| A prize made from a piece hands out only the latest approved version of it, and nothing once the piece is discarded | `services/prizes.ts` |
-| A brand's unfinished big uploads are capped (`STAGING_MAX_GB_PER_BRAND`), and dropped three days after they began | `services/resumable.ts`, `services/versions.ts` |
-| A text kept to be read later is kept as a code beside its English; a change to the English without a code drops the stale translation | `src/i18n`, a database trigger (migration 012) |
-| An agent token cannot answer, resolve or claim to fix a comment marked for people only | `services/comments.ts`, `services/versions.ts` |
-| An assistant (MCP) acts as the person who connected it, with their role, only in the brands they chose, and approves or requests changes only where the brand allows it and after saying back the version's number and fingerprint; every change is audited as that person, via it | `auth/principal.ts`, `mcp/tools.ts`, `services/audit.ts` |
+| [Review and approval](docs/review.md) | Pieces, variants and versions, comments, drawings, comparing, approvals |
+| [Publishing](docs/publishing.md) | The calendar, slots, automatic and assisted publishing, failures and retries |
+| [Networks](docs/networks.md) | Connecting accounts and setting up each network's developer app |
+| [Agents](docs/agents.md) | Webhooks, the agent runner and its safeguards |
+| [Postbay from Claude (MCP)](docs/mcp.md) | Connecting Claude, the tools, approving from an assistant |
+| [Prizes](docs/prizes.md) | Sending a file or a link to whoever comments a keyword |
+| [Notifications](docs/notifications.md) | In the app, email, Slack and push |
+| [Security](docs/security.md) | Sign-in, roles, the audit log and the rules that always hold |
+| [Architecture](docs/architecture.md), [API](docs/api.md) | How it is built, and the HTTP API |
+| [Configuration](docs/configuration.md), [Deploying](docs/deploying.md), [Development](docs/development.md) | Settings, production, tests |
 
-### Roles
+## Status
 
-| Role | Can | Cannot |
-| --- | --- | --- |
-| Admin | Everything an approver can, plus manage accounts, people (add, deactivate, reactivate, remove), rules and API tokens. Someone from another workspace is invited and joins only on accepting | Approve what they uploaded; reset the authenticator of someone who also belongs to a brand they do not manage; deactivate themselves, or the brand's last active admin |
-| Approver | Everything a reviewer can, plus upload, approve or reject, schedule, move dates, pause the brand | Approve what they uploaded |
-| Reviewer | View, comment, request changes, resolve comments | Approve or schedule |
-| Producer | Create pieces, upload versions, reply to and resolve comments (a person or an API token; a token uploads inside an agent run, and, where the brand allows it, schedules an approved version inside one) | Approve, touch accounts, or schedule otherwise; cancel or move a post; discard a piece once something of it is approved or scheduled; take the AI label away after approval |
-| Any role, deactivated | Nothing in that brand: it is as if they were not a member, except that they are told why | Open the brand, or be notified about it |
-| Reader | View pieces, the calendar and results | Comment |
-
-## API in brief
-
-Everything is under `/api`, JSON in and out. Browsers use a session cookie (and must send `X-Requested-By`); agents and
-scripts use `Authorization: Bearer <producer token>`. Texts for people come in the language of `Accept-Language` (Spanish by default).
-
-| Method and path | What it does |
-| --- | --- |
-| `POST /brands/:id/pieces`, `POST /pieces/:id/variants` | Create a piece (optionally with `source`, where its project lives, and `slot`: `{ id, at }`, the slot occurrence it is made for) and add a variant |
-| `POST /variants/:id/uploads` | Declare files with their sha256 and get signed upload URLs; with `resumable: true` for a big file, an upload to send in pieces instead |
-| `GET`, `PATCH /uploads/:id/resumable`, `POST /uploads/:id/resumable/finish` | Ask how much of a big file has arrived, send the next piece (`Upload-Offset`, raw bytes), and have the whole checked and stored |
-| `POST /variants/:id/versions` | Close a version: the uploaded files, notes and the comments it resolves. With a producer token, only inside a run it started on the piece |
-| `GET /versions/:id/comments?status=open&carried=true` | Open comments with their anchor and frame |
-| `POST /comments/:id/replies` | Reply: fixed, cannot do (and why), or needs a person |
-| `GET /brands/:id/slots?status=empty&from=&to=` | Calendar slots that still ask for content |
-| `GET /versions/:id` | A version, with `slot_schedule` (what approving it will schedule at its slot, or why not) and `auto_fill_slots` |
-| `POST /versions/:id/approvals`, `/request-changes` | Decide on a version. An approval may say `autoSchedule: false` (keep it out of anything the studio schedules by itself) and give `scheduleText`, `scheduleFirstComment`; its answer says what was scheduled (`slot_schedule`) |
-| `POST /versions/:id/publications` | Schedule an approved version on an account (a person; or a producer token inside an agent run, where the brand allows it) |
-| `GET /brands/:id/calendar`, `GET /brands/:id/publications/due` | What is planned (with how each post goes out) and what a person has to publish now |
-| `POST /versions/:id/publications/validate` | How a post would go out, and what would block it, before scheduling |
-| `POST /brands/:id/connections/:provider` and the pending-connection routes | Connect, choose accounts, reconnect (`meta`, `google`) |
-| `POST /publications/:id/retry`, `/hand-over`, `/recheck`; `GET /publications/:id/attempts` | Act on a failed or private post; read every attempt |
-| `GET /brands/:id/requirements` | What each connected network accepts, for an agent that has to make the file |
-| `POST /pieces/:id/agent-runs`, `/agent-runs/:id/heartbeat`, `/agent-runs/:id/finish` | An agent asks to start, keeps its lease, and closes a run with its cost and outcome. The studio refuses past the limits |
-| `GET /brands/:id/webhooks`, `POST` and the routes under `/webhooks/:id` | Manage webhooks, send a test, rotate the secret, read deliveries and send one again |
-| `POST /comments/:id/people-only` | Mark a comment as for people only |
-| `GET`, `PUT /notifications/preferences`; `PUT /notifications/locale` | What a person is told by email and push, and the language it is written in (`es`, `en`, or `null` for the brand's) |
-| `POST /brands/:id/members/:memberId/deactivate`, `/reactivate` | Deactivate a member of the brand, or let them back in (their revoked tokens stay revoked) |
-| `GET`, `POST /brands/:id/prizes` | The prize library; a prize is a `piece` (`pieceId`), a `file` or a `link` |
-| `PATCH /brands/:id` (`rules.variant_styles`) | The styles a variant can have, in order (at most 30, each up to 40 characters, no two alike). A variant's `style` stays text; an agent is told them in `GET /brands/:id/requirements` |
-
-[docs/phase-3.md](docs/phase-3.md) has the event payloads and how to verify a signature.
-
-## Configuration
-
-See [`.env.example`](.env.example). The ones that matter:
-
-| Variable | Meaning |
-| --- | --- |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `SECRET` | At least 32 characters; signs local media URLs |
-| `APP_URL`, `MEDIA_URL` | Public address of the app, and of the media domain (a separate one in production) |
-| `STORAGE_DRIVER` | `local` for development, `s3` for MinIO, S3 or R2 (`S3_*` variables, and `S3_PUBLIC_ENDPOINT` when browsers reach the bucket on a different address than the app does) |
-| `SMTP_URL`, `MAIL_FROM` | Email; without it, messages go to the log in development. In production it is required while email-link sign-in is on, and without it no email text is logged |
-| `WEB_DIST` | Folder with the built web app, so the API serves it |
-| `TOKEN_KEY` | 32 bytes in base64 (`openssl rand -base64 32`). Seals network tokens and webhook secrets; required once Meta or Google is set, and for any webhook. **Keep a copy: losing it means connecting every account and replacing every webhook secret** |
-| `WEBHOOK_ALLOW_PRIVATE_NETWORKS` | Whether webhooks may point at loopback and private addresses. Default: yes in development, no in production |
-| `META_APP_ID`, `META_APP_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | The developer apps ([setup in docs/phase-2.md](docs/phase-2.md#setting-up-the-networks)). Without them accounts stay manual |
-| `META_LOGIN_CONFIG_ID` (and `META_LOGIN_CONFIG_ID_PRIZES`) | With Facebook Login for Business: the login configuration the sign-in dialog uses instead of a list of permissions (the second one for brands with prizes) ([docs/phase-2.md](docs/phase-2.md#meta-facebook-and-instagram)) |
-| `THREADS_*`, `TIKTOK_*`, `LINKEDIN_*` (and `LINKEDIN_VERSION`), `X_*`, `PINTEREST_*` | The other networks' apps ([setup in docs/phase-4.md](docs/phase-4.md#setting-up-the-networks)). Each switches on with its credentials; Bluesky needs only `TOKEN_KEY` |
-| `SECOND_FACTOR_REQUIRED`, `EMAIL_LINK_LOGIN` | Whether admins and approvers must give an authenticator code (default: yes in production), and whether the emailed link still signs people in (default: yes, except with `OIDC_SECOND_FACTOR=idp`; [docs/phase-5.md](docs/phase-5.md#signing-in)) |
-| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_ALLOWED_DOMAINS` (and `OIDC_LABEL`, `OIDC_SECOND_FACTOR`, `OIDC_TRUST_EMAIL`) | Single sign-on. The allowed domains are required |
-| `GOOGLE_ANALYTICS` | Also ask YouTube for its Analytics permission, so watch time can be read. Off by default: Google treats it as sensitive |
-| `STAGING_DIR` | Where big uploads wait while they arrive in pieces (a volume in the compose file) |
-| `STAGING_MAX_GB_PER_BRAND` | How much a brand may have waiting there in unfinished uploads (20 by default); past it a new big upload is refused |
-| `NOTIFY_SECONDS` | How often notifications are sent by email, Slack and push (30 by default) |
-| `META_WEBHOOK_VERIFY_TOKEN` | For prizes: the token Meta sends back when you register `$APP_URL/api/meta/webhook` |
-| `METRICS_SWEEP_SECONDS`, `PRIZE_POLL_SECONDS`, `PRIZE_PURGE_SECONDS` | How often readings are taken, comments of posts with a prize are read, and expired people are deleted (120, 180 and 3600 seconds by default) |
-| `FILL_SLOTS_SECONDS` | How often approved versions are put into free slots, for brands that ask for it (300 by default) |
-| `RUN_WORKERS` | `true` (default) runs the queue inside the API process; `false` when a separate worker runs |
-
-## Tests
-
-```sh
-npm test                 # API and runner tests, against a real PostgreSQL (and, for some, real ffmpeg and a real pg-boss worker); counts in docs after each merge
-npm run typecheck
-```
-
-The API tests (and the runner's loop test, which starts a real API) create a throwaway database per file, so they need a PostgreSQL they
-can create databases in. Point `TEST_DATABASE_ADMIN_URL` at it (default `postgres://postgres@localhost:5433/postgres`). They cover the rules above, the
-database guarantees (by trying to break them), permissions, isolation between brands, sign-in, and the calendar across
-clock changes, for phase 2 the connectors against fake Meta and Google servers and the whole publishing state machine on a
-controlled clock, for phase 3 signed delivery with every retry wait, the agent's limits, and the runner against a scripted
-agent (the runner's tests also need ffmpeg), for phase 4 every connector against its stand-in (including a post whose answer was lost),
-the readings, and prizes with Meta's own rules, and for phase 5 the checker, single sign-on against a stand-in provider that misbehaves on request,
-the second factor (against the standards' test vectors), Slack and push (the encryption against the standard's own worked example),
-subtitles, resumable uploads (interrupted, repeated, concurrent) and YouTube watch time; and, since, the lookup that keeps a post from being
-sent twice or late after a crash, and every text for people in both languages (the dictionary, the request's language, texts kept as codes,
-emails, Slack and push).
-
-The end-to-end tests drive the real app in a real browser, with real ffmpeg: phase 1's whole flow, phase 2's connecting and
-publishing against fake networks, phase 3's comment-to-new-version loop (with a scripted agent, or real Claude Code, which
-costs money), phase 4's eight networks, results and prize flow, and phase 5's second factor, single sign-on, Slack, push, subtitles, interrupted
-uploads and readiness checks. See [e2e/README.md](e2e/README.md).
-
-## Deploying
-
-[`deploy/`](deploy) has a Docker Compose file with PostgreSQL, MinIO (private, versioned bucket), the app, a worker and
-Caddy for automatic TLS on the app and the media domain. The web server runs with `RUN_WORKERS=false`; the worker is the
-same image running `worker-main`. It has not been run in the environment this was built in (no Docker daemon there); the
-Compose file validates, and the application it starts is the one the end-to-end tests exercise. The media domain has to
-be reachable from the internet, because Meta downloads the files it publishes from it. With `STORAGE_DRIVER=s3` the addresses handed to
-the networks are the bucket's (`S3_PUBLIC_ENDPOINT`, or `S3_ENDPOINT`), so that is the domain to verify with TikTok for photo posts.
-
-## Not yet
-
-Anything run against a real network, identity provider, Slack or push service (see the box at the top), and the things each phase's
-document lists as left out: S3 multipart upload, Slack buttons and replies, watch time per day, and more. Details and reasons in
-[docs/phase-1.md](docs/phase-1.md), [docs/phase-2.md](docs/phase-2.md), [docs/phase-3.md](docs/phase-3.md),
-[docs/phase-4.md](docs/phase-4.md) and [docs/phase-5.md](docs/phase-5.md), which also list what could not be verified.
+Every connection to a social network is written against that network's documentation and tested against a local stand-in;
+none has been run against real accounts yet. Some networks (TikTok, Pinterest, YouTube) keep posts private until they review
+the app, and TikTok may not approve an app like this one.
