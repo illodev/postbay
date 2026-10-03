@@ -5,8 +5,8 @@ approval is tied to the fingerprint of that version's files: change a byte and i
 
 ## Pieces, variants and versions
 
-A **piece** is one thing to publish: a video, a carousel, a post, a story or a PDF. It has a title, a brief, an optional campaign (a
-name, an objective and dates) and target date, and an AI label (*made with AI*). It can also say where its project lives, for pieces
+A **piece** is one thing to publish: a video, a carousel, a post, a story or a PDF. It has a title, a brief, optionally a campaign (a
+name, an objective and dates) and a target date, and an AI label (*made with AI*). It can also say where its project lives, for pieces
 [made with code](agents.md#pieces-made-with-code), and which [weekly slot](publishing.md#a-piece-made-for-a-slot) it is made for.
 
 A piece goes out in several shapes, its **variants**: each has a format (`9:16`, `4:5`, `1:1`, `16:9`, `carousel` or `document`) and
