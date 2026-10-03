@@ -1,16 +1,16 @@
 #!/bin/sh
-# Runs the phase 5 browser test from nothing: a clean database, the fake networks plus an OpenID provider, Slack and a push service,
-# the API (with its worker) pointed at them with a second factor required, then e2e/phase5.mjs. Everything it starts is stopped again at the end.
+# Runs the signing-in and notifications browser test from nothing: a clean database, the fake networks plus an OpenID provider, Slack and a push service,
+# the API (with its worker) pointed at them with a second factor required, then e2e/accounts-and-notifications.mjs. Everything it starts is stopped again at the end.
 #
 #   npm install && npm run build && npm run e2e:assets      # once (e2e/assets must have big.webm and captions.vtt: this script makes them if not)
-#   TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres e2e/phase5.sh
+#   TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres e2e/accounts-and-notifications.sh
 #
 # Needs PostgreSQL (and permission to create a database), ffmpeg, Node 22 and a Chromium (CHROMIUM, default /opt/pw-browsers/chromium).
 set -e
 cd "$(dirname "$0")/.."
 
 ADMIN_URL="${TEST_DATABASE_ADMIN_URL:-postgres://postgres@localhost:5433/postgres}"
-DB_NAME="${E2E_DB_NAME:-estudio_e2e_phase5}"
+DB_NAME="${E2E_DB_NAME:-estudio_e2e_accounts}"
 DB_URL="${ADMIN_URL%/*}/$DB_NAME"
 PORT="${PORT:-3500}"
 FAKES_PORT="${FAKES_PORT:-4050}"
@@ -55,7 +55,7 @@ until curl -sf "http://localhost:$PORT/api/health" >/dev/null; do
   sleep 0.5
 done
 
-BASE_URL="http://localhost:$PORT" FAKES_URL="http://127.0.0.1:$FAKES_PORT" DATABASE_URL="$DB_URL" STAGING_DIR="$WORK/staging" node e2e/phase5.mjs || {
+BASE_URL="http://localhost:$PORT" FAKES_URL="http://127.0.0.1:$FAKES_PORT" DATABASE_URL="$DB_URL" STAGING_DIR="$WORK/staging" node e2e/accounts-and-notifications.mjs || {
   status=$?
   echo "--- the API's log (last lines) ---" >&2
   tail -25 "$WORK/api.log" >&2

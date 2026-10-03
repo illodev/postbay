@@ -1,6 +1,6 @@
 #!/bin/sh
 # Generates the media the end-to-end test uploads: two short videos, two images, a three-page PDF, subtitles for the first video, and a
-# big video (about 18 MB of noise, so it takes three pieces to send) for the resumable upload run of phase 5.
+# big video (about 18 MB of noise, so it takes three pieces to send) for the resumable upload run (e2e/accounts-and-notifications.sh).
 # WebM because the headless Chromium used for the test has no H.264 decoder; the app accepts MP4 as well.
 set -e
 OUT="${1:-e2e/assets}"

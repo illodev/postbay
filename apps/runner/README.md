@@ -566,7 +566,7 @@ npm test -w @estudio/runner
 
 The tests use a real PostgreSQL, a real API, real ffmpeg and a **scripted stand-in for the agent** (`test/fake-agent.mjs`, driven by
 `FAKE_AGENT_MODE`): they prove everything around the agent, not what a model does with the instructions. That includes an approved
-version scheduled by the agent in a free slot, what the studio refuses, an agent that schedules nothing, and a brand that does not allow it. `e2e/phase3.sh`
+version scheduled by the agent in a free slot, what the studio refuses, an agent that schedules nothing, and a brand that does not allow it. `e2e/agent-loop.sh`
 drives the same loop in a browser, and with `AGENT=claude` runs it with Claude Code as the agent (see [e2e/README.md](../../e2e/README.md)).
 
 Pieces made from a project are tested with real git: a local repository of projects, each piece's worktree and branch, commits with

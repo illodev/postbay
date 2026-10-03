@@ -1,4 +1,4 @@
-// End-to-end check of phase 3, in a real browser: a comment becomes a new version with nobody lifting a finger.
+// End-to-end check of the agent loop, in a real browser: a comment becomes a new version with nobody lifting a finger.
 //
 // The real app, a real PostgreSQL, the real runner (a separate process), real ffmpeg, and a scripted stand-in for the agent
 // (apps/runner/test/fake-agent.mjs). Everything the people do, they do through the screens.
@@ -16,7 +16,7 @@ import path from 'node:path';
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:3000';
 const ASSETS = process.env.ASSETS ?? path.resolve('e2e/assets');
-const SHOTS = process.env.SHOTS ?? path.resolve('e2e/shots-phase3');
+const SHOTS = process.env.SHOTS ?? path.resolve('e2e/shots-agent-loop');
 const RUNNER_PORT = Number(process.env.RUNNER_PORT ?? 8788);
 const REAL_AGENT = process.env.AGENT === 'claude';
 mkdirSync(SHOTS, { recursive: true });
@@ -152,7 +152,7 @@ await step('settings: a webhook to the runner; its secret is shown once and neve
 });
 
 await step('the runner starts with that token and secret, and connects to the studio', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'phase3-runner-'));
+  const dir = mkdtempSync(path.join(tmpdir(), 'agent-loop-runner-'));
   state.runnerDir = dir;
   // Only what Claude Code needs to sign in, by name. Not CLAUDE_*: those can tie a child to the session that launched it.
   const claudeEnv = Object.fromEntries(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL'].filter((k) => process.env[k]).map((k) => [k, `\${${k}}`]));
@@ -392,4 +392,4 @@ if (problems.length) {
   console.log('\nRunner log (tail):\n' + runnerLog.join('').split('\n').slice(-25).join('\n'));
   process.exit(1);
 }
-console.log('\nAll phase 3 end-to-end steps passed.');
+console.log('\nAll agent-loop end-to-end steps passed.');

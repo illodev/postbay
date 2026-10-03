@@ -1,11 +1,11 @@
-// End-to-end check of phase 4 against FAKE networks: the six new networks (Threads, Bluesky, X, LinkedIn, Pinterest, TikTok), the
+// End-to-end check of the networks against FAKE ones: six networks (Threads, Bluesky, X, LinkedIn, Pinterest, TikTok), the
 // per-network options in the schedule dialog, results (metrics) and prizes for commenting, all through the real UI, with the real
 // worker, real ffmpeg, real PostgreSQL and a real browser.
 //
 // What this proves: the app's own behaviour end to end. What it cannot prove: that the real networks behave like the fakes in
-// apps/api/test/fakes (written from each network's documentation; nothing here reaches a real network). See docs/phase-4.md.
+// apps/api/test/fakes (written from each network's documentation; nothing here reaches a real network). See docs/networks.md.
 //
-// Needs the API running against e2e/fakes.mts (e2e/phase4.sh does it all), on an EMPTY database that has only been bootstrapped.
+// Needs the API running against e2e/fakes.mts (e2e/networks.sh does it all), on an EMPTY database that has only been bootstrapped.
 // Environment: BASE_URL, FAKES_URL, ASSETS, SHOTS, DATABASE_URL (psql URI), CHROMIUM, E2E_BLUESKY_HANDLE, E2E_BLUESKY_PASSWORD.
 import { chromium } from 'playwright-core';
 import { createHmac } from 'node:crypto';
@@ -16,8 +16,8 @@ import path from 'node:path';
 const BASE = process.env.BASE_URL ?? 'http://localhost:3300';
 const FAKES = process.env.FAKES_URL ?? 'http://127.0.0.1:4040';
 const ASSETS = process.env.ASSETS ?? path.resolve('e2e/assets');
-const SHOTS = process.env.SHOTS ?? path.resolve('e2e/shots-phase4');
-const DB = process.env.DATABASE_URL ?? 'postgres://postgres@localhost:5433/estudio_e2e_phase4';
+const SHOTS = process.env.SHOTS ?? path.resolve('e2e/shots-networks');
+const DB = process.env.DATABASE_URL ?? 'postgres://postgres@localhost:5433/estudio_e2e_networks';
 const META_SECRET = 'e2e-secret';
 mkdirSync(SHOTS, { recursive: true });
 
@@ -763,4 +763,4 @@ if (problems.length) {
   for (const x of problems) console.log(` - ${x}`);
   process.exit(1);
 }
-console.log('\nAll phase 4 end-to-end steps passed.');
+console.log('\nAll networks end-to-end steps passed.');
