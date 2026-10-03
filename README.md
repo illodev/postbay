@@ -37,7 +37,9 @@ Instagram, Facebook, YouTube, TikTok, LinkedIn, X, Threads, Pinterest and Bluesk
 ready for a person to post. Afterwards it reads the numbers each post earned.
 
 **Made for AI agents, safely.** Signed webhooks and an agent runner turn a request for changes into a new version, with a
-limit of rounds and a budget per piece and per month. An agent can upload and reply; it never approves.
+limit of rounds and a budget per piece and per month. An agent can upload and reply; it never approves. It pairs with
+[drawn-by-code](https://github.com/illodev/drawn-by-code), videos made with code by Claude: when a piece comes from a drawn-by-code
+project, the agent edits the project, renders it again and uploads the result as the next version.
 
 **Use it from Claude.** Postbay is an [MCP](https://modelcontextprotocol.io) server: ask Claude what is pending for you, leave a
 comment, upload a version or schedule an approved post. Claude signs in as you, with your role; no keys to copy. The
