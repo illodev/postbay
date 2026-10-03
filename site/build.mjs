@@ -1,6 +1,7 @@
 // Builds the landing: index.html (English) and es/index.html (Spanish) from src/content.mjs.
 //   node site/build.mjs
 // The output is committed, so the site deploys as plain static files (Vercel: root directory `site`, no build).
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { content } from './src/content.mjs';
@@ -15,6 +16,11 @@ const DBC = 'https://github.com/illodev/drawn-by-code';
 const net = JSON.parse(fs.readFileSync(path.join(here, 'src/networks.json'), 'utf8'));
 const lockup = fs.readFileSync(path.join(here, '../docs/brand/postbay-logo-dark.svg'), 'utf8')
   .replace('<svg ', '<svg class="logo" role="img" aria-label="Postbay" ');
+
+/** A short hash of an asset, added to its URL: assets are cached for a day, so a changed file needs a new URL. */
+const ver = (f) => createHash('sha256').update(fs.readFileSync(path.join(here, f))).digest('hex').slice(0, 10);
+const CSS_V = ver('assets/site.css');
+const JS_V = ver('assets/site.js');
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -342,7 +348,7 @@ function page(t, prefix) {
 <link rel="icon" href="${prefix}assets/img/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="${prefix}assets/img/apple-touch-icon.png">
 <link rel="preload" href="${prefix}assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="${prefix}assets/site.css">
+<link rel="stylesheet" href="${prefix}assets/site.css?v=${CSS_V}">
 </head>
 <body>
 <header class="nav">
@@ -445,7 +451,7 @@ function page(t, prefix) {
     <div><h4>${t.footer.more}</h4><a href="${DBC}">drawn-by-code</a><a href="${t.switchTo.href}" lang="${other}">${t.switchTo.label}</a></div>
   </nav>
 </footer>
-<script src="${prefix}assets/site.js" defer></script>
+<script src="${prefix}assets/site.js?v=${JS_V}" defer></script>
 </body>
 </html>
 `;
