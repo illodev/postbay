@@ -1,0 +1,14 @@
+{
+  "name": "postbay",
+  "description": "Postbay for Claude Code: the MCP connection and a skill for each workflow.",
+  "owner": {
+    "name": "illodev"
+  },
+  "plugins": [
+    {
+      "name": "postbay",
+      "source": "./integrations/claude-code",
+      "description": "Postbay's MCP connection and a skill for each workflow: pending work, reviewing, working through comments, uploading, scheduling, planning the week and approving."
+    }
+  ]
+}

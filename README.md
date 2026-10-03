@@ -40,7 +40,9 @@ ready for a person to post. Afterwards it reads the numbers each post earned.
 limit of rounds and a budget per piece and per month. An agent can upload and reply; it never approves.
 
 **Use it from Claude.** Postbay is an [MCP](https://modelcontextprotocol.io) server: ask Claude what is pending for you, leave a
-comment, upload a version or schedule an approved post. Claude signs in as you, with your role; no keys to copy.
+comment, upload a version or schedule an approved post. Claude signs in as you, with your role; no keys to copy. The
+[Claude Code plugin](integrations/claude-code/README.md) adds a skill for each workflow, including working through a review into the
+next version with an agent of your own.
 
 **Built for a team.** Roles per brand (admin, approver, reviewer, producer, reader), several brands per workspace, single
 sign-on and a second factor, an audit log that can only grow, and notifications in the app, by email, on Slack and as push.

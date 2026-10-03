@@ -227,7 +227,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
 
   server.registerTool('get_piece', {
     title: 'Get a piece',
-    description: 'A piece with its variants (formats), every version of each (number, state, fingerprint, open comments), and its publications (scheduled, published, failed or on hold).',
+    description: 'A piece with its variants (formats), every version of each (number, state, fingerprint, open comments), its publications (scheduled, published, failed or on hold), and `source`: where the project it is made from lives (a folder or repository), when it has one.',
     inputSchema: { piece_id: uuid('The piece id') },
     annotations: read,
   }, run(async (a) => {
@@ -236,7 +236,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
     const zone = await zoneOf(piece.brand_id);
     return {
       id: piece.id, title: piece.title, kind: piece.kind, state: piece.review_state, brief: piece.brief, target_date: piece.target_date,
-      ai_generated: piece.ai_generated, discarded: !!piece.discarded_at, url: link.piece(piece.id),
+      ai_generated: piece.ai_generated, discarded: !!piece.discarded_at, source: piece.source ?? null, url: link.piece(piece.id),
       slot: piece.slot ? { label: piece.slot.label, at_local: local(piece.slot.at, zone), removed: piece.slot.removed } : null,
       variants: (piece.variants as Out[]).map((v) => {
         const list = (v.versions as Out[]) ?? [];

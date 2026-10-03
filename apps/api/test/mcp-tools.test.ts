@@ -172,6 +172,8 @@ describe('pieces and uploads', () => {
 describe('working on a review', () => {
   it("gives the files to download, each comment's exact anchor and frame, and replies that say what became of a comment", async () => {
     const v = await inReview();
+    await env.call(env.users.admin, 'PATCH', `/api/pieces/${v.pieceId}`, { source: 'git@example.com:studio/reel.git' });
+    expect((await tool(env, as.producer.access, 'get_piece', { piece_id: v.pieceId })).data.source).toBe('git@example.com:studio/reel.git');
     const ver = await tool(env, as.producer.access, 'get_version', { version_id: v.versionId });
     expect(ver.ok, JSON.stringify(ver.error)).toBe(true);
     const file = ver.data.files[0];

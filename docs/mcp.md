@@ -11,6 +11,16 @@ assistant it is and which of their brands it may use. Producer tokens are not us
 
 ## Adding it
 
+**Claude Code, with the plugin** (recommended): the connection plus a skill for each workflow (what is pending, reviewing, working
+through comments, uploading, scheduling, planning the week, approving). See [integrations/claude-code](../integrations/claude-code/README.md):
+
+```sh
+claude plugin marketplace add illodev/postbay
+claude plugin install postbay@postbay
+export POSTBAY_URL=https://your-postbay.example     # then /mcp → postbay → Authenticate
+```
+
+
 - **claude.ai or Claude Desktop**: *Settings → Connectors → Add custom connector*, give it a name ("Postbay") and the address
   `https://your-postbay.example/api/mcp`. Leave the OAuth client id and secret empty: Claude registers itself. Click *Connect*, sign in
   to Postbay and allow it. These connect from Anthropic's servers, so the address has to be public and served over https.

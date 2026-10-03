@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "postbay": {
+      "type": "http",
+      "url": "${POSTBAY_URL:-http://localhost:5173}/api/mcp"
+    }
+  }
+}
