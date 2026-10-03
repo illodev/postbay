@@ -53,10 +53,10 @@ export const checks = define({
     'check.why.transient': 'La red no ha respondido bien. Si se repite, comprueba que este servidor llega a ella (cortafuegos de salida, proxy, DNS).',
     'check.why.unsupported': 'La red dice que no puede hacer esto. El mensaje de arriba explica por qué.',
     'check.why.refusedPost':
-      'La red ha rechazado la pregunta sobre este post. Si el post se ha borrado en la red, es por eso. Si no, esta app y la red no se entienden sobre cómo preguntar: manda la transcripción (mira docs/phase-5.md) para que se arregle.',
+      'La red ha rechazado la pregunta sobre este post. Si el post se ha borrado en la red, es por eso. Si no, esta app y la red no se entienden sobre cómo preguntar: manda la transcripción (mira docs/networks.md#the-transcript) para que se arregle.',
     'check.why.refused':
-      'La red ha rechazado la propia petición, lo que suele querer decir que esta app y la red no se entienden sobre cómo preguntar. Manda la transcripción (mira docs/phase-5.md) para que se arregle.',
-    'check.why.unknown': 'Una respuesta que la app no sabe leer. Manda la transcripción (mira docs/phase-5.md) para que se arregle.',
+      'La red ha rechazado la propia petición, lo que suele querer decir que esta app y la red no se entienden sobre cómo preguntar. Manda la transcripción (mira docs/networks.md#the-transcript) para que se arregle.',
+    'check.why.unknown': 'Una respuesta que la app no sabe leer. Manda la transcripción (mira docs/networks.md#the-transcript) para que se arregle.',
 
     // How long, said the way a person would
     'check.minutes': { one: '{count} minuto', other: '{count} minutos' },
@@ -206,10 +206,10 @@ export const checks = define({
     'check.why.transient': 'The network did not answer properly. If this repeats, check that this server can reach it (outbound firewall, proxy, DNS).',
     'check.why.unsupported': 'The network says it cannot do this. The message above says why.',
     'check.why.refusedPost':
-      'The network refused the question about this post. If the post was deleted on the network, that is why. Otherwise this app and the network disagree about how to ask: send the transcript (see docs/phase-5.md) so it can be fixed.',
+      'The network refused the question about this post. If the post was deleted on the network, that is why. Otherwise this app and the network disagree about how to ask: send the transcript (see docs/networks.md#the-transcript) so it can be fixed.',
     'check.why.refused':
-      'The network refused the request itself, which usually means this app and the network disagree about how to ask. Send the transcript (see docs/phase-5.md) so it can be fixed.',
-    'check.why.unknown': 'An answer the app does not know how to read. Send the transcript (see docs/phase-5.md) so it can be fixed.',
+      'The network refused the request itself, which usually means this app and the network disagree about how to ask. Send the transcript (see docs/networks.md#the-transcript) so it can be fixed.',
+    'check.why.unknown': 'An answer the app does not know how to read. Send the transcript (see docs/networks.md#the-transcript) so it can be fixed.',
 
     'check.minutes': { one: '{count} minute', other: '{count} minutes' },
     'check.hours': '{count} hours',

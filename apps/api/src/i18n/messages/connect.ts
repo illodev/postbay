@@ -5,7 +5,7 @@ import { define } from './define.js';
 export const connect = define({
   es: {
     'connect.provider.meta': 'Facebook e Instagram',
-    'connect.docs.both': 'docs/phase-2.md y docs/phase-4.md',
+    'connect.docs.setup': 'docs/networks.md#setting-up-the-networks',
     'connect.cred.handle': 'Usuario',
     'connect.cred.handleHelp': 'Por ejemplo lumen.bsky.social',
     'connect.cred.appPassword': 'Contraseña de app',
@@ -75,7 +75,7 @@ export const connect = define({
   },
   en: {
     'connect.provider.meta': 'Facebook and Instagram',
-    'connect.docs.both': 'docs/phase-2.md and docs/phase-4.md',
+    'connect.docs.setup': 'docs/networks.md#setting-up-the-networks',
     'connect.cred.handle': 'Handle',
     'connect.cred.handleHelp': 'For example lumen.bsky.social',
     'connect.cred.appPassword': 'App password',

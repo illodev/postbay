@@ -21,7 +21,7 @@ x-app-env: &app-env
   # Required while email-link sign-in is on (the default): the app refuses to start without it rather than put sign-in links in its log.
   SMTP_URL: ${SMTP_URL:-}
   MAIL_FROM: ${MAIL_FROM:-Studio <no-reply@localhost>}
-  # Connecting accounts and publishing to them (docs/phase-2.md). Leave the network credentials empty to keep an account manual.
+  # Connecting accounts and publishing to them (docs/networks.md). Leave the network credentials empty to keep an account manual.
   TOKEN_KEY: ${TOKEN_KEY:-}
   META_APP_ID: ${META_APP_ID:-}
   META_APP_SECRET: ${META_APP_SECRET:-}
@@ -30,7 +30,7 @@ x-app-env: &app-env
   META_LOGIN_CONFIG_ID_PRIZES: ${META_LOGIN_CONFIG_ID_PRIZES:-}
   GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
   GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-  # The rest of the networks, results and prizes (docs/phase-4.md). Each switches on with its credentials; Bluesky needs only TOKEN_KEY.
+  # The other networks, results and prizes (docs/networks.md, docs/prizes.md). Each switches on with its credentials; Bluesky needs only TOKEN_KEY.
   THREADS_APP_ID: ${THREADS_APP_ID:-}
   THREADS_APP_SECRET: ${THREADS_APP_SECRET:-}
   TIKTOK_CLIENT_KEY: ${TIKTOK_CLIENT_KEY:-}
@@ -43,10 +43,10 @@ x-app-env: &app-env
   PINTEREST_APP_ID: ${PINTEREST_APP_ID:-}
   PINTEREST_APP_SECRET: ${PINTEREST_APP_SECRET:-}
   META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
-  # Webhooks (docs/phase-3.md) need TOKEN_KEY above to seal their secrets. In production they go to public addresses over https only;
+  # Webhooks (docs/agents.md) need TOKEN_KEY above to seal their secrets. In production they go to public addresses over https only;
   # set this to true to let them reach private ones (a runner on the same network, for example). Never needed for a public receiver.
   WEBHOOK_ALLOW_PRIVATE_NETWORKS: ${WEBHOOK_ALLOW_PRIVATE_NETWORKS:-}
-  # Signing in and notifications (docs/phase-5.md). Single sign-on switches on with the OIDC_* values; a second factor (an authenticator app)
+  # Signing in and notifications (docs/security.md, docs/notifications.md). Single sign-on switches on with the OIDC_* values; a second factor (an authenticator app)
   # is asked of admins and approvers by default in production; Slack needs TOKEN_KEY above, and push messages need nothing.
   SECOND_FACTOR_REQUIRED: ${SECOND_FACTOR_REQUIRED:-}
   # Default: on, except with OIDC_SECOND_FACTOR=idp, where an emailed link would skip the provider's second step.

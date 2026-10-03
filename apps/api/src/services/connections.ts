@@ -62,7 +62,7 @@ export async function integrations(ctx: Ctx, p: Principal, brandId: string) {
 export async function startConnection(ctx: Ctx, p: Principal, brandId: string, providerId: ProviderId, reconnectAccountId?: string) {
   const provider = ctx.connectors.provider(providerId);
   if (!provider || !ctx.vault) {
-    throw new AppError(503, 'provider_not_configured', msg('connect.notConfigured', { provider: providerName(providerId), docs: msg('connect.docs.both') }));
+    throw new AppError(503, 'provider_not_configured', msg('connect.notConfigured', { provider: providerName(providerId), docs: msg('connect.docs.setup') }));
   }
   if (!provider.authorizeUrl) throw badRequest('credentials_required', msg('connect.credentialsRequired', { provider: providerName(providerId) }));
   if (p.kind !== 'user') throw forbidden(msg('connect.peopleOnly'));
@@ -146,7 +146,7 @@ export async function connectWithCredentials(ctx: Ctx, p: Principal, brandId: st
   const input = credentialsInput.parse(raw);
   const provider = ctx.connectors.provider(providerId);
   if (!provider || !ctx.vault) {
-    throw new AppError(503, 'provider_not_configured', msg('connect.notConfigured', { provider: providerName(providerId), docs: 'docs/phase-4.md' }));
+    throw new AppError(503, 'provider_not_configured', msg('connect.notConfigured', { provider: providerName(providerId), docs: 'docs/networks.md#bluesky' }));
   }
   if (!provider.credentials) throw badRequest('redirect_required', msg('connect.redirectRequired', { provider: providerName(providerId) }));
   if (p.kind !== 'user') throw forbidden(msg('connect.peopleOnly'));

@@ -500,7 +500,7 @@ const APPROVAL_NETWORKS = ['youtube', 'tiktok', 'pinterest'];
 /** Networks whose comments reach the app through Meta's webhook, once the account is subscribed to it. */
 const META_NETWORKS = ['instagram', 'facebook'];
 /** Where the repository explains how to give this server each network's app (its credentials). */
-const SETUP_DOCS = 'https://github.com/illodev/marketing/blob/HEAD/docs/phase-2.md#setting-up-the-networks';
+const SETUP_DOCS = 'https://github.com/illodev/marketing/blob/HEAD/docs/networks.md#setting-up-the-networks';
 
 function AccountState({ a }: { a: Account }) {
   if (a.status === 'reconnect_required') return <Chip state="failed" label={t('settings.accounts.state.reconnect')} />;

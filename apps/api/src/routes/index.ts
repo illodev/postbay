@@ -241,7 +241,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
     const { brandId, pendingId } = params(req, 'brandId', 'pendingId');
     return connections.selectCandidates(ctx, P(req), brandId, pendingId, req.body);
   });
-  // Read-only checks that say whether this server and an account are ready for real use (docs/phase-5.md). Each asks the network a few questions.
+  // Read-only checks that say whether this server and an account are ready for real use (docs/networks.md#checking-a-real-setup). Each asks the network a few questions.
   app.get('/api/brands/:brandId/server-check', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) =>
     selfcheck.checkServerFor(ctx, P(req), params(req, 'brandId').brandId));
   app.post('/api/brands/:brandId/accounts/:accountId/check', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => {

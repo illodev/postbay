@@ -49,7 +49,7 @@ On start it checks that `ffmpeg` runs and that each token and address works, and
 answers `{ ok: true, queued: n }`. Logs are one JSON object per line.
 
 A runner should be reachable by the studio, and only by it: in production webhooks go to public addresses over https unless
-the studio sets `WEBHOOK_ALLOW_PRIVATE_NETWORKS=true` (see [docs/phase-3.md](../../docs/phase-3.md)). Put it behind a reverse
+the studio sets `WEBHOOK_ALLOW_PRIVATE_NETWORKS=true` (see [where a webhook may point](../../docs/agents.md#where-a-webhook-may-point)). Put it behind a reverse
 proxy with TLS, or on the same private network with that setting.
 
 ## Configuration

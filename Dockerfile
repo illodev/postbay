@@ -26,7 +26,7 @@ RUN npm ci --omit=dev -w @estudio/api
 COPY --from=build /app/apps/api/dist apps/api/dist
 COPY --from=build /app/apps/web/dist apps/web/dist
 ENV WEB_DIST=/app/apps/web/dist
-# Where big uploads wait while they arrive in pieces (docs/phase-5.md). The compose file keeps it on a volume so an upload survives a restart.
+# Where big uploads wait while they arrive in pieces (docs/architecture.md#big-uploads). The compose file keeps it on a volume so an upload survives a restart.
 ENV STAGING_DIR=/var/lib/estudio/staging
 RUN mkdir -p /var/lib/estudio/staging && chown node:node /var/lib/estudio/staging
 USER node
