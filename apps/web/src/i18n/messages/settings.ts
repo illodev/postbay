@@ -188,7 +188,7 @@ export const settings = define({
 
     'settings.provider.meta': 'Facebook e Instagram',
     'settings.cred.bluesky.handle': 'Usuario',
-    'settings.cred.bluesky.handle.help': 'Por ejemplo, fube.bsky.social',
+    'settings.cred.bluesky.handle.help': 'Por ejemplo, lumen.bsky.social',
     'settings.cred.bluesky.appPassword': 'Contraseña de app',
     'settings.cred.bluesky.appPassword.help': 'Se crea en Bluesky, en Ajustes → Privacidad y seguridad → Contraseñas de app. No es la contraseña de tu cuenta.',
     'settings.cred.bluesky.server': 'Servidor',
