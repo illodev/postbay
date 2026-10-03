@@ -227,7 +227,7 @@ function approveTiles(t, prefix) {
             ${a.rules.items.map((it, i) => `<div class="ck ck-${i + 1}"><i class="box">${check}</i><span>${esc(it)}</span></div>`).join('')}
           </div>
           <div class="panel">
-            <span class="panel-label">${a.rules.approvals} <span class="count"><span class="c0">${a.rules.of(0, 2)}</span><span class="c1">${a.rules.of(1, 2)}</span><span class="c2">${a.rules.of(2, 2)}</span></span></span>
+            <span class="panel-label">${a.rules.approvals} <span class="count"><span class="k0">${a.rules.of(0, 2)}</span><span class="k1">${a.rules.of(1, 2)}</span><span class="k2">${a.rules.of(2, 2)}</span></span></span>
             <div class="appr"><span class="av av-maya">MO</span><b>Maya Ortiz</b>${check}</div>
             <div class="appr appr-2"><span class="av av-leo">LP</span><b>Leo Park</b>${check}</div>
             <span class="chip chip-good rules-ok">${check}${a.rules.approved}</span>

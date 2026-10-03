@@ -189,8 +189,9 @@ b.agent { color: var(--agent); }
 .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .tile { display: flex; flex-direction: column; border-radius: 18px; background: #0f1017; overflow: hidden; }
 .tile-wide { grid-column: span 2; }
-.tile-art { position: relative; height: 340px; }
-.tile-cap { padding: 4px 28px 26px; }
+.tile-art { position: relative; flex: 1; min-height: 340px; }
+.tile-cap { min-height: 106px; padding: 4px 28px 26px; }
+.tile-dbc .tile-cap { min-height: 0; }
 .tile-cap h3 { font-size: 1rem; font-weight: 600; letter-spacing: -.01em; margin-bottom: 4px; }
 .tile-cap p { margin: 0; font-size: .95rem; }
 .tile-art * { animation-play-state: paused; }
@@ -328,9 +329,9 @@ b.agent { color: var(--agent); }
 .s1 .ck-1 svg, .s2 .ck-2 svg, .s3 .ck-3 svg { opacity: 1; transform: none; }
 .count { display: inline-grid; color: var(--text); font-weight: 600; }
 .count > span { grid-area: 1 / 1; transition: opacity .3s; text-align: right; }
-.c1, .c2, .s4 .c0, .s5 .c1 { opacity: 0; }
-.s4 .c1, .s5 .c2 { opacity: 1; }
-.s5 .c1 { opacity: 0; }
+.k1, .k2, .s4 .k0, .s5 .k1 { opacity: 0; }
+.s4 .k1, .s5 .k2 { opacity: 1; }
+.s5 .k1 { opacity: 0; }
 .appr { display: flex; align-items: center; gap: 10px; opacity: 0; transform: translateY(6px); transition: opacity .4s, transform .4s; }
 .appr .av { width: 24px; height: 24px; font-size: 9px; }
 .appr svg { width: 16px; height: 16px; margin-left: auto; color: var(--good); }
@@ -342,7 +343,7 @@ b.agent { color: var(--agent); }
 .s6 .rules-ok { opacity: 1; }
 
 /* publish */
-.art-week { height: 310px !important; padding: 28px 30px 8px; }
+.art-week { min-height: 0; height: 310px !important; padding: 28px 30px 8px; }
 .week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; height: 100%; }
 .day { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .day-head { padding-left: 4px; font-size: 14px; color: var(--muted); }
@@ -425,7 +426,7 @@ b.agent { color: var(--agent); }
 .meter b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .meter .bar i { background: var(--agent); }
 .s6 .meter .bar i { width: var(--w); }
-.art-dbc { height: auto; overflow: hidden; }
+.tile .art-dbc { flex: none; min-height: 0; overflow: hidden; }
 .art-dbc video { width: 100%; aspect-ratio: 960 / 362; object-fit: cover; }
 .tile-dbc .tile-cap { padding-top: 22px; }
 .principles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px; margin-top: 60px; }
@@ -472,6 +473,9 @@ b.agent { color: var(--agent); }
 [data-reveal] { opacity: 0; transform: translateY(24px); transition: opacity .7s ease-out, transform .7s ease-out; }
 [data-reveal].in { opacity: 1; transform: none; }
 
+@media (min-width: 901px) and (max-width: 1100px) {
+  .tile-cap { min-height: 128px; }
+}
 @media (max-width: 900px) {
   body { font-size: 16px; }
   .nav-links { display: none; }
@@ -500,15 +504,20 @@ b.agent { color: var(--agent); }
   .sec-head p { font-size: 1.05rem; }
   .tiles { grid-template-columns: minmax(0, 1fr); }
   .tile-wide { grid-column: auto; }
-  .tile-art { height: 300px; }
+  .tile-art { min-height: 300px; }
+  .tile .art-compare, .tile .art-cover { padding: 22px 0 26px; }
+  .art-bound { padding: 20px 12px; }
+  .bound { width: 100%; padding: 16px; }
+  .fp { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .bound-ok { flex-wrap: wrap; row-gap: 4px; }
   .art-span { padding: 24px 18px 20px; }
   .sp-card { margin-left: 4%; }
   .art-pins { padding: 24px 18px 12px; }
   .slides { grid-template-columns: repeat(4, 42%); gap: 10px; }
   .pin-b { display: none; }
-  .tile-cap { padding: 4px 20px 22px; }
+  .tile-cap { min-height: 0; padding: 4px 20px 22px; }
   .tile-full { grid-column: auto; }
-  .art-bound, .art-own, .art-open, .art-rules, .art-hand, .art-results, .art-pause, .art-run { height: auto; min-height: 280px; padding: 28px 18px; }
+  .art-own, .art-open, .art-rules, .art-hand, .art-results, .art-pause, .art-run { min-height: 280px; padding: 28px 18px; }
   .bound { flex-direction: column; align-items: stretch; gap: 18px; }
   .bound img { width: 120px; }
   .rules { grid-template-columns: minmax(0, 1fr); }
