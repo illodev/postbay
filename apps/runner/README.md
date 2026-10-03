@@ -49,7 +49,7 @@ On start it checks that `ffmpeg` runs and that each token and address works, and
 answers `{ ok: true, queued: n }`. Logs are one JSON object per line.
 
 A runner should be reachable by the studio, and only by it: in production webhooks go to public addresses over https unless
-the studio sets `WEBHOOK_ALLOW_PRIVATE_NETWORKS=true` (see [docs/phase-3.md](../../docs/phase-3.md)). Put it behind a reverse
+the studio sets `WEBHOOK_ALLOW_PRIVATE_NETWORKS=true` (see [where a webhook may point](../../docs/agents.md#where-a-webhook-may-point)). Put it behind a reverse
 proxy with TLS, or on the same private network with that setting.
 
 ## Configuration
@@ -566,7 +566,7 @@ npm test -w @estudio/runner
 
 The tests use a real PostgreSQL, a real API, real ffmpeg and a **scripted stand-in for the agent** (`test/fake-agent.mjs`, driven by
 `FAKE_AGENT_MODE`): they prove everything around the agent, not what a model does with the instructions. That includes an approved
-version scheduled by the agent in a free slot, what the studio refuses, an agent that schedules nothing, and a brand that does not allow it. `e2e/phase3.sh`
+version scheduled by the agent in a free slot, what the studio refuses, an agent that schedules nothing, and a brand that does not allow it. `e2e/agent-loop.sh`
 drives the same loop in a browser, and with `AGENT=claude` runs it with Claude Code as the agent (see [e2e/README.md](../../e2e/README.md)).
 
 Pieces made from a project are tested with real git: a local repository of projects, each piece's worktree and branch, commits with

@@ -1,4 +1,4 @@
--- Phase 5: uploads that can be resumed. A large file is sent in pieces through the app and kept on disk (a staging file) until all of it
+-- Uploads that can be resumed. A large file is sent in pieces through the app and kept on disk (a staging file) until all of it
 -- has arrived and its hash has been checked; only then is it put in storage. The row says how much has arrived, so a browser that lost its
 -- connection (or was closed) asks and carries on from there.
 alter table upload

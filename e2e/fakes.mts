@@ -3,8 +3,8 @@
 //
 //   npx tsx e2e/fakes.mts          prints the environment variables the API needs, then keeps running
 //
-// Phase 4 adds stand-ins for Threads, Bluesky, X, LinkedIn, Pinterest and TikTok. Phase 5 adds an OpenID provider, Slack and a push
-// service; their settings are only printed when FAKES_ACCESS=1 (e2e/phase5.sh), so the earlier runs see the app as they always did.
+// It also stands in for Threads, Bluesky, X, LinkedIn, Pinterest and TikTok, and for an OpenID provider, Slack and a push service; the
+// settings of those last three are only printed when FAKES_ACCESS=1 (e2e/accounts-and-notifications.sh), so the other runs leave them off.
 //
 // A small control surface lets the test look inside and break things on purpose:
 //   GET  /__state     what each fake network received (posts, videos, calls)

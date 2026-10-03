@@ -160,7 +160,7 @@ describe('reconnecting', () => {
     }
   });
 
-  it('lets a manual account from phase 1 take on its real identity when it is connected', async () => {
+  it('lets a manual account take on its real identity when it is connected', async () => {
     const manual = env.accounts.facebook; // registered by hand with a made-up id
     const s = await signIn('meta', 'good', env.users.admin, manual);
     const done = await env.call(env.users.admin, 'POST', brandUrl(`/connections/${pendingId(s.location)}/select`), { keys: ['facebook:111'] });

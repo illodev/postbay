@@ -479,7 +479,7 @@ export async function listAttempts(ctx: Ctx, p: Principal, pubId: string) {
   );
 }
 
-/** In phase 1 a person publishes by hand and records it here, with the link if there is one. Automatic publications do this themselves. */
+/** A person who published by hand records it here, with the link if there is one. Automatic publications do this themselves. */
 export async function markPublished(ctx: Ctx, p: Principal, pubId: string, raw: unknown) {
   const input = markPublishedInput.parse(raw);
   return ctx.db.tx(async (db) => {

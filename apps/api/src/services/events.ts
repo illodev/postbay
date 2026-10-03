@@ -2,7 +2,7 @@ import { actorCols, type Principal } from '../auth/principal.js';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 
-/** What a webhook can subscribe to. The contract with whoever produces: see docs/phase-3.md. */
+/** What a webhook can subscribe to. The contract with whoever produces: see docs/agents.md#events. */
 export const EVENT_TYPES = [
   'version.changes_requested',
   'version.approved',

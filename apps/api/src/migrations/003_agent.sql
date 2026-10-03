@@ -1,4 +1,4 @@
--- Phase 3: the loop with whoever produces. Domain events, signed webhooks with retried deliveries, the ledger of agent
+-- The loop with whoever produces. Domain events, signed webhooks with retried deliveries, the ledger of agent
 -- runs (rounds, budgets, the per-piece lock) and the things a person can mark so the agent leaves them alone.
 
 -- ───────────────────────── events (the outbox) ─────────────────────────

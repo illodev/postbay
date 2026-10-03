@@ -29,7 +29,7 @@ const USAGE = `Usage:
   npm run migrate -w @estudio/api
   npm run bootstrap -- --workspace "Acme" --brand "Acme Spain" --timezone Europe/Madrid --admin you@example.com
   npm run check -w @estudio/api -- --brand "Acme Spain" [--network threads] [--json] [--capture ./transcripts] [--publish --yes]
-      Checks the server and every connected account of a brand, and says what to fix (docs/phase-5.md).
+      Checks the server and every connected account of a brand, and says what to fix (docs/networks.md#checking-a-real-setup).
       --capture writes every call made to the networks, with secrets removed, so a mismatch can be reported.
       --publish makes ONE REAL POST on each account, and needs --yes. The app cannot delete it: you do.
   npm run reset-2fa -w @estudio/api -- --email you@example.com

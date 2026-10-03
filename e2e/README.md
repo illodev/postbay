@@ -1,13 +1,13 @@
 # End-to-end tests
 
-Five browser runs: [phase 1's flow](#phase-1-smoke-test), [phase 2's publishing against fake networks](#phase-2-publishing-against-fake-networks), [phase 3's agent loop](#phase-3-the-agent-loop), [phase 4's other networks, results and prizes](#phase-4-the-other-networks-results-and-prizes) and [phase 5's sign-in, notifications, subtitles and big uploads](#phase-5-signing-in-notifications-subtitles-and-big-uploads).
+Five browser runs: [the review flow](#the-review-flow), [publishing against fake networks](#publishing-against-fake-networks), [the agent loop](#the-agent-loop), [the other networks, results and prizes](#the-other-networks-results-and-prizes) and [signing in, notifications, subtitles and big uploads](#signing-in-notifications-subtitles-and-big-uploads).
 
 The browsers run in English (`locale: 'en-US'`) and the scripts' own API calls ask for English: the API answers in the language a request
 asks for (Spanish when it asks for none), and these runs read the English texts.
 
-## Phase 1 smoke test
+## The review flow
 
-Drives the real app in a real browser over the whole phase 1 flow, with real ffmpeg and a real PostgreSQL, and fails on
+Drives the real app in a real browser over the whole review flow (upload, comments, approval, calendar and assisted publishing), with real ffmpeg and a real PostgreSQL, and fails on
 any page error or console error (which includes Content-Security-Policy violations). It takes about half a minute.
 
 It needs Node 22, PostgreSQL, ffmpeg, Python 3, curl and a Chromium. `playwright-core` is a dev dependency; point
@@ -35,9 +35,9 @@ npm run e2e
 Run it against an empty database each time: it expects the brand to have no pieces. `psql` must be able to reach
 `DATABASE_URL`, because one step makes a scheduled post due by editing its time.
 
-The media is WebM because the headless Chromium used to develop this has no H.264 decoder.
+The media is WebM because headless Chromium has no H.264 decoder.
 
-## Phase 2: publishing against fake networks
+## Publishing against fake networks
 
 Connects accounts through the real UI, schedules posts, and lets the real worker prepare, publish and verify them, with real
 ffmpeg, a real PostgreSQL and a real pg-boss queue. Meta and Google are replaced by the fake servers the API tests use
@@ -52,12 +52,12 @@ One command, from a built checkout:
 
 ```sh
 npm install && npm run build && npm run e2e:assets          # once
-TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres npm run e2e:phase2
+TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres npm run e2e:publishing
 ```
 
-`e2e/phase2.sh` creates a clean database (`estudio_e2e_phase2`), starts the fakes, bootstraps a brand, starts the API with
-its worker pointed at the fakes (port 3100; fakes on 4020), runs `e2e/phase2.mjs` and stops everything. Screenshots land in
-`e2e/shots-phase2` (override with `SHOTS`). It takes about three minutes, most of it the worker doing real work: converting a
+`e2e/publishing.sh` creates a clean database (`estudio_e2e_publishing`), starts the fakes, bootstraps a brand, starts the API with
+its worker pointed at the fakes (port 3100; fakes on 4020), runs `e2e/publishing.mjs` and stops everything. Screenshots land in
+`e2e/shots-publishing` (override with `SHOTS`). It takes about three minutes, most of it the worker doing real work: converting a
 WebM to H.264, uploading, and waiting out the fake networks' "still processing" answers.
 
 It covers: connecting Facebook, Instagram and YouTube (the picker, sealed tokens); the review screen's safe-zone overlay; the
@@ -68,10 +68,10 @@ cancel; Instagram's token rejected, the account asking to be reconnected, and th
 the calendar and Publish page; and a phone-sized screen.
 
 Run it against an empty database each time (the script makes one). To drive it by hand, run `node --import tsx e2e/fakes.mts`,
-export the variables it prints before starting the API, and run `node e2e/phase2.mjs` with `BASE_URL`, `FAKES_URL` and
+export the variables it prints before starting the API, and run `node e2e/publishing.mjs` with `BASE_URL`, `FAKES_URL` and
 `DATABASE_URL` set.
 
-## Phase 3: the agent loop
+## The agent loop
 
 Drives a comment all the way to a new version, in a real browser, with the real API and worker, the real runner (started by the test
 from what an admin makes in *Settings*), real ffmpeg and a real PostgreSQL. The agent is, by default, **a scripted stand-in**
@@ -79,11 +79,11 @@ from what an admin makes in *Settings*), real ffmpeg and a real PostgreSQL. The 
 
 ```sh
 npm install && npm run build && npm run e2e:assets          # once
-TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres npm run e2e:phase3
+TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres npm run e2e:agent-loop
 ```
 
-`e2e/phase3.sh` creates a clean database (`estudio_e2e_phase3`), bootstraps a brand, starts the API with its worker (port 3200),
-runs `e2e/phase3.mjs`, and stops everything. The runner listens on 8788 (`RUNNER_PORT`). Screenshots land in `e2e/shots-phase3`
+`e2e/agent-loop.sh` creates a clean database (`estudio_e2e_agent_loop`), bootstraps a brand, starts the API with its worker (port 3200),
+runs `e2e/agent-loop.mjs`, and stops everything. The runner listens on 8788 (`RUNNER_PORT`). Screenshots land in `e2e/shots-agent-loop`
 (override with `SHOTS`); a failed step also saves what every open page looked like (`fail-NN-<user>.png`). The scripted run takes
 about a minute.
 
@@ -97,7 +97,7 @@ and attempts; and a phone-sized screen.
 ### With real Claude Code
 
 ```sh
-AGENT=claude npm run e2e:phase3
+AGENT=claude npm run e2e:agent-loop
 ```
 
 **This costs money**: about 0.07 USD per run of the agent in a normal pass (the brand's budget per piece is set to 2 USD in this mode,
@@ -107,21 +107,21 @@ are set (the agent never gets the runner's whole environment), and in this mode 
 (brighten, change the colours), so the run does not depend on what a model decides about text it cannot edit. A model is not
 deterministic: a pass shows the loop works with a real agent, not that every edit will be good.
 
-## Phase 4: the other networks, results and prizes
+## The other networks, results and prizes
 
 Connects Threads, X, LinkedIn, Pinterest, TikTok and Bluesky (and Meta again, with prizes on) through the real screens, schedules
 one photo to eight networks, lets the real worker publish it, takes the readings, and runs a prize from a comment to a download.
-The networks are the stand-ins in `apps/api/test/fakes`, started by `e2e/fakes.mts` (which now also fakes each network's sign-in page
+The networks are the stand-ins in `apps/api/test/fakes`, started by `e2e/fakes.mts` (which also fakes each network's sign-in page
 and offers `meta.scopes`, `meta.comment`, `tiktok.domain` and `tiktok.audited` on its control surface).
 
 ```sh
 npm install && npm run build && npm run e2e:assets          # once
-TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres npm run e2e:phase4
+TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres npm run e2e:networks
 ```
 
-`e2e/phase4.sh` creates a clean database (`estudio_e2e_phase4`), starts the fakes (port 4040), bootstraps a brand, starts the API with its
-worker (port 3300, with the readings and comment polling every few seconds), runs `e2e/phase4.mjs` and stops everything. Screenshots land in
-`e2e/shots-phase4` (override with `SHOTS`).
+`e2e/networks.sh` creates a clean database (`estudio_e2e_networks`), starts the fakes (port 4040), bootstraps a brand, starts the API with its
+worker (port 3300, with the readings and comment polling every few seconds), runs `e2e/networks.mjs` and stops everything. Screenshots land in
+`e2e/shots-networks` (override with `SHOTS`).
 
 **What it can and cannot tell you.** It proves the app's own behaviour from the browser down to the database. It cannot prove that the
 real networks answer the way the stand-ins do: they were written from each network's documentation, and nothing in this run reaches a real one.
@@ -137,25 +137,25 @@ message, the rule and its checks, Meta's signed webhook and its handshake, a pri
 download of the exact file, a public link for a network that cannot message, erasing a person, Meta's data-deletion callback and its status page, the
 retention purge); and phone-sized screens.
 
-## Phase 5: signing in, notifications, subtitles and big uploads
+## Signing in, notifications, subtitles and big uploads
 
 Drives the second factor, single sign-on, Slack, push messages, subtitle comments, interrupted uploads and the readiness checks through the real
 screens. The services are stand-ins in `apps/api/test/fakes` (an OpenID provider, Slack and a push service, besides the networks), started by
-`e2e/fakes.mts` when `FAKES_ACCESS=1` (the earlier runs do not set it, so they see the app as they always did).
+`e2e/fakes.mts` when `FAKES_ACCESS=1` (the other runs leave it unset).
 
 ```sh
-npm install && npm run build && npm run e2e:assets          # once; phase5.sh makes big.webm and captions.vtt if your assets predate them
-TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres npm run e2e:phase5
+npm install && npm run build && npm run e2e:assets          # once; the script makes big.webm and captions.vtt if they are missing
+TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres npm run e2e:accounts-and-notifications
 ```
 
-`e2e/phase5.sh` creates a clean database (`estudio_e2e_phase5`), starts the fakes (port 4050), bootstraps a brand, starts the API with its worker
+`e2e/accounts-and-notifications.sh` creates a clean database (`estudio_e2e_accounts`), starts the fakes (port 4050), bootstraps a brand, starts the API with its worker
 (port 3500, `SECOND_FACTOR_REQUIRED=true`, `GOOGLE_ANALYTICS=true`, notifications sent every 3 seconds, a staging directory for big uploads), runs
-`e2e/phase5.mjs` and stops everything. Screenshots land in `e2e/shots-phase5` (override with `SHOTS`).
+`e2e/accounts-and-notifications.mjs` and stops everything. Screenshots land in `e2e/shots-accounts-and-notifications` (override with `SHOTS`).
 
 **What it can and cannot tell you.** It proves the app's own behaviour from the browser down to the database. It cannot prove that a real identity
 provider, Slack, push service or network answers the way the stand-ins do. Two things are replaced on purpose:
 
-- **The browser's push API.** Chromium here cannot reach a real push service, so `PushManager.subscribe` is replaced by one that hands out a
+- **The browser's push API.** Chromium in a test run cannot reach a real push service, so `PushManager.subscribe` is replaced by one that hands out a
   subscription whose keys the test knows. Everything else (the permission, the service worker, the studio's own calls) is real, and what the studio
   sends is decrypted with that subscription's keys. Whether Chrome's, Firefox's or Apple's push service accepts what the studio sends is not tested.
 - **The authenticator app.** The test computes the codes itself (its own HMAC-SHA1 and base32, not the app's) from the key the page shows.

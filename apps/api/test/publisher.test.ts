@@ -625,7 +625,7 @@ describe('YouTube: private until the audit passes', () => {
 });
 
 describe('scheduling decisions', () => {
-  it('keeps manual accounts manual, as in phase 1, and honours a request for manual', async () => {
+  it('keeps manual accounts manual, and honours a request for manual', async () => {
     const m = await scheduled({ account: env.accounts.instagram, kind: 'post', format: '4:5', files: IMAGE });
     expect(m.pub).toMatchObject({ manual: true, next_run_at: null, prepare_at: null });
     expect(m.pub.manual_reason).toMatch(/not connected/);

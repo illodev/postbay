@@ -73,7 +73,7 @@ export function AccountCheckDialog({ brandId, account, onClose }: { brandId: str
         <div className="stack">
           <p className="muted mono small" style={{ margin: 0 }}>{summary(data.results)}</p>
           <ResultList results={data.results} />
-          <p className="muted small" style={{ margin: 0 }}>{t('settings.check.readOnly')} <code>--publish</code> (docs/phase-5.md).</p>
+          <p className="muted small" style={{ margin: 0 }}>{t('settings.check.readOnly')} <code>--publish</code> (docs/networks.md#a-real-test-post).</p>
         </div>
       )}
       <div className="row" style={{ justifyContent: 'flex-end' }}>

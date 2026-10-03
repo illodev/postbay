@@ -1,19 +1,19 @@
 #!/bin/sh
-# Runs the phase 2 browser test from nothing: a clean database, the fake Meta and Google servers, the API (with its
-# worker) pointed at them, then e2e/phase2.mjs. Everything it starts is stopped again at the end.
+# Runs the networks browser test from nothing: a clean database, the fake networks (Meta, Google, Threads, Bluesky, X, LinkedIn,
+# Pinterest, TikTok), the API (with its worker) pointed at them, then e2e/networks.mjs. Everything it starts is stopped again at the end.
 #
 #   npm install && npm run build && npm run e2e:assets      # once
-#   TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres e2e/phase2.sh
+#   TEST_DATABASE_ADMIN_URL=postgres://postgres@localhost:5433/postgres e2e/networks.sh
 #
 # Needs PostgreSQL (and permission to create a database), ffmpeg, Node 22 and a Chromium (CHROMIUM, default /opt/pw-browsers/chromium).
 set -e
 cd "$(dirname "$0")/.."
 
 ADMIN_URL="${TEST_DATABASE_ADMIN_URL:-postgres://postgres@localhost:5433/postgres}"
-DB_NAME="${E2E_DB_NAME:-estudio_e2e_phase2}"
+DB_NAME="${E2E_DB_NAME:-estudio_e2e_networks}"
 DB_URL="${ADMIN_URL%/*}/$DB_NAME"
-PORT="${PORT:-3100}"
-FAKES_PORT="${FAKES_PORT:-4020}"
+PORT="${PORT:-3300}"
+FAKES_PORT="${FAKES_PORT:-4040}"
 WORK="$(mktemp -d)"
 PIDS=""
 
@@ -41,7 +41,7 @@ done
 export DATABASE_URL="$DB_URL" NODE_ENV=development AUTH_DEV_LOGIN=true PORT
 export SECRET="$(openssl rand -hex 32)" TOKEN_KEY="$(openssl rand -base64 32)"
 export APP_URL="http://localhost:$PORT" MEDIA_URL="http://localhost:$PORT"
-export WEB_DIST="$PWD/apps/web/dist" STORAGE_LOCAL_DIR="$WORK/media" WORKER_SWEEP_SECONDS=2
+export WEB_DIST="$PWD/apps/web/dist" STORAGE_LOCAL_DIR="$WORK/media" WORKER_SWEEP_SECONDS=2 METRICS_SWEEP_SECONDS=2 PRIZE_POLL_SECONDS=3 PRIZE_PURGE_SECONDS=5
 mkdir -p "$WORK/media"
 
 npm run bootstrap -w @estudio/api --silent -- --workspace Demo --brand "Lumen Coffee" --timezone Europe/Madrid --admin admin@example.com >/dev/null
@@ -53,4 +53,4 @@ until curl -sf "http://localhost:$PORT/api/health" >/dev/null; do
   sleep 0.5
 done
 
-BASE_URL="http://localhost:$PORT" FAKES_URL="http://127.0.0.1:$FAKES_PORT" DATABASE_URL="$DB_URL" node e2e/phase2.mjs
+BASE_URL="http://localhost:$PORT" FAKES_URL="http://127.0.0.1:$FAKES_PORT" DATABASE_URL="$DB_URL" node e2e/networks.mjs

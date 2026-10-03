@@ -391,7 +391,7 @@ export async function removeMember(ctx: Ctx, p: Principal, brandId: string, memb
   });
 }
 
-// ──────────────────────── social accounts (manual in phase 1) ────────────────────────
+// ──────────────────────── social accounts ────────────────────────
 
 export const accountInput = z.object({
   network: z.enum(NETWORKS),

@@ -18,11 +18,11 @@
     "bootstrap": "npm run bootstrap -w @estudio/api --",
     "e2e:assets": "sh e2e/make-assets.sh",
     "e2e": "node e2e/smoke.mjs",
-    "e2e:phase2": "sh e2e/phase2.sh",
+    "e2e:publishing": "sh e2e/publishing.sh",
+    "e2e:agent-loop": "sh e2e/agent-loop.sh",
+    "e2e:networks": "sh e2e/networks.sh",
+    "e2e:accounts-and-notifications": "sh e2e/accounts-and-notifications.sh",
     "runner": "npm run dev -w @estudio/runner",
-    "e2e:phase3": "sh e2e/phase3.sh",
-    "e2e:phase4": "sh e2e/phase4.sh",
-    "e2e:phase5": "sh e2e/phase5.sh",
     "check:networks": "npm run check -w @estudio/api --"
   },
   "devDependencies": {

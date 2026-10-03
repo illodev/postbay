@@ -1,4 +1,4 @@
-// End-to-end check of phase 5 against FAKE services: the second factor, single sign-on, Slack, push messages, subtitle comments, big
+// End-to-end check of signing in and notifications against FAKE services: the second factor, single sign-on, Slack, push messages, subtitle comments, big
 // uploads that are interrupted and resumed, and the readiness checks, all through the real UI, with the real worker, real ffmpeg,
 // real PostgreSQL and a real browser.
 //
@@ -6,9 +6,9 @@
 // (Chrome's, Firefox's, Apple's) or a real network behave like the stand-ins in apps/api/test/fakes (written from their documentation;
 // nothing here reaches a real service). In particular the browser's push API is REPLACED here by a recorder: Chromium cannot reach a real
 // push service from this machine, so what is proven is that the studio asks for, stores and uses a subscription, and that what it sends
-// decrypts with that subscription's keys. See docs/phase-5.md.
+// decrypts with that subscription's keys. See docs/security.md and docs/notifications.md.
 //
-// Needs the API running against e2e/fakes.mts with FAKES_ACCESS=1 and SECOND_FACTOR_REQUIRED=true (e2e/phase5.sh does it all), on an EMPTY
+// Needs the API running against e2e/fakes.mts with FAKES_ACCESS=1 and SECOND_FACTOR_REQUIRED=true (e2e/accounts-and-notifications.sh does it all), on an EMPTY
 // database that has only been bootstrapped. Environment: BASE_URL, FAKES_URL, ASSETS, SHOTS, DATABASE_URL (psql URI), STAGING_DIR, CHROMIUM,
 // E2E_SLACK_URL.
 import { chromium } from 'playwright-core';
@@ -21,8 +21,8 @@ import path from 'node:path';
 const BASE = process.env.BASE_URL ?? 'http://localhost:3500';
 const FAKES = process.env.FAKES_URL ?? 'http://127.0.0.1:4050';
 const ASSETS = process.env.ASSETS ?? path.resolve('e2e/assets');
-const SHOTS = process.env.SHOTS ?? path.resolve('e2e/shots-phase5');
-const DB = process.env.DATABASE_URL ?? 'postgres://postgres@localhost:5433/estudio_e2e_phase5';
+const SHOTS = process.env.SHOTS ?? path.resolve('e2e/shots-accounts-and-notifications');
+const DB = process.env.DATABASE_URL ?? 'postgres://postgres@localhost:5433/estudio_e2e_accounts';
 const STAGING = process.env.STAGING_DIR ?? '';
 const SLACK_URL = process.env.E2E_SLACK_URL;
 const CHUNK = 8 * 1024 * 1024;
@@ -731,4 +731,4 @@ if (problems.length) {
   for (const p of problems) console.log(` - ${p}`);
   process.exit(1);
 }
-console.log('\nAll phase 5 steps passed.');
+console.log('\nAll accounts-and-notifications end-to-end steps passed.');

@@ -1,8 +1,8 @@
-// End-to-end check of phase 2 against FAKE networks: connect accounts through the real UI, schedule posts, and watch the
+// End-to-end check of publishing against FAKE networks: connect accounts through the real UI, schedule posts, and watch the
 // real worker prepare, publish and verify them (real ffmpeg, real Postgres, real pg-boss, real browser).
 //
 // What this proves: the app's own behaviour end to end. What it cannot prove: that Meta and Google behave like the fakes
-// in apps/api/test/fakes. See e2e/README.md and docs/phase-2.md.
+// in apps/api/test/fakes. See e2e/README.md and docs/publishing.md.
 //
 // Needs the API running against e2e/fakes.mts (see e2e/README.md), on an EMPTY database that has only been bootstrapped.
 // Environment: BASE_URL, FAKES_URL (control surface, default http://127.0.0.1:4010), ASSETS, SHOTS, DATABASE_URL (psql URI),
@@ -15,7 +15,7 @@ import path from 'node:path';
 const BASE = process.env.BASE_URL ?? 'http://localhost:3000';
 const FAKES = process.env.FAKES_URL ?? 'http://127.0.0.1:4010';
 const ASSETS = process.env.ASSETS ?? path.resolve('e2e/assets');
-const SHOTS = process.env.SHOTS ?? path.resolve('e2e/shots-phase2');
+const SHOTS = process.env.SHOTS ?? path.resolve('e2e/shots-publishing');
 const DB = process.env.DATABASE_URL ?? 'postgres://postgres@localhost:5433/estudio_e2e2';
 mkdirSync(SHOTS, { recursive: true });
 
@@ -475,4 +475,4 @@ if (problems.length) {
   for (const x of problems) console.log(` - ${x}`);
   process.exit(1);
 }
-console.log('\nAll phase 2 end-to-end steps passed.');
+console.log('\nAll publishing end-to-end steps passed.');

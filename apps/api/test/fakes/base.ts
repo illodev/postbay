@@ -4,7 +4,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
  * What the stand-ins for the networks have in common: a local HTTP server that logs every call, answers JSON, form and raw
  * bodies, and can be told to fail the next calls that match something. Each network's own behaviour goes in `handle`.
  *
- * Like the phase 2 fakes these prove OUR logic (the calls we make, in what order, and what we do with the answers). They are
+ * Like the Meta and Google fakes, these prove OUR logic (the calls we make, in what order, and what we do with the answers). They are
  * written from how each API is documented to behave; they cannot prove the real service still behaves that way.
  */
 export interface Call {

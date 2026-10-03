@@ -1,4 +1,4 @@
--- Phase 5: a second factor for people, single sign-on, and who is told about what.
+-- A second factor for people, single sign-on, and who is told about what.
 
 -- ───────────────────────── second factor ─────────────────────────
 
