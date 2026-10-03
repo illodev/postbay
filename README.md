@@ -92,3 +92,7 @@ setting is in [Configuration](docs/configuration.md).
 Every connection to a social network is written against that network's documentation and tested against a local stand-in;
 none has been run against real accounts yet. Some networks (TikTok, Pinterest, YouTube) keep posts private until they review
 the app, and TikTok may not approve an app like this one.
+
+## License
+
+[MIT](LICENSE). Made by illodev, who also makes [drawn-by-code](https://github.com/illodev/drawn-by-code).

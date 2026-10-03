@@ -2,6 +2,7 @@
   "name": "@estudio/runner",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "description": "Listens to the studio's webhooks and runs an agent for each request for changes.",
   "type": "module",
   "scripts": {

@@ -2,6 +2,7 @@
   "name": "estudio-de-contenidos",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "description": "Self-hosted content studio: review, approval and publishing of content pieces for one or several brands.",
   "workspaces": [
     "apps/*"

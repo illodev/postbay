@@ -90,7 +90,7 @@ export const content = {
     footer: {
       product: 'Product', resources: 'Resources', more: 'More',
       deploy: 'Deployment guide', plugin: 'Claude Code plugin',
-      oss: 'Postbay is open source.', by: 'Made by illodev.',
+      oss: 'Postbay is open source, under the MIT license.', by: 'Made by illodev.',
     },
     switchTo: { label: 'Español', href: '/es/' },
     img: 'en',
@@ -184,7 +184,7 @@ export const content = {
     footer: {
       product: 'Producto', resources: 'Recursos', more: 'Más',
       deploy: 'Guía de despliegue', plugin: 'Plugin de Claude Code',
-      oss: 'Postbay es de código abierto.', by: 'Hecho por illodev.',
+      oss: 'Postbay es de código abierto, con licencia MIT.', by: 'Hecho por illodev.',
     },
     switchTo: { label: 'English', href: '/' },
     img: 'es',
