@@ -37,7 +37,7 @@ const schema = z.object({
   /** The host Slack incoming webhook addresses are on. Only that host is accepted; this is changed only to point tests at a stand-in. */
   SLACK_HOOK_HOST: z.string().default('hooks.slack.com'),
 
-  // Access (phase 5)
+  // Signing in: the second factor and single sign-on
   /** A second factor (an authenticator app) for admins and approvers. On in production unless set to false; in development it is off unless set to true. */
   SECOND_FACTOR_REQUIRED: z.enum(['true', 'false', '1', '0', '']).optional(),
   /**
@@ -58,7 +58,7 @@ const schema = z.object({
   /** Accept an email the provider does not say is verified (Microsoft Entra does not send the claim). Only for a single-tenant issuer whose admin controls the addresses. */
   OIDC_TRUST_EMAIL: bool,
 
-  // Connected accounts (phase 2)
+  // Connected accounts: Meta (Facebook, Instagram) and Google (YouTube)
   /** Master key for the stored network tokens, 32 bytes in base64: openssl rand -base64 32 */
   TOKEN_KEY: z.string().optional(),
   META_APP_ID: z.string().optional(),
@@ -82,7 +82,7 @@ const schema = z.object({
   GOOGLE_ANALYTICS: z.enum(['true', 'false', '1', '0', '']).default('false').transform((v) => v === 'true' || v === '1'),
   /** How long the files handed to a network by URL stay downloadable. */
   PUBLIC_MEDIA_TTL_SECONDS: z.coerce.number().int().min(300).default(6 * 3600),
-  // Workers (phase 2)
+  // Workers
   /** Run the queue workers inside the API process. Turn off when a separate worker process runs them. */
   RUN_WORKERS: z.enum(['true', 'false', '1', '0', '']).default('true').transform((v) => v !== 'false' && v !== '0'),
   /** How often the worker looks for publications that need attention. */
@@ -91,14 +91,14 @@ const schema = z.object({
   NOTIFY_SECONDS: z.coerce.number().int().min(1).default(30),
   // Extra origins the browser may load media from or upload to (space separated), e.g. a bucket host.
   MEDIA_ORIGINS: z.string().default(''),
-  // Webhooks (phase 3)
+  // Webhooks
   /**
    * Whether webhooks may be sent to addresses on a private network (a runner on the same machine or LAN). Addresses used by
    * cloud metadata services are never allowed. Default: allowed in development, refused in production.
    */
   WEBHOOK_ALLOW_PRIVATE_NETWORKS: z.enum(['true', 'false', '1', '0', '']).optional(),
 
-  // The rest of the networks (phase 4). Each is on when its credentials are set; Bluesky needs none (a person gives an app password).
+  // The other networks. Each is on when its credentials are set; Bluesky needs none (a person gives an app password).
   THREADS_APP_ID: z.string().optional(),
   THREADS_APP_SECRET: z.string().optional(),
   THREADS_OAUTH_URL: z.string().default('https://threads.net/oauth/authorize'),
@@ -125,7 +125,7 @@ const schema = z.object({
   BLUESKY_PDS_URL: z.string().default('https://bsky.social'),
   BLUESKY_VIDEO_URL: z.string().default('https://video.bsky.app'),
 
-  // Metrics and prizes (phase 4)
+  // Metrics and prizes
   /** Token Meta sends back when the comment webhook is set up in the app dashboard. Without it the webhook endpoint stays closed. */
   META_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
   /** How often the worker looks for metric snapshots that are due. */

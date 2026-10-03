@@ -6,7 +6,7 @@ import { ConnectorError, type Account, type ConnectorEnv, type Handle, type Medi
 
 export const redirect = 'http://app.test/api/oauth/callback';
 
-/** A config pointing the phase 4 networks at the given stand-ins (only those named are switched on). */
+/** A config pointing Threads, Bluesky, X, LinkedIn, Pinterest and TikTok at the given stand-ins (only those named are switched on). */
 export function configFor(extra: Record<string, string>) {
   return loadConfig({ NODE_ENV: 'test', SECRET: 'x'.repeat(40), TOKEN_KEY: randomBytes(32).toString('base64'), ...extra });
 }

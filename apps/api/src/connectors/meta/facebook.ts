@@ -15,7 +15,7 @@ import { describeSubscription, subscribe, unsubscribe } from './webhooks.js';
  * so everything is created ahead of time as a scheduled post and goes out even if this app is down at that hour.
  * When there is too little lead time left for that (the app was late), the post is made and published at once instead.
  *
- * As with the other connectors, the figures come from the public documentation as the specification recorded it.
+ * As with the other connectors, the figures come from the public documentation.
  *
  * Commenting as the Page (the first comment) needs pages_manage_engagement; a refusal is kept and said in the post's history.
  * Photos of a scheduled album are uploaded as temporary (published=false, temporary=true), as Meta requires for photos used in a

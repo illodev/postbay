@@ -1,6 +1,6 @@
 import { define } from './define';
 
-// What came after the phases: deactivating members, scheduling after approval (a piece made for a slot, free slots, the agent),
+// Deactivating members, scheduling after approval (a piece made for a slot, free slots, the agent),
 // prizes from a piece, and the brand's variant styles. Spanish first; English must have the same keys (TypeScript checks it).
 export const features = define({
   es: {

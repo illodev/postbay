@@ -1,4 +1,4 @@
--- Phase 4: the rest of the networks, what came of each post (metrics), and prizes for commenting.
+-- The other networks, what came of each post (metrics), and prizes for commenting.
 
 -- ───────────────────────── more ways to sign in ─────────────────────────
 

@@ -2,7 +2,7 @@
  * What each network accepts, as files. A connector names a profile for each placement; before publishing, the app checks
  * the file against it and only transcodes when the original does not already fit ("if it fits, it goes out as it is").
  *
- * The numbers come from the networks' public guidelines as the specification recorded them, and several of those pages
+ * The numbers come from the networks' public guidelines, and several of those pages
  * disagree with each other, so treat every figure here as something to re-check against the current documentation
  * before relying on it. Limits that are not certain are applied as warnings by the connectors, not as errors.
  */
@@ -53,7 +53,7 @@ export const PROFILES: Record<string, FileProfile> = {
   'fb-reel': video('fb-reel', 1080, 1920, 60, 25_000, 1024 * MB, 24),
   'fb-photo': { kind: 'image', id: 'fb-photo', format: 'jpeg', maxWidth: 2048, maxBytes: 10 * MB },
   'yt-video': video('yt-video', 3840, 2160, 60, 50_000, 8 * 1024 * MB),
-  // Phase 4. As above, every figure is the networks' public guidance as the specification recorded it: check before relying on it.
+  // Threads, Bluesky, X, LinkedIn, Pinterest and TikTok. As above, every figure is the networks' public guidance: check before relying on it.
   'th-video': video('th-video', 1080, 1920, 60, 25_000, 1024 * MB, 23),
   'th-image': { kind: 'image', id: 'th-image', format: 'jpeg', maxWidth: 1440, maxBytes: 8 * MB },
   'tt-video': video('tt-video', 1080, 1920, 60, 25_000, 4 * 1024 * MB, 23),

@@ -28,7 +28,7 @@ import type { Connector, ConnectorSet, Network, OAuthProvider, ProviderId } from
 
 /**
  * The connectors this deployment has credentials for. A network whose provider is not configured has no connector,
- * so accounts on it stay manual (a person publishes them) exactly as in phase 1.
+ * so accounts on it stay manual: a person publishes them by hand.
  */
 export function createConnectorSet(config: Config, now: () => Date = () => new Date()): ConnectorSet {
   const connectors = new Map<Network, Connector>();

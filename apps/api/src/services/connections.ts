@@ -221,7 +221,7 @@ async function connectChosen(ctx: Ctx, p: Principal & { kind: 'user' }, brandId:
     if (target && (chosen.length !== 1 || chosen[0]!.network !== target.network)) {
       throw badRequest('wrong_account', msg('connect.chooseOne', { network: target.network, name: target.display_name }));
     }
-    // A connected account must come back as the same account; a manual one (phase 1) simply adopts its real identity.
+    // A connected account must come back as the same account; a manual one simply adopts its real identity.
     if (target && target.status !== 'manual' && target.external_id !== chosen[0]!.externalId) {
       throw badRequest('wrong_account', msg('connect.wrongAccount', { chosen: chosen[0]!.displayName, name: target.display_name }));
     }

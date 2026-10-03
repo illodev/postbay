@@ -1,4 +1,4 @@
-/* What came after the phases: deactivated members, scheduling after approval, piece prizes, variant styles. Tone, not lines. */
+/* Deactivated members, scheduling after approval, piece prizes, variant styles. Tone, not lines. */
 
 /* Settings › Miembros: a deactivated member is there, quieter. */
 .set-gone .avatar, .set-gone > :first-child { opacity: .45; filter: grayscale(1); }

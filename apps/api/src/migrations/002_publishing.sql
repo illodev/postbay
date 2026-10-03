@@ -1,4 +1,4 @@
--- Phase 2: connected accounts, the publishing pipeline, an attempt log and transcoded renditions.
+-- Connected accounts, the publishing pipeline, an attempt log and transcoded renditions.
 
 -- ───────────────────────── connected accounts ─────────────────────────
 

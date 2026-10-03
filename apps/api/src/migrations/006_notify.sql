@@ -1,4 +1,4 @@
--- Phase 5: where notifications go besides the bell and email: Slack, and push to people's browsers.
+-- Where notifications go besides the bell and email: Slack, and push to people's browsers.
 
 -- Each channel keeps its own bookkeeping on the notification: when it was done (or skipped, because the person or brand does not use that
 -- channel), how many times it has been tried and when to try next. What happened before this migration is history and is not sent.

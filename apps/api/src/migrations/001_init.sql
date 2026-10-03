@@ -1,4 +1,4 @@
--- Phase 1: review, approval, calendar and assisted publishing.
+-- Review, approval, calendar and assisted publishing.
 -- Everything hangs off workspace → brand → social account. Nothing crosses from one workspace to another.
 
 create table workspace (
@@ -77,7 +77,7 @@ create table social_account (
   external_id         text not null,
   display_name        text not null,
   granted_permissions jsonb not null default '[]',
-  -- Phase 2: token encrypted with AES-256-GCM. In phase 1 accounts are manual and hold no token.
+  -- The account's token, encrypted with AES-256-GCM. A manual account holds no token.
   token_encrypted     bytea,
   token_expires_at    timestamptz,
   status              text not null default 'manual' check (status in ('active','reconnect_required','manual')),
@@ -220,7 +220,7 @@ create table publication (
   scheduled_at       timestamptz not null,
   status             text not null default 'scheduled'
                      check (status in ('scheduled','awaiting_reapproval','on_hold','published','cancelled','failed')),
-  manual             boolean not null default true,   -- phase 1: always published by hand
+  manual             boolean not null default true,   -- published by hand by a person
   external_id        text,
   url                text,
   error              text,
