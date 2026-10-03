@@ -42,7 +42,6 @@ function netMono(n) {
 const NETWORKS = [['instagram', 'Instagram'], ['facebook', 'Facebook'], ['youtube', 'YouTube'], ['tiktok', 'TikTok'], ['linkedin', 'LinkedIn'], ['x', 'X'], ['threads', 'Threads'], ['pinterest', 'Pinterest'], ['bluesky', 'Bluesky']];
 
 const check = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.4 3 3 6-6.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const points = (list) => `<ul class="points">${list.map((p) => `<li>${check}<span>${esc(p)}</span></li>`).join('')}</ul>`;
 const arrow = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const robot = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8V5M9.5 13h.01M14.5 13h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 const chevron = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -173,6 +172,151 @@ function reviewTiles(t, prefix) {
   </div>`;
 }
 
+const caption = (c) => `<div class="tile-cap"><h3>${esc(c.title)}</h3><p>${esc(c.text)}</p></div>`;
+const head = (sec, href) => `<header class="sec-head" data-reveal>
+    <h2>${sec.lines.map(esc).join('<br class="br"> ')}</h2>
+    <div><p>${esc(sec.text)}</p><a class="quiet" href="${href}">${sec.link}${arrow}</a></div>
+  </header>`;
+/** Pieces that play in steps: site.js adds s1, s2… at these times (ms), then starts again after the last number. */
+const loop = (times) => `data-loop="${times.join(',')}"`;
+
+function approveTiles(t, prefix) {
+  const a = t.approve;
+  const p = (f) => `${prefix}assets/img/p/${f}`;
+  return `<div class="tiles">
+    <article class="tile tile-wide">
+      <div class="tile-art art-bound" aria-hidden="true" ${loop([2600, 3200, 7600])} data-still="0">
+        <div class="bound">
+          <img src="${p('pumpkin.jpg')}" alt="" width="540" height="675" loading="lazy">
+          <div class="bound-body">
+            <b class="bound-title">Pumpkin spice is back</b>
+            <span class="muted">v2 · 4:5 · Bold type</span>
+            <div class="fp"><span class="muted">${a.bound.fingerprint}</span><code><span class="fp-a">9b17539dcacb<span class="faint">8f2a41e0</span></span><span class="fp-b">9b17539dcacb<span class="faint">8f2a</span><em>9</em><span class="faint">1e0</span></span></code></div>
+            <div class="bound-ok">${check}<span>${a.bound.approvedFor}</span><span class="net net-xs">${netLogo('instagram')}</span><b>@lumen.coffee</b></div>
+            <div class="bound-void"><i></i>${esc(a.bound.changed)}</div>
+          </div>
+        </div>
+      </div>
+      ${caption(a.bound)}
+    </article>
+    <article class="tile">
+      <div class="tile-art art-own" aria-hidden="true" ${loop([900, 1700, 4600])}>
+        <div class="own">
+          <div class="own-row"><span class="av av-sam">SR</span><span>${a.own.uploaded}</span></div>
+          <div class="own-btn"><span class="tip">${a.own.tip}</span><span class="hw-btn hw-approve off">${check}${a.own.approve}</span>
+            <svg class="cursor" viewBox="0 0 24 24"><path d="M5 3l14 8-6.2 1.6L10 19z" fill="#fff" stroke="#0b0c11" stroke-width="1.4" stroke-linejoin="round"/></svg></div>
+        </div>
+      </div>
+      ${caption(a.own)}
+    </article>
+    <article class="tile">
+      <div class="tile-art art-open" aria-hidden="true" ${loop([1400, 2800, 3600, 7200])}>
+        <div class="open">
+          <div class="oc oc-a"><i class="ring"></i>${check}<span class="av av-leo">LP</span><span>${esc(a.open.a)}</span></div>
+          <div class="oc oc-b"><i class="ring"></i>${check}<span class="av av-sam">SR</span><span>${esc(a.open.b)}</span></div>
+          <div class="open-btn"><span class="hw-btn n2">${a.open.openN(2)}</span><span class="hw-btn n1">${a.open.openN(1)}</span><span class="hw-btn hw-approve n0">${check}${a.open.approve}</span></div>
+        </div>
+      </div>
+      ${caption(a.open)}
+    </article>
+    <article class="tile tile-wide">
+      <div class="tile-art art-rules" aria-hidden="true" ${loop([900, 1700, 2500, 3600, 4600, 5300, 8600])}>
+        <div class="rules">
+          <div class="panel">
+            <span class="panel-label">${a.rules.checklist}</span>
+            ${a.rules.items.map((it, i) => `<div class="ck ck-${i + 1}"><i class="box">${check}</i><span>${esc(it)}</span></div>`).join('')}
+          </div>
+          <div class="panel">
+            <span class="panel-label">${a.rules.approvals} <span class="count"><span class="c0">${a.rules.of(0, 2)}</span><span class="c1">${a.rules.of(1, 2)}</span><span class="c2">${a.rules.of(2, 2)}</span></span></span>
+            <div class="appr"><span class="av av-maya">MO</span><b>Maya Ortiz</b>${check}</div>
+            <div class="appr appr-2"><span class="av av-leo">LP</span><b>Leo Park</b>${check}</div>
+            <span class="chip chip-good rules-ok">${check}${a.rules.approved}</span>
+          </div>
+        </div>
+      </div>
+      ${caption(a.rules)}
+    </article>
+  </div>`;
+}
+
+function publishTiles(t, prefix) {
+  const u = t.publish;
+  const th = (f) => `<img src="${prefix}assets/img/p/${f}-thumb.jpg" alt="" width="120" height="150" loading="lazy">`;
+  const post = (time, n, f, extra = '') => `<div class="post ${extra}">${th(f)}<span class="post-time">${time}</span><span class="mono">${netMono(n)}</span>${extra === 'goes-out' ? `<span class="pub">${check}</span>` : ''}</div>`;
+  const days = [
+    [post('09:00', 'instagram', 'pumpkin'), post('18:30', 'facebook', 'ethiopia')],
+    [post('08:00', 'linkedin', 'store-1'), `<div class="swap"><div class="post slot"><span class="slot-free">${u.week.free}</span><span class="slot-meta"><span class="post-time">19:00</span><span class="mono">${netMono('instagram')}</span></span></div>${post('19:00', 'instagram', 'latte-1', 'filled')}</div>`],
+    [post('10:00', 'tiktok', 'roast-1', 'goes-out'), post('13:00', 'youtube', 'teaser-1')],
+    [post('12:00', 'x', 'hours')],
+    [post('09:00', 'instagram', 'ethiopia'), post('20:00', 'threads', 'latte-2')],
+    [post('11:00', 'pinterest', 'latte-1')],
+    null,
+  ];
+  return `<div class="tiles">
+    <article class="tile tile-full">
+      <div class="tile-art art-week" aria-hidden="true" ${loop([1400, 2800, 4600, 8400])}>
+        <div class="week">
+          ${u.week.days.map((d, i) => `<div class="day${i === 2 ? ' today' : ''}${days[i] ? '' : ' blocked'}">
+            <span class="day-head">${d} <b>${12 + i}</b></span>
+            <div class="day-body">${days[i] ? days[i].join('') : `<span class="blocked-label">${u.week.blocked}</span>`}</div>
+          </div>`).join('')}
+        </div>
+      </div>
+      ${caption(u.week)}
+    </article>
+    <article class="tile">
+      <div class="tile-art art-hand" aria-hidden="true" ${loop([1500, 3300, 6400])}>
+        <div class="hand">
+          <div class="hand-head"><img src="${prefix}assets/img/p/hours-thumb.jpg" alt="" width="120" height="213" loading="lazy"><div><span class="chip chip-due">${u.hand.due}</span><span class="hand-meta">20:00 <span class="net net-xs">${netLogo('instagram')}</span> ${u.hand.files}</span></div></div>
+          <div class="hand-row r1"><div><span class="muted">${u.hand.caption}</span><p>${esc(u.hand.captionText)}</p></div><span class="copy"><span class="c-a">${u.hand.copy}</span><span class="c-b">${check}${u.hand.copied}</span></span></div>
+          <div class="hand-row r2"><div><span class="muted">${u.hand.first}</span><p>${esc(u.hand.firstText)}</p></div><span class="copy"><span class="c-a">${u.hand.copy}</span><span class="c-b">${check}${u.hand.copied}</span></span></div>
+        </div>
+      </div>
+      ${caption(u.hand)}
+    </article>
+    <article class="tile">
+      <div class="tile-art art-results" aria-hidden="true" ${loop([500, 6500])}>
+        <div class="results">
+          ${u.results.rows.map(([n, metric, value, pct]) => `<div class="res res-${n}"><span class="mono">${netMono(n)}</span><span class="muted">${metric}</span><b>${value}</b><span class="bar"><i style="--w:${pct}%"></i></span></div>`).join('')}
+        </div>
+      </div>
+      ${caption(u.results)}
+    </article>
+    <article class="tile">
+      <div class="tile-art art-pause" aria-hidden="true" ${loop([2400, 6000])}>
+        <div class="pause">
+          <div class="pause-head"><span class="p-on">${u.pause.on}</span><span class="p-off">${u.pause.off}</span><span class="switch"><i></i></span></div>
+          ${[['19:00', 'instagram', 'latte-1'], ['20:00', 'threads', 'latte-2'], ['09:00', 'instagram', 'ethiopia']].map(([time, n, f]) => `<div class="held">${th(f)}<span class="post-time">${time}</span><span class="mono">${netMono(n)}</span><span class="chip chip-held">${u.pause.held}</span></div>`).join('')}
+        </div>
+      </div>
+      ${caption(u.pause)}
+    </article>
+  </div>`;
+}
+
+function agentTiles(t, prefix) {
+  const g = t.agents;
+  return `<div class="tiles">
+    <article class="tile tile-wide">
+      <div class="tile-art art-run" aria-hidden="true" ${loop([600, 1400, 2200, 3000, 3800, 4600, 9000])}>
+        <div class="run">
+          <ol>${g.run.steps.map(([time, text], i) => `<li class="st-${i + 1}"><span class="run-time">${time}</span><i class="run-dot"></i><span>${esc(text)}</span></li>`).join('')}</ol>
+          <div class="meters">
+            <div class="meter"><span class="muted">${g.run.piece}</span><b>$0.42 <span class="faint">/ $2.00</span></b><span class="bar"><i style="--w:21%"></i></span></div>
+            <div class="meter"><span class="muted">${g.run.month}</span><b>$7.10 <span class="faint">/ $40.00</span></b><span class="bar"><i style="--w:18%"></i></span></div>
+          </div>
+        </div>
+      </div>
+      ${caption(g.run)}
+    </article>
+    <article class="tile tile-dbc">
+      <div class="tile-art art-dbc"><video src="${prefix}assets/video/drawn-by-code.mp4" poster="${prefix}assets/video/drawn-by-code.jpg" autoplay muted loop playsinline aria-hidden="true"></video></div>
+      <div class="tile-cap"><h3>${esc(g.dbc.title)}</h3><p>${esc(g.dbc.text)}</p><a class="quiet" href="${DBC}">${g.dbc.link}${arrow}</a></div>
+    </article>
+  </div>
+  <div class="principles" data-reveal>${g.rules.map(([h, x]) => `<div><h3>${esc(h)}</h3><p>${esc(x)}</p></div>`).join('')}</div>`;
+}
+
 function page(t, prefix) {
   const img = (name) => `${prefix}assets/img/${name}-${t.img}.jpg`;
   const other = t.lang === 'en' ? 'es' : 'en';
@@ -205,7 +349,7 @@ function page(t, prefix) {
   <div class="wrap nav-in">
     <a class="brand" href="${prefix}" aria-label="Postbay">${lockup}</a>
     <nav class="nav-links" aria-label="${t.lang === 'en' ? 'Main' : 'Principal'}">
-      <a href="#features">${t.nav.features}</a><a href="#agents">${t.nav.agents}</a><a href="#claude">${t.nav.claude}</a><a href="#self-host">${t.nav.selfhost}</a><a href="${DOCS}">${t.nav.docs}</a>
+      <a href="#features">${t.nav.review}</a><a href="#approve">${t.nav.approve}</a><a href="#publish">${t.nav.publish}</a><a href="#agents">${t.nav.agents}</a><a href="#claude">${t.nav.claude}</a><a href="#self-host">${t.nav.selfhost}</a>
     </nav>
     <div class="nav-end">
       <a class="lang" href="${t.switchTo.href}" hreflang="${other}" lang="${other}">${t.switchTo.label}</a>
@@ -241,91 +385,65 @@ function page(t, prefix) {
   <div data-reveal>${reviewTiles(t, prefix)}</div>
 </section>
 
-<section class="wrap features">
-  <article class="feature reverse" data-reveal>
-    <div class="feature-text">
-      <p class="kicker">${t.features.approve.kicker}</p>
-      <h2>${esc(t.features.approve.title)}</h2>
-      <p>${esc(t.features.approve.text)}</p>
-    </div>
-    <div class="feature-media">
-      <div class="approval" aria-hidden="true">
-        <div class="ap-row"><img src="${prefix}assets/img/approval-thumb.jpg" alt="" width="96" height="120"><div><b>Pumpkin spice is back</b><span class="muted">v2 · 4:5 · Bold type</span></div></div>
-        <div class="ap-fp"><span class="muted">${t.features.approve.fingerprint}</span><code>9b17539dcacb<span class="fp-rest">8f2a…</span></code></div>
-        <div class="ap-ok">${check}<span>${t.features.approve.approvedFor}</span><span class="net net-sm">${netLogo('instagram')}</span><b>@lumen.coffee</b></div>
-        <div class="ap-void"><span class="dot"></span>${esc(t.features.approve.changed)}</div>
+<section id="approve" class="wrap section">
+  ${head(t.approve, `${REPO}/blob/main/docs/review.md`)}
+  <div data-reveal>${approveTiles(t, prefix)}</div>
+</section>
+
+<section id="publish" class="wrap section">
+  ${head(t.publish, `${REPO}/blob/main/docs/publishing.md`)}
+  <div data-reveal>${publishTiles(t, prefix)}</div>
+</section>
+
+<section id="agents" class="wrap section">
+  ${head(t.agents, `${REPO}/blob/main/docs/agents.md`)}
+  <div data-reveal>${agentTiles(t, prefix)}</div>
+</section>
+
+<section id="claude" class="wrap section">
+  ${head(t.claude, PLUGIN)}
+  <div class="tiles" data-reveal data-claude>
+    <article class="tile tile-wide tile-term">
+      <div class="tile-art art-term" aria-hidden="true">
+        <div class="term">
+          <p class="t-ask"><span class="prompt">&gt;</span> <span data-type="${esc(t.claude.terminal.ask)}"></span></p>
+          <div class="t-answer">${t.claude.terminal.answer.map((l) => `<p>${l.startsWith('  ') ? '&nbsp;&nbsp;' + esc(l.trim()) : esc(l)}</p>`).join('')}</div>
+        </div>
       </div>
-    </div>
-  </article>
-
-  <article class="feature" data-reveal>
-    <div class="feature-text">
-      <p class="kicker">${t.features.publish.kicker}</p>
-      <h2>${esc(t.features.publish.title)}</h2>
-      <p>${esc(t.features.publish.text)}</p>
-      ${points(t.features.publish.points)}
-    </div>
-    <div class="feature-media"><div class="window"><img src="${img('calendar')}" alt="" loading="lazy" width="2400" height="1500"></div></div>
-  </article>
-</section>
-
-<section id="agents" class="band">
-  <div class="wrap agents" data-reveal>
-    <div>
-      <p class="kicker k-agent">${t.agents.kicker}</p>
-      <h2>${esc(t.agents.title)}</h2>
-      <p>${esc(t.agents.text)}</p>
-      ${points(t.agents.points)}
-    </div>
-    <div class="dbc">
-      <video src="${prefix}assets/video/drawn-by-code.mp4" poster="${prefix}assets/video/drawn-by-code.jpg" autoplay muted loop playsinline aria-hidden="true"></video>
-      <div class="dbc-text">
-        <h3>${esc(t.agents.dbc.title)}</h3>
-        <p>${esc(t.agents.dbc.text)}</p>
-        <a class="link" href="${DBC}">${t.agents.dbc.link}${arrow}</a>
+    </article>
+    <article class="tile">
+      <div class="tile-art art-install">
+        <pre class="code"><code><span class="c">$</span> claude plugin marketplace add \\
+    illodev/postbay
+<span class="c">$</span> claude plugin install \\
+    postbay@postbay</code></pre>
       </div>
-    </div>
+      ${caption(t.claude.install)}
+    </article>
   </div>
 </section>
 
-<section id="claude" class="wrap claude" data-reveal>
-  <div class="claude-text">
-    <p class="kicker">${t.claude.kicker}</p>
-    <h2>${esc(t.claude.title)}</h2>
-    <p>${esc(t.claude.text)}</p>
-    <p class="small"><a class="link" href="${PLUGIN}">${t.claude.install}${arrow}</a></p>
-    <pre class="code"><code><span class="c">$</span> claude plugin marketplace add illodev/postbay
-<span class="c">$</span> claude plugin install postbay@postbay</code></pre>
-  </div>
-  <div class="terminal" aria-hidden="true">
-    <div class="term-bar"><i></i><i></i><i></i><span>claude</span></div>
-    <div class="term-body">
-      <p class="t-ask"><span class="prompt">&gt;</span> <span data-type="${esc(t.claude.terminal.ask)}"></span></p>
-      <div class="t-answer">${t.claude.terminal.answer.map((l) => `<p>${l.startsWith('  ') ? '&nbsp;&nbsp;' + esc(l.trim()) : esc(l)}</p>`).join('')}</div>
-    </div>
-  </div>
-</section>
-
-<section id="self-host" class="band">
-  <div class="wrap selfhost" data-reveal>
-    <div>
-      <p class="kicker">${t.selfhost.kicker}</p>
-      <h2>${esc(t.selfhost.title)}</h2>
-      <p>${esc(t.selfhost.text)}</p>
-      <div class="cta"><a class="btn btn-primary" href="${DEPLOY}">${t.selfhost.docs}${arrow}</a><a class="btn" href="${REPO}">${gh}GitHub</a></div>
-    </div>
-    <pre class="code"><code><span class="c">$</span> git clone ${REPO}.git &amp;&amp; cd postbay
-<span class="c">$</span> cp deploy/.env.example deploy/.env   <span class="cm"># ${t.lang === 'en' ? 'your domains and secrets' : 'tus dominios y secretos'}</span>
+<section id="self-host" class="wrap closing" data-reveal>
+  <h2>${esc(t.selfhost.title)}</h2>
+  <p>${esc(t.selfhost.text)}</p>
+  <div class="cta"><a class="btn btn-light" href="${DEPLOY}">${t.selfhost.docs}</a><a class="btn" href="${REPO}">${gh}GitHub</a></div>
+  <pre class="code"><code><span class="c">$</span> git clone ${REPO}.git &amp;&amp; cd postbay
+<span class="c">$</span> cp deploy/.env.example deploy/.env   <span class="cm"># ${t.selfhost.comment}</span>
 <span class="c">$</span> docker compose -f deploy/docker-compose.yml \\
     --env-file deploy/.env up -d --build</code></pre>
-  </div>
 </section>
 </main>
 
 <footer class="wrap footer">
-  <a class="brand" href="${prefix}" aria-label="Postbay">${lockup}</a>
-  <p>${t.footer.oss} ${t.footer.by} ${t.footer.sister} <a href="${DBC}">drawn-by-code</a>.</p>
-  <nav><a href="${REPO}">GitHub</a><a href="${DOCS}">${t.nav.docs}</a><a href="${t.switchTo.href}" lang="${other}">${t.switchTo.label}</a></nav>
+  <div class="foot-brand">
+    <a class="brand" href="${prefix}" aria-label="Postbay">${lockup}</a>
+    <p>${t.footer.oss}<br>${t.footer.by}</p>
+  </div>
+  <nav class="foot-cols" aria-label="Footer">
+    <div><h4>${t.footer.product}</h4><a href="#features">${t.nav.review}</a><a href="#approve">${t.nav.approve}</a><a href="#publish">${t.nav.publish}</a><a href="#agents">${t.nav.agents}</a><a href="#claude">${t.nav.claude}</a></div>
+    <div><h4>${t.footer.resources}</h4><a href="${DOCS}">${t.nav.docs}</a><a href="${DEPLOY}">${t.footer.deploy}</a><a href="${PLUGIN}">${t.footer.plugin}</a><a href="${REPO}">GitHub</a></div>
+    <div><h4>${t.footer.more}</h4><a href="${DBC}">drawn-by-code</a><a href="${t.switchTo.href}" lang="${other}">${t.switchTo.label}</a></div>
+  </nav>
 </footer>
 <script src="${prefix}assets/site.js" defer></script>
 </body>

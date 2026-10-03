@@ -6,7 +6,7 @@ const seen = new IntersectionObserver((entries) => {
     if (!e.isIntersecting) continue;
     e.target.classList.add('in');
     seen.unobserve(e.target);
-    if (e.target.id === 'claude') type(e.target);
+    if (e.target.hasAttribute('data-claude')) type(e.target);
   }
 }, { threshold: 0.2 });
 document.querySelectorAll('[data-reveal]').forEach((el) => seen.observe(el));
@@ -60,6 +60,24 @@ function hero(root) {
     if (!e.isIntersecting && playing) { playing = false; timers.forEach(clearTimeout); timers = []; cancelAnimationFrame(raf); }
   }, { threshold: 0.25 }).observe(root);
 }
+
+// Pieces that play in steps: data-loop="t1,t2,…,period" adds s1, s2… at those times (ms) and starts again after the period.
+document.querySelectorAll('[data-loop]').forEach((el) => {
+  const times = el.dataset.loop.split(',').map(Number);
+  const period = times.pop();
+  const set = (n) => { for (let i = 1; i <= times.length; i++) el.classList.toggle(`s${i}`, i <= n); };
+  if (still) { set(Number(el.dataset.still ?? times.length)); return; }
+  let timers = [];
+  const round = () => {
+    set(0);
+    times.forEach((ms, i) => timers.push(setTimeout(() => set(i + 1), ms)));
+    timers.push(setTimeout(() => { timers = []; round(); }, period));
+  };
+  new IntersectionObserver(([e]) => {
+    if (e.isIntersecting && !timers.length) round();
+    if (!e.isIntersecting && timers.length) { timers.forEach(clearTimeout); timers = []; set(0); }
+  }, { threshold: 0.3 }).observe(el);
+});
 
 function type(section) {
   const ask = section.querySelector('[data-type]');
