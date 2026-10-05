@@ -26,9 +26,11 @@ RUN npm ci --omit=dev -w @estudio/api
 COPY --from=build /app/apps/api/dist apps/api/dist
 COPY --from=build /app/apps/web/dist apps/web/dist
 ENV WEB_DIST=/app/apps/web/dist
-# Where big uploads wait while they arrive in pieces (docs/architecture.md#big-uploads). The compose file keeps it on a volume so an upload survives a restart.
+# Where big uploads wait while they arrive in pieces (docs/architecture.md#big-uploads), and where the local driver keeps files. The
+# compose file puts both on volumes; a new volume takes these directories' owner, so the app can write to it.
 ENV STAGING_DIR=/var/lib/estudio/staging
-RUN mkdir -p /var/lib/estudio/staging && chown node:node /var/lib/estudio/staging
+ENV STORAGE_LOCAL_DIR=/var/lib/estudio/files
+RUN mkdir -p /var/lib/estudio/staging /var/lib/estudio/files && chown node:node /var/lib/estudio/staging /var/lib/estudio/files
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

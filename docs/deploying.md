@@ -5,8 +5,7 @@
 | Service | What it is |
 | --- | --- |
 | `db` | PostgreSQL 16 |
-| `minio`, `minio-init` | MinIO, S3-compatible storage, with a private, versioned bucket made once |
-| `app` | The web server: the API, serving the built web app, with `RUN_WORKERS=false` |
+| `app` | The web server: the API, serving the built web app, and the files at the media domain, with `RUN_WORKERS=false` |
 | `worker` | The same image running `worker-main`: the queue, publishing with ffmpeg, retries, webhooks, readings, notifications. Safe to run more than once |
 | `caddy` | Automatic TLS for the app's domain and the media domain |
 
@@ -20,7 +19,7 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env run --rm app 
 ```
 
 `deploy/.env` names the two public domains (`APP_DOMAIN`, `MEDIA_DOMAIN`), both pointing at this machine, and holds the secrets:
-`SECRET` and `DB_PASSWORD` (`openssl rand -hex 32`), the MinIO keys, `SMTP_URL`, `TOKEN_KEY` (`openssl rand -base64 32`), and the
+`SECRET` and `DB_PASSWORD` (`openssl rand -hex 32`), `SMTP_URL`, `TOKEN_KEY` (`openssl rand -base64 32`), and the
 credentials of each network you use. Every variable is described in [configuration](configuration.md).
 
 - **Email is required** while sign-in by emailed link is on (the default): the app refuses to start without `SMTP_URL` rather than put
@@ -33,14 +32,29 @@ credentials of each network you use. Every variable is described in [configurati
 The migrations are applied when the app starts. Big uploads wait in the `staging` volume while they arrive in pieces, so an upload in
 progress survives a restart.
 
-## The media domain
+## Files and the media domain
 
-The media domain only serves signed addresses from the bucket: browsers upload and download there, never through the app's origin. Caddy
-proxies it to MinIO, and MinIO allows the app's origin for CORS.
+The media domain only serves signed addresses of files: browsers upload and download there, never through the app's origin. By default the
+files are kept on the `files` volume and the app answers those addresses itself: Caddy passes `/media/*` on the media domain to it and
+answers anything else there with a 404. An upload is accepted only with its signature, before it expires, and with the size and sha256 that
+were declared, as a bucket would.
 
 **It has to be reachable from the internet**, because several networks download the files they publish from it (Meta among them) instead
-of receiving them. With `STORAGE_DRIVER=s3` the addresses handed out are the bucket's (`S3_PUBLIC_ENDPOINT`, or `S3_ENDPOINT`), so that is
-the domain to verify with TikTok for photo posts; in the Compose file, `S3_PUBLIC_ENDPOINT` is `https://$MEDIA_DOMAIN`.
+of receiving them, and it is the domain to verify with TikTok for photo posts.
+
+To keep the files in a bucket of your own instead, set `STORAGE_DRIVER=s3` and the `S3_*` values in `deploy/.env`. The addresses handed out
+are then the bucket's (`S3_PUBLIC_ENDPOINT`, or `S3_ENDPOINT`), so that is the domain the networks download from and TikTok verifies. The
+bucket has to allow the app's origin for `GET` and `PUT` (CORS) and keep SHA-256 checksums (`x-amz-checksum-sha256`): the app checks every
+upload against it.
+
+## Backups
+
+Three things, kept off the server: the database, the `files` volume (unless the files are in a bucket) and `deploy/.env`, which holds the
+keys [above](#starting-it). The database, for example:
+
+```sh
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T db pg_dump -U estudio estudio > estudio.sql
+```
 
 ## Checking the deployment
 

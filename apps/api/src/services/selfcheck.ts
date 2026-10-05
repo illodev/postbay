@@ -108,8 +108,9 @@ export async function checkServer(ctx: Ctx): Promise<CheckResult[]> {
     out.push(result('media_url', 'pass', tr('check.media.title'), tr('check.media.pass', { host: media.host, where: s3Media ? tr('check.media.s3Where', { name: mediaName }) : '' })));
   }
 
+  // On one machine the disk is the production setup (deploy/docker-compose.yml): what is left to say is that it needs backing up.
   out.push(c.STORAGE_DRIVER === 'local' && c.NODE_ENV === 'production'
-    ? result('storage', 'warn', tr('check.storage.title'), tr('check.storage.local'), tr('check.storage.localHint'))
+    ? result('storage', 'pass', tr('check.storage.title'), tr('check.storage.local'))
     : result('storage', 'pass', tr('check.storage.title'), tr('check.storage.pass', { driver: c.STORAGE_DRIVER })));
 
   const [ffmpeg, ffprobe] = await Promise.all([tool('ffmpeg'), tool('ffprobe')]);

@@ -4,7 +4,7 @@ import type { Ctx } from '../context.js';
 import { LocalStorage } from '../storage/index.js';
 
 /**
- * Signed media URLs for the local storage driver (development and tests). With S3 the browser talks to the bucket
+ * Signed media URLs for the local storage driver, answered at the media domain. With S3 the browser talks to the bucket
  * directly and none of this is used. CORS is limited to the app's own origin.
  */
 export async function mediaRoutes(app: FastifyInstance, ctx: Ctx) {

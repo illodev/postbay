@@ -16,19 +16,20 @@ const schema = z.object({
   APP_URL: z.string().default('http://localhost:5173'),
   MEDIA_URL: z.string().default('http://localhost:3000'),
   SECRET: z.string().min(32, 'SECRET must be at least 32 characters'),
-  STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
+  STORAGE_DRIVER: z.preprocess(emptyIsUnset, z.enum(['local', 's3']).default('local')),
   STORAGE_LOCAL_DIR: z.string().default('.data/media'),
   // Where the pieces of a resumable upload wait until the whole file has arrived (see services/resumable.ts). Needs room for the largest upload in progress.
   STAGING_DIR: z.string().default('.data/staging'),
   /** How much a brand may have declared in unfinished resumable uploads waiting on that disk, in GB. Past it a new big upload is refused. */
   STAGING_MAX_GB_PER_BRAND: z.preprocess(emptyIsUnset, z.coerce.number().positive('STAGING_MAX_GB_PER_BRAND must be a positive number of GB').default(20)),
-  S3_ENDPOINT: z.string().optional(),
+  // Empty counts as unset: the compose file passes every S3_* value through, set or not.
+  S3_ENDPOINT: z.preprocess(emptyIsUnset, z.string().optional()),
   // Address browsers use for signed URLs when it differs from the one the app uses inside its network.
-  S3_PUBLIC_ENDPOINT: z.string().optional(),
-  S3_REGION: z.string().default('auto'),
-  S3_BUCKET: z.string().optional(),
-  S3_ACCESS_KEY_ID: z.string().optional(),
-  S3_SECRET_ACCESS_KEY: z.string().optional(),
+  S3_PUBLIC_ENDPOINT: z.preprocess(emptyIsUnset, z.string().optional()),
+  S3_REGION: z.preprocess(emptyIsUnset, z.string().default('auto')),
+  S3_BUCKET: z.preprocess(emptyIsUnset, z.string().optional()),
+  S3_ACCESS_KEY_ID: z.preprocess(emptyIsUnset, z.string().optional()),
+  S3_SECRET_ACCESS_KEY: z.preprocess(emptyIsUnset, z.string().optional()),
   S3_FORCE_PATH_STYLE: bool,
   SMTP_URL: z.string().optional(),
   MAIL_FROM: z.string().default('Postbay <no-reply@localhost>'),

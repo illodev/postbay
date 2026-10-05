@@ -9,7 +9,7 @@ apps/api    Node 22, TypeScript, Fastify, PostgreSQL (plain SQL), zod
   src/routes      thin HTTP layer (and the MCP endpoint)
   src/auth        who is asking: sessions, tokens, single sign-on, the second factor
   src/mcp         the MCP server: OAuth for assistants, and the tools
-  src/storage     signed-URL storage: local disk for development, S3-compatible (MinIO, S3, R2) for real use
+  src/storage     signed-URL storage: local disk (development, or one machine), or an S3-compatible bucket
   src/connectors  one connector per network behind a common interface (Instagram, Facebook, YouTube, TikTok, LinkedIn, X, Threads,
                   Pinterest, Bluesky), file profiles, validators
   src/media       what a file really is (by its first bytes), and ffmpeg/ffprobe run with a restricted set of readers
@@ -21,7 +21,7 @@ apps/web    React, Vite, TanStack Query; plain CSS, light and dark, works on a p
             carries the polyfills that browsers a little behind need
 apps/runner Node, TypeScript: the agent runner. Listens to webhooks, runs the agent's command, checks and uploads
 e2e         real-browser tests of the whole app
-deploy      Docker Compose with PostgreSQL, MinIO, Caddy (TLS), the app and a worker; deploy/runner: the agent runner's own image
+deploy      Docker Compose with PostgreSQL, Caddy (TLS), the app and a worker; deploy/runner: the agent runner's own image
 ```
 
 The API serves the built web app too (`WEB_DIST`), so in production one origin serves both; in development Vite serves the web and

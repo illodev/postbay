@@ -1,11 +1,14 @@
-# Two names, one machine: the app, and a media domain that only serves signed URLs from the bucket.
+# Two names, one machine: the app, and a media domain that serves only the files' signed addresses (the app answers them).
 # Several networks download files from a URL instead of receiving them, and some want the domain verified first,
-# so the media domain is stable and separate from the app.
+# so the media domain is stable and separate from the app. With STORAGE_DRIVER=s3 the addresses are the bucket's instead.
 {$APP_DOMAIN} {
 	encode zstd gzip
 	reverse_proxy app:3000
 }
 
 {$MEDIA_DOMAIN} {
-	reverse_proxy minio:9000
+	handle /media/* {
+		reverse_proxy app:3000
+	}
+	respond 404
 }

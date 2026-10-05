@@ -24,8 +24,8 @@ An empty value (`KEY=` in an env file) counts as not set. Booleans take `true`, 
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `STORAGE_DRIVER` | `local` | `local` (disk, for development) or `s3` (MinIO, S3 or R2) |
-| `STORAGE_LOCAL_DIR` | `.data/media` | Where the local driver keeps files |
+| `STORAGE_DRIVER` | `local` | `local` (this machine's disk: development, or the Compose file on one machine) or `s3` (any S3-compatible bucket) |
+| `STORAGE_LOCAL_DIR` | `.data/media` (`/var/lib/estudio/files` in the image) | Where the local driver keeps files |
 | `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_FORCE_PATH_STYLE` | region `auto`, path style off | The bucket. With `STORAGE_DRIVER=s3`, the bucket and both keys are required |
 | `S3_PUBLIC_ENDPOINT` | not set | The bucket's address as browsers and networks reach it, when it differs from the one the app uses inside its network |
 | `STAGING_DIR` | `.data/staging` | Where big uploads wait while they arrive in pieces (a volume in the Compose file). Needs room for the biggest upload in progress |

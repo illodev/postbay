@@ -8,8 +8,8 @@ import type { Config } from '../config.js';
 import type { PresignedPut, Storage, StoredStat } from './index.js';
 
 /**
- * Disk storage for development and tests. It mimics what S3 does with signed URLs:
- * an upload is only accepted with the signature, before the expiry, and is rejected if the size or sha256
+ * Disk storage: development, tests, and a deployment on one machine (deploy/docker-compose.yml). It mimics what S3 does
+ * with signed URLs: an upload is only accepted with the signature, before the expiry, and is rejected if the size or sha256
  * differ from what was declared.
  */
 export class LocalStorage implements Storage {

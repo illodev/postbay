@@ -68,7 +68,7 @@ needs each network's developer app: see [Networks](docs/networks.md).
 
 ## Running it for real
 
-[`deploy/`](deploy) has a Docker Compose setup with PostgreSQL, MinIO, the app, a worker and Caddy for TLS. The steps, the
+[`deploy/`](deploy) has a Docker Compose setup with PostgreSQL, the app, a worker and Caddy for TLS. The steps, the
 media domain the networks download files from, and the agent runner's own image are in [Deploying](docs/deploying.md); every
 setting is in [Configuration](docs/configuration.md).
 

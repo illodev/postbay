@@ -1,23 +1,26 @@
-# Everything on one machine: PostgreSQL, MinIO (S3-compatible storage), the app and Caddy for TLS.
+# Everything on one machine: PostgreSQL, the app, a worker and Caddy for TLS. Files are kept on the `files` volume and the app serves
+# them at the media domain; STORAGE_DRIVER=s3 keeps them in a bucket of your own instead (docs/deploying.md#files-and-the-media-domain).
 #
 #   cp deploy/.env.example deploy/.env      # then edit it
 #   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 #   docker compose -f deploy/docker-compose.yml --env-file deploy/.env run --rm app \
 #     node apps/api/dist/cli.js bootstrap --workspace "Acme" --brand "Acme Spain" --timezone Europe/Madrid --admin you@example.com
-# What the web server and the worker both need: they run the same code against the same database and bucket.
+# What the web server and the worker both need: they run the same code against the same database and files.
 x-app-env: &app-env
   NODE_ENV: production
   DATABASE_URL: postgres://estudio:${DB_PASSWORD}@db:5432/estudio
   SECRET: ${SECRET:?set SECRET (32+ random characters)}
-  APP_URL: https://${APP_DOMAIN}
+  APP_URL: https://${APP_DOMAIN:?set APP_DOMAIN}
   MEDIA_URL: https://${MEDIA_DOMAIN:?set MEDIA_DOMAIN}
-  STORAGE_DRIVER: s3
-  S3_ENDPOINT: http://minio:9000
-  S3_PUBLIC_ENDPOINT: https://${MEDIA_DOMAIN}
-  S3_BUCKET: ${S3_BUCKET:-estudio}
-  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
-  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
-  S3_FORCE_PATH_STYLE: 'true'
+  # Empty: local, the files volume below. s3: a bucket of your own, and the S3_* values say which.
+  STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+  S3_ENDPOINT: ${S3_ENDPOINT:-}
+  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
+  S3_REGION: ${S3_REGION:-}
+  S3_BUCKET: ${S3_BUCKET:-}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+  S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-}
   # Required while email-link sign-in is on (the default): the app refuses to start without it rather than put sign-in links in its log.
   SMTP_URL: ${SMTP_URL:-}
   MAIL_FROM: ${MAIL_FROM:-Studio <no-reply@localhost>}
@@ -78,30 +81,6 @@ services:
       interval: 5s
       retries: 10
 
-  minio:
-    image: minio/minio
-    restart: unless-stopped
-    command: server /data
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
-      # Browsers upload and download straight to the media domain, so it must allow the app's origin.
-      MINIO_API_CORS_ALLOW_ORIGIN: https://${APP_DOMAIN:?set APP_DOMAIN}
-    volumes:
-      - media:/data
-
-  # Creates the private, versioned bucket once.
-  minio-init:
-    image: minio/mc
-    depends_on: [minio]
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY}
-      S3_BUCKET: ${S3_BUCKET:-estudio}
-    entrypoint: >
-      sh -c "until mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD; do sleep 1; done;
-             mc mb --ignore-existing local/$$S3_BUCKET && mc version enable local/$$S3_BUCKET"
-
   # The web server. The queue runs in the worker below, so a slow transcode never competes with a page load.
   app:
     build:
@@ -109,14 +88,14 @@ services:
     restart: unless-stopped
     depends_on:
       db: { condition: service_healthy }
-      minio-init: { condition: service_completed_successfully }
     environment:
       <<: *app-env
       PORT: 3000
       RUN_WORKERS: 'false'
-    # Big uploads arrive here in pieces and are checked before they go to the bucket; on a volume, an upload survives a restart.
+    # Big uploads arrive in staging in pieces and are checked before they are stored; on a volume, an upload survives a restart.
     volumes:
       - staging:/var/lib/estudio/staging
+      - files:/var/lib/estudio/files
 
   # Prepares, publishes and checks posts: the queue (pg-boss, in the same PostgreSQL), transcoding with ffmpeg, retries.
   # Safe to run more than once: each publication is leased to one worker at a time.
@@ -127,16 +106,17 @@ services:
     command: ['node', 'apps/api/dist/worker-main.js']
     depends_on:
       db: { condition: service_healthy }
-      minio-init: { condition: service_completed_successfully }
     environment:
       <<: *app-env
+    volumes:
+      - files:/var/lib/estudio/files
     healthcheck:
       disable: true
 
   caddy:
     image: caddy:2
     restart: unless-stopped
-    depends_on: [app, minio]
+    depends_on: [app]
     ports:
       - '80:80'
       - '443:443'
@@ -149,6 +129,6 @@ services:
 
 volumes:
   db:
-  media:
+  files:
   staging:
   caddy_data:
