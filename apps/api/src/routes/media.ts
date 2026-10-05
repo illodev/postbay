@@ -31,6 +31,10 @@ export async function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   const keyOf = (params: unknown) =>
     ((params as { '*': string })['*'] ?? '').split('/').map(decodeURIComponent).join('/');
 
+  // The preflight of a browser upload from the app's origin. The hook above answers it, but only for a route of this plugin:
+  // without one, Fastify gives the app's 404 and the browser refuses the upload.
+  app.options('/media/*', async () => undefined);
+
   app.put('/media/*', async (req, reply) => {
     const r = await storage.receive(keyOf(req.params), req.query as Record<string, string>, req.raw);
     return reply.code(r.status).send(r.error ? { error: r.error } : undefined);

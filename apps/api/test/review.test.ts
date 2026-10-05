@@ -51,6 +51,18 @@ describe('uploads and versions', () => {
     expect(put.statusCode).toBe(403);
   });
 
+  it('answers the preflight a browser sends before uploading to the media domain', async () => {
+    const pre = await env.app.inject({
+      method: 'OPTIONS',
+      url: '/media/a/b.mp4?exp=1&sha=a&bytes=1&sig=b',
+      headers: { origin: 'http://app.test', 'access-control-request-method': 'PUT', 'access-control-request-headers': 'content-type' },
+    });
+    expect(pre.statusCode).toBe(204);
+    expect(pre.headers['access-control-allow-origin']).toBe('http://app.test');
+    expect(pre.headers['access-control-allow-methods']).toContain('PUT');
+    expect(pre.headers['access-control-allow-headers']).toContain('content-type');
+  });
+
   it('refuses two identical consecutive versions', async () => {
     const { users, makePiece, newVersion } = env;
     const { variantId } = await makePiece(users.producer);
