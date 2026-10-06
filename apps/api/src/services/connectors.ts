@@ -85,7 +85,10 @@ export async function checkHealth(ctx: Ctx, accountId: string): Promise<{ valid:
   if (!connector?.health) return null;
   try {
     const res = await connector.health(account, connectorEnv(ctx, accountId));
-    await ctx.db.query('update social_account set last_health_at = $2, last_error = null where id = $1', [accountId, ctx.now()]);
+    await ctx.db.query(
+      `update social_account set last_health_at = $2, last_error = null, provider_data = provider_data - 'healthFailedAt' - 'healthFailures' where id = $1`,
+      [accountId, ctx.now()],
+    );
     if (!res.valid) {
       if (res.note) await markReconnectRequired(ctx, accountId, res.note);
       else await markReconnectRequired(ctx, accountId, english(msg('connect.noLongerValid')), msg('connect.noLongerValid'));
@@ -102,6 +105,14 @@ export async function checkHealth(ctx: Ctx, accountId: string): Promise<{ valid:
       return { valid: false };
     }
     ctx.log.warn({ err: String(err), accountId }, 'account health check failed');
+    // Not the connection's fault (the network is down, or the app itself was disabled): kept on the account so the next try
+    // waits its turn (accountsDueForHealth) instead of coming round at every sweep.
+    await ctx.db.query(
+      `update social_account set provider_data = provider_data
+         || jsonb_build_object('healthFailedAt', $2::text, 'healthFailures', coalesce((provider_data->>'healthFailures')::int, 0) + 1)
+       where id = $1`,
+      [accountId, ctx.now().toISOString()],
+    );
     return null;
   }
 }
@@ -118,12 +129,20 @@ async function warnExpiring(ctx: Ctx, accountId: string, expiresAt: string) {
   });
 }
 
-/** Accounts whose daily check is due. */
+/**
+ * Accounts whose daily check is due. One whose last check failed for some other reason than the connection is tried again 15
+ * minutes later, then 30, 1 hour and so on up to every 6 hours: without the wait it came round at every sweep, every 15
+ * seconds, for as long as the trouble lasted (a disabled Google OAuth client, two hours of it).
+ */
 export async function accountsDueForHealth(ctx: Ctx, limit = 20): Promise<string[]> {
   const rows = await ctx.db.query(
     `select id from social_account where status = 'active' and token_encrypted is not null
-       and (last_health_at is null or last_health_at < $1) order by last_health_at nulls first limit $2`,
-    [new Date(ctx.now().getTime() - 86_400_000), limit],
+       and (last_health_at is null or last_health_at < $1)
+       and (provider_data->>'healthFailedAt' is null
+         or (provider_data->>'healthFailedAt')::timestamptz
+            + least(interval '15 minutes' * power(2, least(greatest(coalesce((provider_data->>'healthFailures')::int, 1), 1), 6) - 1), interval '6 hours') <= $3)
+       order by last_health_at nulls first limit $2`,
+    [new Date(ctx.now().getTime() - 86_400_000), limit, ctx.now()],
   );
   return rows.map((r) => r.id);
 }

@@ -371,6 +371,32 @@ describe('connection health', () => {
     }
   });
 
+  it('tries a check that fails for another reason again later, not at every sweep', async () => {
+    const id = await env.connect('instagram', { externalId: '555f', name: '@flaky' });
+    const down = { error: { message: 'An unexpected error has occurred. Please retry your request later.', code: 2 } };
+    const at = (minutes: number) => env.clock.set(new Date(Date.now() + 26 * 3600_000 + minutes * 60_000));
+    try {
+      at(0);
+      env.meta.fail((c) => c.path === '222', down, 500, 2); // the Instagram user the check reads
+      expect(await checkHealth(env.ctx, id)).toBeNull();
+      expect((await accountRow(id)).status).toBe('active'); // not the connection's fault: nothing to reconnect
+      expect(await accountsDueForHealth(env.ctx, 200)).not.toContain(id);
+      at(16);
+      expect(await accountsDueForHealth(env.ctx, 200)).toContain(id);
+      expect(await checkHealth(env.ctx, id)).toBeNull();
+      // The second failure waits twice as long.
+      at(16 + 20);
+      expect(await accountsDueForHealth(env.ctx, 200)).not.toContain(id);
+      at(16 + 31);
+      expect(await accountsDueForHealth(env.ctx, 200)).toContain(id);
+      // Once the network answers again, the waiting is forgotten.
+      expect(await checkHealth(env.ctx, id)).toEqual({ valid: true });
+      expect((await accountRow(id)).provider_data).not.toHaveProperty('healthFailures');
+    } finally {
+      env.clock.set(new Date());
+    }
+  });
+
   it('warns the admins once a day when Meta access is about to lapse', async () => {
     env.meta.pages.push({ id: '4444', name: 'Expiring', token: 'page-token-4444' });
     const id = await env.connect('facebook', { externalId: '4444', name: 'Expiring', token: 'page-token-4444', providerData: { dataAccessExpiresAt: new Date(Date.now() + 3 * 86400_000).toISOString() } });
