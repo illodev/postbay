@@ -9,7 +9,8 @@
 # and read back what the agent made; the compose file drops every capability but the six that takes. The agent runs as `agent`
 # (uid AGENT_UID), which cannot read the runner's secrets, configuration or queue. See "Running the runner on any machine" in
 # apps/runner/README.md.
-ARG NODE_IMAGE=node:22-bookworm-slim
+# The same Node release as the root Dockerfile, pinned for the same reason.
+ARG NODE_IMAGE=node:22.23.4-bookworm-slim
 
 # ───────────────────────────── the runner, built ─────────────────────────────
 FROM ${NODE_IMAGE} AS build

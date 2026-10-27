@@ -1,7 +1,9 @@
 # One image runs the API and serves the built web app. ffmpeg is there to measure uploads and grab the frame
 # a comment points at. The agent runner (apps/runner) is not in this image: it runs where the agent's command is installed
 # (see apps/runner/README.md). It is built here with the rest of the workspace, so its manifest is copied for `npm ci`.
-FROM node:22-bookworm-slim AS build
+# Node is pinned to a release, not to node:22: a rebuild after a pull then always gets the patched runtime, while a floating tag
+# reuses whatever base image the machine has cached unless the build is run with --pull. 22.23.4 is the security release of 20-oct-2026.
+FROM node:22.23.4-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
@@ -12,7 +14,7 @@ COPY tsconfig.base.json ./
 COPY apps ./apps
 RUN npm run build
 
-FROM node:22-bookworm-slim
+FROM node:22.23.4-bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg poppler-utils \
  && rm -rf /var/lib/apt/lists/*
