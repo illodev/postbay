@@ -22,7 +22,7 @@ export class FakeTikTok extends FakeServer {
   /** What the creator has switched off in TikTok, as creator_info reports it. */
   creator = { commentDisabled: false, duetDisabled: false, stitchDisabled: false };
   /** What every token is granted: what the app asks for. */
-  grantedScopes = ['user.info.basic', 'video.publish', 'video.upload', 'video.list'];
+  grantedScopes = ['user.info.basic', 'video.publish'];
   /** Photos are only downloaded from addresses that start with this. */
   verifiedDomain = 'https://media.test';
   posts = new Map<string, { id: string; kind: 'video' | 'photo'; info: any; source: any; received: { start: number; end: number }[]; size: number; polls: number; complete: boolean }>();

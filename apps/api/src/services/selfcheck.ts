@@ -11,7 +11,7 @@ import { LINKEDIN_SCOPES } from '../connectors/linkedin/oauth.js';
 import { META_PRIZE_SCOPES, META_SCOPES } from '../connectors/meta/oauth.js';
 import { PINTEREST_SCOPES } from '../connectors/pinterest/oauth.js';
 import { THREADS_SCOPES } from '../connectors/threads/oauth.js';
-import { TIKTOK_SCOPES } from '../connectors/tiktok/oauth.js';
+import { TIKTOK_METRICS_SCOPE, TIKTOK_SCOPES } from '../connectors/tiktok/oauth.js';
 import { X_SCOPES } from '../connectors/x/oauth.js';
 import {
   ConnectorError,
@@ -147,12 +147,12 @@ export async function checkServer(ctx: Ctx): Promise<CheckResult[]> {
 // ───────────────────────────── one account ─────────────────────────────
 
 /** What a sign-in has to have been granted for the app to do all it does on that provider. */
-function requiredScopes(provider: string, prizes: boolean, analytics: boolean): string[] {
+function requiredScopes(provider: string, prizes: boolean, on: { analytics: boolean; tiktokMetrics: boolean }): string[] {
   switch (provider) {
     case 'meta': return prizes ? [...META_SCOPES, ...META_PRIZE_SCOPES] : [...META_SCOPES];
-    case 'google': return analytics ? [...GOOGLE_SCOPES, ANALYTICS_SCOPE] : [...GOOGLE_SCOPES];
+    case 'google': return on.analytics ? [...GOOGLE_SCOPES, ANALYTICS_SCOPE] : [...GOOGLE_SCOPES];
     case 'threads': return THREADS_SCOPES;
-    case 'tiktok': return TIKTOK_SCOPES;
+    case 'tiktok': return on.tiktokMetrics ? [...TIKTOK_SCOPES, TIKTOK_METRICS_SCOPE] : [...TIKTOK_SCOPES];
     case 'linkedin': return LINKEDIN_SCOPES;
     case 'x': return X_SCOPES;
     case 'pinterest': return PINTEREST_SCOPES;
@@ -258,7 +258,7 @@ export async function checkAccount(ctx: Ctx, accountId: string): Promise<Account
   // What was granted, against what the app needs for what this brand uses.
   const brand = await ctx.db.one('select prizes from brand where id = $1', [row.brand_id]);
   const prizes = prizesOf((brand ?? {}) as never).enabled;
-  const needed = requiredScopes(provider.id, prizes, ctx.config.GOOGLE_ANALYTICS);
+  const needed = requiredScopes(provider.id, prizes, { analytics: ctx.config.GOOGLE_ANALYTICS, tiktokMetrics: ctx.config.TIKTOK_METRICS });
   const granted = (row.granted_permissions && row.granted_permissions.length ? row.granted_permissions : token.scopes) ?? null;
   if (!needed.length) {
     results.push(result('scopes', 'skip', tr('check.scopes.title'), tr('check.scopes.noList')));

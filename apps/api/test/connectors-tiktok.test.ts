@@ -8,7 +8,10 @@ import { account, configFor, env, expectError, image, input, media, prepareUntil
 
 const fake = new FakeTikTok();
 let set: ReturnType<typeof createConnectorSet>;
+/** The same, with TIKTOK_METRICS on: video.list is asked for and figures are read. */
+let withMetrics: ReturnType<typeof createConnectorSet>;
 const tt = () => set.connector('tiktok')!;
+const ttm = () => withMetrics.connector('tiktok')!;
 const acc = (audited = false) => account('tiktok', { externalId: 'open-1', displayName: '@lumencoffee', providerData: { username: 'lumencoffee', audited } });
 const files = { 'k/reel.mp4': Buffer.alloc(10_000, 3) };
 /** What a person has to fill in for TikTok: who sees it, and the agreement. Nothing else is needed. */
@@ -17,7 +20,9 @@ const errors = (issues: { severity: string }[]) => issues.filter((i) => i.severi
 
 beforeAll(async () => {
   await fake.start();
-  set = createConnectorSet(configFor({ TIKTOK_CLIENT_KEY: fake.clientKey, TIKTOK_CLIENT_SECRET: fake.clientSecret, TIKTOK_OAUTH_URL: `${fake.url}/authorize/`, TIKTOK_API_URL: fake.url }));
+  const tiktok = { TIKTOK_CLIENT_KEY: fake.clientKey, TIKTOK_CLIENT_SECRET: fake.clientSecret, TIKTOK_OAUTH_URL: `${fake.url}/authorize/`, TIKTOK_API_URL: fake.url };
+  set = createConnectorSet(configFor(tiktok));
+  withMetrics = createConnectorSet(configFor({ ...tiktok, TIKTOK_METRICS: 'true' }));
 });
 afterAll(() => fake.stop());
 beforeEach(() => {
@@ -34,15 +39,18 @@ beforeEach(() => {
   fake.uploadUrlExpired = false;
   fake.videos = {};
   fake.creator = { commentDisabled: false, duetDisabled: false, stitchDisabled: false };
-  fake.grantedScopes = ['user.info.basic', 'video.publish', 'video.upload', 'video.list'];
+  fake.grantedScopes = ['user.info.basic', 'video.publish'];
 });
 
 describe('TikTok: signing in', () => {
-  it('asks for posting and reading permissions with the app key, comma separated', () => {
+  it('asks with the app key only for what it uses, comma separated, and for video.list only when figures are turned on', () => {
+    // TikTok's audit wants every permission shown working: no video.upload (drafts are never sent), no video.list unless asked.
     const u = new URL(set.provider('tiktok')!.authorizeUrl!('s1', redirect));
     expect(u.searchParams.get('client_key')).toBe('tkey');
-    expect(u.searchParams.get('scope')).toBe('user.info.basic,video.publish,video.upload,video.list');
+    expect(u.searchParams.get('scope')).toBe('user.info.basic,video.publish');
     expect(u.searchParams.get('state')).toBe('s1');
+    const on = new URL(withMetrics.provider('tiktok')!.authorizeUrl!('s1', redirect));
+    expect(on.searchParams.get('scope')).toBe('user.info.basic,video.publish,video.list');
   });
 
   it('finds the account and starts it as not audited, so every post is private', async () => {
@@ -354,12 +362,27 @@ describe('TikTok: after publishing', () => {
   it('reads views, likes, comments and shares, and says there is nothing to read for a private post', async () => {
     const { e } = await posted(true);
     fake.videos['7700'] = { id: '7700', view_count: 4100, like_count: 310, comment_count: 22, share_count: 40 };
-    const m = await tt().fetchMetrics!(acc(true), 'pub', { postId: '7700' }, e, { publishedAt: new Date(), placement: 'video' });
+    const m = await ttm().fetchMetrics!(acc(true), 'pub', { postId: '7700' }, e, { publishedAt: new Date(), placement: 'video' });
     expect(m.common).toEqual({ views: 4100, likes: 310, comments: 22, shares: 40 });
     expect(m.note).toContain('no reach');
-    const none = await tt().fetchMetrics!(acc(true), 'pub', {}, e, { publishedAt: new Date(), placement: 'video' });
+    const none = await ttm().fetchMetrics!(acc(true), 'pub', {}, e, { publishedAt: new Date(), placement: 'video' });
     expect(none.common).toEqual({});
     expect(none.note).toContain('private post');
+  });
+
+  it('reads no figures without video.list, says how to get them, and never asks TikTok, which would call the connection lost', async () => {
+    fake.videos['7700'] = { id: '7700', view_count: 4100, like_count: 310, comment_count: 22, share_count: 40 };
+    const post = { publishedAt: new Date(), placement: 'video' as const };
+    const off = await tt().fetchMetrics!(acc(true), 'pub', { postId: '7700' }, env('tok'), post);
+    expect(off.common).toEqual({});
+    expect(off.note).toContain('TIKTOK_METRICS');
+    // Turned on, but this connection was made before: it was not granted.
+    const notGranted = await ttm().fetchMetrics!(acc(true), 'pub', { postId: '7700' }, env('tok', {}, undefined, { scopes: ['user.info.basic', 'video.publish'] }), post);
+    expect(notGranted.common).toEqual({});
+    expect(notGranted.note).toContain('Connect the account again');
+    expect(fake.callsTo('/v2/video/query/')).toEqual([]);
+    const granted = await ttm().fetchMetrics!(acc(true), 'pub', { postId: '7700' }, env('tok', {}, undefined, { scopes: ['user.info.basic', 'video.publish', 'video.list'] }), post);
+    expect(granted.common).toEqual({ views: 4100, likes: 310, comments: 22, shares: 40 });
   });
 
   it('checks the connection, and reports a revoked one as lost', async () => {

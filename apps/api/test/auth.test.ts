@@ -166,6 +166,17 @@ describe('configuration', () => {
     expect(loadConfig(base).YOUTUBE_ANALYTICS_URL).toBe('https://youtubeanalytics.googleapis.com');
   });
 
+  it('reads the TikTok figures switch as a yes or a no, off unless asked', async () => {
+    const { loadConfig } = await import('../src/config.js');
+    const base = { SECRET: 'x'.repeat(40) };
+    expect(loadConfig(base).TIKTOK_METRICS).toBe(false);
+    expect(loadConfig({ ...base, TIKTOK_METRICS: '' }).TIKTOK_METRICS).toBe(false);
+    expect(loadConfig({ ...base, TIKTOK_METRICS: 'false' }).TIKTOK_METRICS).toBe(false);
+    expect(loadConfig({ ...base, TIKTOK_METRICS: 'true' }).TIKTOK_METRICS).toBe(true);
+    expect(loadConfig({ ...base, TIKTOK_METRICS: '1' }).TIKTOK_METRICS).toBe(true);
+    expect(() => loadConfig({ ...base, TIKTOK_METRICS: 'yes' })).toThrow();
+  });
+
   it('reads the staging cap and the Meta login configurations from the configuration, checked, with an empty value meaning unset', async () => {
     const { loadConfig } = await import('../src/config.js');
     const { createConnectorSet } = await import('../src/connectors/registry.js');

@@ -63,6 +63,7 @@ up each developer app is in [networks](networks.md#setting-up-the-networks).
 | `GOOGLE_ANALYTICS` | `false` | Also ask YouTube for its Analytics permission, so watch time can be read. Google treats it as sensitive: the project must be verified |
 | `THREADS_APP_ID`, `THREADS_APP_SECRET` | not set | Threads |
 | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` | not set | TikTok |
+| `TIKTOK_METRICS` | `false` | Also ask TikTok for `video.list`, so each post's figures can be read. Turn it on once TikTok has approved that permission for the app |
 | `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET` | not set | LinkedIn |
 | `LINKEDIN_VERSION` | `202604` | LinkedIn's API version (`YYYYMM`). Raise it when LinkedIn retires the version; the server check warns before |
 | `X_CLIENT_ID`, `X_CLIENT_SECRET` | not set | X |

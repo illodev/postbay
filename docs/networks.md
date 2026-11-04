@@ -80,6 +80,12 @@ A Meta developer app with the *Threads API* use case; `THREADS_APP_ID`, `THREADS
 A developer app with Login Kit and the Content Posting API; `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`. Sign-in reads only what
 `user.info.basic` gives (open id, display name, avatar).
 
+- **Permissions**: Postbay asks for `user.info.basic` and `video.publish` (it posts directly and never sends drafts to the creator's
+  inbox, so it does not ask for `video.upload`). The app in TikTok's portal must have the same ones: TikTok's audit wants a recording
+  of every permission the app has, working. With `TIKTOK_METRICS=true` it also asks for `video.list`, to read each post's figures:
+  that one cannot be shown before the audit (every post is private until then, and a private post has no figures), so add it to the
+  app and turn it on once the app is audited, and connect the accounts again.
+
 - **Photo posts**: TikTok downloads the pictures itself, and only from a **domain you verified in its portal**: the domain of the
   signed addresses Postbay hands out. With the local storage driver that is `MEDIA_URL`; with `STORAGE_DRIVER=s3` the addresses are
   signed for the bucket, so it is the host of `S3_PUBLIC_ENDPOINT` (or of `S3_ENDPOINT` when that is not set). The server check names
@@ -262,7 +268,7 @@ is; the Meta webhook's verify token; and, for TikTok photo posts, the domain to 
 | --- | --- |
 | Connection | The account is connected and nothing has marked it for connecting again |
 | Stored token / token lifetime | The token opens with this server's `TOKEN_KEY`; when it ends; whether Postbay renews it by itself |
-| Permissions | What the network granted against what Postbay needs (the messaging permissions only when the brand has prizes on; the YouTube Analytics one only when `GOOGLE_ANALYTICS` is on) |
+| Permissions | What the network granted against what Postbay needs (the messaging permissions only when the brand has prizes on; the YouTube Analytics one only when `GOOGLE_ANALYTICS` is on; TikTok's `video.list` only when `TIKTOK_METRICS` is on) |
 | Network accepts the connection | A light question to the network, with how long it took |
 | Reading a post's numbers | The same call the results use, on the account's latest public post, to compare with what the network shows |
 | Reading a post's comments | The same call prizes use (only when the brand has prizes on); for Instagram and Facebook, whether Meta pushes the account's comments |

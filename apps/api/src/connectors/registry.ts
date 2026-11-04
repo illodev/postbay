@@ -75,7 +75,7 @@ export function createConnectorSet(config: Config, now: () => Date = () => new D
     connectors.set('pinterest', createPinterest(client));
   }
   if (config.enabled.tiktok) {
-    const client = new TikTokClient({ clientKey: config.TIKTOK_CLIENT_KEY!, clientSecret: config.TIKTOK_CLIENT_SECRET!, oauthUrl: config.TIKTOK_OAUTH_URL, apiUrl: config.TIKTOK_API_URL });
+    const client = new TikTokClient({ clientKey: config.TIKTOK_CLIENT_KEY!, clientSecret: config.TIKTOK_CLIENT_SECRET!, oauthUrl: config.TIKTOK_OAUTH_URL, apiUrl: config.TIKTOK_API_URL, metrics: config.TIKTOK_METRICS });
     providers.set('tiktok', createTikTokOAuth(client, now));
     connectors.set('tiktok', createTikTok(client));
   }

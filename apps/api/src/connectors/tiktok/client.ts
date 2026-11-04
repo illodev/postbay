@@ -6,6 +6,8 @@ export interface TikTokConfig {
   clientSecret: string;
   oauthUrl: string;
   apiUrl: string;
+  /** Whether video.list is asked for, to read each post's figures (TIKTOK_METRICS). */
+  metrics?: boolean;
 }
 
 const RATE = new Set(['rate_limit_exceeded', 'spam_risk_too_many_posts', 'spam_risk_too_many_pending_share']);

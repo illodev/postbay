@@ -108,6 +108,12 @@ const schema = z.object({
   TIKTOK_CLIENT_SECRET: z.string().optional(),
   TIKTOK_OAUTH_URL: z.string().default('https://www.tiktok.com/v2/auth/authorize/'),
   TIKTOK_API_URL: z.string().default('https://open.tiktokapis.com'),
+  /**
+   * Also ask TikTok for video.list, to read each post's figures. TikTok's audit wants every permission shown working in a recording,
+   * and this one cannot be before the audit (every post is private until then, and a private post has no figures): off until TikTok
+   * has approved it for the app.
+   */
+  TIKTOK_METRICS: z.enum(['true', 'false', '1', '0', '']).default('false').transform((v) => v === 'true' || v === '1'),
   LINKEDIN_CLIENT_ID: z.string().optional(),
   LINKEDIN_CLIENT_SECRET: z.string().optional(),
   LINKEDIN_OAUTH_URL: z.string().default('https://www.linkedin.com/oauth/v2/authorization'),

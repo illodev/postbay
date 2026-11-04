@@ -27,7 +27,7 @@ export function account(network: Account['network'], over: Partial<Account> = {}
   return { id: `acc-${network}`, network, externalId: '90001', displayName: 'Lumen', providerData: {}, ...over };
 }
 
-export function env(token: string, files: Record<string, Buffer> = {}, now = () => new Date(), extra: Partial<{ expiresAt: string }> = {}): ConnectorEnv & { saved: Handle[] } {
+export function env(token: string, files: Record<string, Buffer> = {}, now = () => new Date(), extra: Partial<{ expiresAt: string; scopes: string[] }> = {}): ConnectorEnv & { saved: Handle[] } {
   const saved: Handle[] = [];
   return {
     saved,

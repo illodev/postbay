@@ -3,14 +3,17 @@ import { ConnectorError, type OAuthProvider, type TokenSet } from '../types.js';
 import type { TikTokClient } from './client.js';
 
 /**
- * Reading the account, posting directly, and reading how posts did. "video.upload" is asked for with "video.publish" because
- * a person who is sent to TikTok to sign in is shown both.
+ * Reading the account and posting directly, and nothing the app does not use: TikTok's audit wants a recording of every permission
+ * the app asks for, working. So no video.upload (sending a draft to the creator's inbox, which this app never does), and video.list
+ * (reading how posts did) only when the deployment turns it on, once TikTok has approved it (TIKTOK_METRICS).
  *
  * user.info.basic gives open_id, union_id, avatar_url and display_name, and nothing else: a field outside it (username needs
  * user.info.profile) makes TikTok refuse the whole call with scope_not_authorized. The @username comes from creator_info, which
  * video.publish allows, and only to make links.
  */
-export const TIKTOK_SCOPES = ['user.info.basic', 'video.publish', 'video.upload', 'video.list'];
+export const TIKTOK_SCOPES = ['user.info.basic', 'video.publish'];
+/** Reading a post's figures. Asked for only when the deployment turns it on (TIKTOK_METRICS). */
+export const TIKTOK_METRICS_SCOPE = 'video.list';
 export const TIKTOK_USER_FIELDS = 'open_id,union_id,avatar_url,display_name';
 
 export function createTikTokOAuth(client: TikTokClient, now: () => Date = () => new Date()): OAuthProvider {
@@ -33,7 +36,7 @@ export function createTikTokOAuth(client: TikTokClient, now: () => Date = () => 
     authorizeUrl(state, redirectUri) {
       const u = new URL(cfg.oauthUrl);
       u.searchParams.set('client_key', cfg.clientKey);
-      u.searchParams.set('scope', TIKTOK_SCOPES.join(','));
+      u.searchParams.set('scope', [...TIKTOK_SCOPES, ...(cfg.metrics ? [TIKTOK_METRICS_SCOPE] : [])].join(','));
       u.searchParams.set('response_type', 'code');
       u.searchParams.set('redirect_uri', redirectUri);
       u.searchParams.set('state', state);

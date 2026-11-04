@@ -8,6 +8,7 @@ import {
   type MediaItem, type MetricsResult, type OptionField, type PrepareResult, type Published, type PublishInput, type VerifyResult,
 } from '../types.js';
 import { classifyTikTok, type TikTokClient } from './client.js';
+import { TIKTOK_METRICS_SCOPE } from './oauth.js';
 
 /**
  * TikTok publishing through the Content Posting API, "direct post": the video is sent by upload (in pieces) and TikTok makes
@@ -342,7 +343,15 @@ export function createTikTok(client: TikTokClient, opts: TikTokOptions = {}): Co
     async fetchMetrics(_account, _externalId, handle, env): Promise<MetricsResult> {
       const postId = handle.postId as string | undefined;
       if (!postId) return { common: {}, raw: null, note: 'TikTok gives a post an id only once it is public: a private post has no figures to read' };
-      const token = (await env.token()).accessToken;
+      // Asking without the permission would be refused as a lost connection, and the account is fine: say what is missing instead.
+      if (!client.cfg.metrics) {
+        return { common: {}, raw: null, note: "TikTok's figures need its video.list permission: once TikTok has approved it for this app, turn on TIKTOK_METRICS and connect the account again" };
+      }
+      const tokens = await env.token();
+      if (tokens.scopes && !tokens.scopes.includes(TIKTOK_METRICS_SCOPE)) {
+        return { common: {}, raw: null, note: 'Reading figures needs the video.list permission, and this connection was made without it. Connect the account again and accept it' };
+      }
+      const token = tokens.accessToken;
       const r = await client.request<{ data?: { videos?: { id: string; view_count?: number; like_count?: number; comment_count?: number; share_count?: number }[] } }>('/v2/video/query/', token, {
         method: 'POST', query: { fields: 'id,view_count,like_count,comment_count,share_count' }, json: { filters: { video_ids: [postId] } },
       });
