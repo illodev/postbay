@@ -414,6 +414,50 @@ describe('scheduling', () => {
     expect(cancelled.data.status).toBe('cancelled');
     expect((await viaOf('publication.cancelled', pub.data.id))!.via).toMatchObject({ client_name: 'Claude' });
   });
+
+  it('lets a producer (an agent with a member account) schedule what is approved where the brand lets the agent, each account with its caption, and nothing more', async () => {
+    const v = await inReview();
+    expect((await env.approve(env.users.approver, v.versionId, [env.accounts.instagram, env.accounts.facebook])).status).toBe(201);
+    const allow = (on: boolean) => env.call(env.users.admin, 'PATCH', brandUrl(), { agent: { can_schedule_approved: on } });
+    const off = await tool(env, as.producer.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.instagram, at: localIn(6) });
+    expect(off.error).toMatchObject({ code: 'agent_cannot_schedule', message: 'This brand does not let the agent schedule: an admin can allow it in Settings › Agent' });
+    expect((await tool(env, as.producer.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.instagram, at: localIn(6), dry_run: true })).error.code).toBe('agent_cannot_schedule');
+
+    expect((await allow(true)).status).toBe(200);
+    try {
+      const dry = await tool(env, as.producer.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.instagram, at: localIn(6), text: 'Para Instagram', dry_run: true });
+      expect(dry.ok, JSON.stringify(dry.error)).toBe(true);
+      const ig = await tool(env, as.producer.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.instagram, at: localIn(6), text: 'Para Instagram' });
+      const fb = await tool(env, as.producer.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.facebook, at: localIn(6, '20:30'), text: 'Para Facebook' });
+      expect(ig.ok, JSON.stringify(ig.error)).toBe(true);
+      expect(fb.ok, JSON.stringify(fb.error)).toBe(true);
+      // Recorded as the member, through the assistant: there is no token and no run.
+      const rows = await env.db.query('select id, text, created_by, created_by_token, scheduled_by from publication where id = any($1) order by text', [[ig.data.id, fb.data.id]]);
+      expect(rows).toMatchObject([
+        { text: 'Para Facebook', created_by: env.users.producer.id, created_by_token: null, scheduled_by: 'person' },
+        { text: 'Para Instagram', created_by: env.users.producer.id, created_by_token: null, scheduled_by: 'person' },
+      ]);
+      expect((await viaOf('publication.scheduled', ig.data.id))).toMatchObject({ actor_user_id: env.users.producer.id, via: { client_name: 'Claude' } });
+
+      // Still only what is approved, on the accounts approved.
+      expect((await tool(env, as.producer.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.youtube, at: localIn(7) })).error.code).toBe('account_not_approved');
+      const unapproved = await inReview();
+      expect((await tool(env, as.producer.access, 'schedule_publication', { version_id: unapproved.versionId, account_id: env.accounts.instagram, at: localIn(7) })).error.code).toBe('not_approved');
+      // Never moves or cancels, its own included.
+      expect((await tool(env, as.producer.access, 'move_publication', { publication_id: ig.data.id, at: localIn(8) })).error.code).toBe('forbidden');
+      expect((await tool(env, as.producer.access, 'cancel_publication', { publication_id: ig.data.id })).error.code).toBe('forbidden');
+      // A reader or a reviewer gets nothing from the setting.
+      expect((await tool(env, as.reviewer.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.instagram, at: localIn(9) })).error.code).toBe('forbidden');
+      // And in the browser a producer still cannot schedule.
+      const web = await env.call(env.users.producer, 'POST', `/api/versions/${v.versionId}/publications`, {
+        accountId: env.accounts.instagram, scheduledAt: DateTime.now().plus({ days: 9 }).toISO(),
+      });
+      expect(web.status).toBe(403);
+      expect(web.body.error.code).toBe('forbidden');
+    } finally {
+      await allow(false);
+    }
+  });
 });
 
 describe('what is pending', () => {

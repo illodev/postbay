@@ -32,7 +32,7 @@ const VERSION = '1.0.0';
 const INSTRUCTIONS = `Postbay is a content studio: producers (people or an AI agent) upload versions of pieces (videos, carousels, posts, stories, PDFs), the team reviews and comments on them, approvers approve a version for specific social accounts, and approved versions are scheduled on the calendar and published.
 
 You act as the signed-in person, with their role in each brand. Rules that always hold:
-- Nothing is published without a person's approval of that exact version. You can only schedule a version that is already approved, on an account it was approved for.
+- Nothing is published without a person's approval of that exact version. You can only schedule a version that is already approved, on an account it was approved for. Approvers and admins schedule; a producer (an agent signed in as a member of its own) can too where the brand lets the agent schedule what is approved, but never moves or cancels anything.
 - Approving or requesting changes from here is allowed only where a brand admin has enabled it, and only for people whose role can already do it. Before calling approve_version or request_changes, show the person the piece, the version number and its fingerprint (first 12 characters, as the web shows it), get their explicit go-ahead, and pass those values back in "confirm".
 - Times are in each brand's own time zone unless you give an ISO time with an offset. Say times to the person in the brand's zone.
 - Ids come from earlier results: list_pieces or pending_for_me → get_piece → versions and comments. Every result has a "url" to open the same thing in the web app; share it when useful.
@@ -738,7 +738,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
 
   server.registerTool('schedule_publication', {
     title: 'Schedule an approved version',
-    description: 'Puts an approved version on the calendar for one of the accounts it was approved for, as the person, through every check the web makes (approved for that account, files unchanged, not in the past, not on a blocked day, brand not paused, what the network accepts). Postbay publishes it by itself when the account is connected and the network allows, otherwise a person is reminded to post it. Use dry_run first to see how it would go out and any problem.',
+    description: 'Puts an approved version on the calendar for one of the accounts it was approved for, as the person, through every check the web makes (approved for that account, files unchanged, not in the past, not on a blocked day, brand not paused, what the network accepts). Postbay publishes it by itself when the account is connected and the network allows, otherwise a person is reminded to post it. Use dry_run first to see how it would go out and any problem. Approvers and admins can; a producer only where the brand lets the agent schedule what is approved (Settings › Agent). One call per account, each with its own caption and time.',
     inputSchema: {
       version_id: uuid('An approved version'),
       account_id: uuid('The social account (list_accounts, or the accounts the version was approved for)'),

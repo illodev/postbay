@@ -79,7 +79,10 @@ Code, for example) can do the same work through the MCP, on your terms:
 **Give the agent an account of its own.** Whatever an assistant uploads is uploaded by the person it signed in as, and nobody approves
 their own upload. So an agent that makes versions should not use the approver's account: add it to the brand as a member with the
 **producer** role (for example "Claude (agent)", with an email address you read), and connect the MCP signed in as that member. Its
-versions then carry its name, go through review like anyone's, and you approve them.
+versions then carry its name, go through review like anyone's, and you approve them. A producer cannot schedule, unless an admin turns on
+*The agent can schedule what is approved* in *Settings → Agent*: then it can `schedule_publication` what people approved, on the accounts
+they approved it for, one call per account with its own caption and time, and still never move or cancel anything
+([the agent scheduling what is approved](agents.md#the-agent-scheduling-what-is-approved)).
 
 It does not hear about new comments by itself: ask it ("work through the open comments on the roasters video"), or have it check
 `pending_for_me` from time to time.

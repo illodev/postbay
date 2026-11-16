@@ -46,7 +46,7 @@ export const features = define({
     'fx.rules.stylesHint': 'Uno por línea, en el orden en que se eligen. El agente usa estos.',
     'fx.rules.stylesPlaceholder': 'Riso\nCollage\nFotografía de producto',
     'fx.agent.canSchedule': 'El agente puede programar lo aprobado',
-    'fx.agent.canScheduleHint': 'Solo en las cuentas para las que se aprobó. Nunca aprueba, ni cancela ni mueve nada.',
+    'fx.agent.canScheduleHint': 'El agente con un token, dentro de una ejecución, o con una cuenta de productor desde un asistente (MCP). Solo en las cuentas para las que se aprobó. Nunca aprueba, ni cancela ni mueve nada.',
 
     // A variant's style.
     'fx.styles.noStyle': 'Sin estilo',
@@ -132,7 +132,7 @@ export const features = define({
     'fx.rules.stylesHint': 'One per line, in the order people pick from. The agent uses these.',
     'fx.rules.stylesPlaceholder': 'Riso\nCollage\nProduct photography',
     'fx.agent.canSchedule': 'The agent can schedule what is approved',
-    'fx.agent.canScheduleHint': 'Only on the accounts it was approved for. It never approves, cancels or moves anything.',
+    'fx.agent.canScheduleHint': 'The agent with a token, inside a run, or with a producer account through an assistant (MCP). Only on the accounts it was approved for. It never approves, cancels or moves anything.',
 
     'fx.styles.noStyle': 'No style',
     'fx.styles.notInList': '{style} · not in the list',

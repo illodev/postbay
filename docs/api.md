@@ -31,7 +31,7 @@ The tables below are the routes that matter most; `apps/api/src/routes/index.ts`
 | Method and path | What it does |
 | --- | --- |
 | `POST /versions/:id/publications/validate` | How a post would go out, and what would block it, before scheduling |
-| `POST /versions/:id/publications` | Schedule an approved version on an account (a person; or a producer token inside an agent run, where the brand allows it) |
+| `POST /versions/:id/publications` | Schedule an approved version on an account (an approver or admin; where the brand lets the agent schedule what is approved, also a producer token inside an agent run, or a producer through an assistant) |
 | `PATCH /publications/:id`; `POST /publications/:id/cancel`, `/confirm`, `/reschedule` | Move or edit, cancel, confirm a change that needs a second approver, bring a held post back onto a new version |
 | `POST /publications/:id/retry`, `/hand-over`, `/recheck`; `GET /publications/:id/attempts` | Act on a failed or private post; read every attempt |
 | `GET /publications/:id/pack`, `POST /publications/:id/mark-published` | What a person needs to publish by hand; record that it is out, with its link |

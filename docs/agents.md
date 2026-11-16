@@ -186,6 +186,13 @@ that piece that is still going** may `POST /api/versions/:id/publications` (and 
   routes stay closed to tokens;
 - with the setting off it answers `403 agent_cannot_schedule`; outside a run on that piece, `409 no_run`.
 
+The same setting covers an agent that works through the [MCP](mcp.md) **signed in as a member of its own with the producer role**
+(the way [mcp.md](mcp.md#your-own-agent-on-a-review) recommends): while it is on, a producer connected through an assistant may
+`schedule_publication` (and its `dry_run`), with the same limits as above. There is no run to be inside of: it is recorded as that member,
+`scheduled_by: person` with `created_by`, and the audit entry names the assistant it came through. It cannot move or cancel anything, nor
+make its post depend on another; with the setting off it answers `403 agent_cannot_schedule`. A producer in the browser still cannot
+schedule, setting or not.
+
 Such a run is started with trigger `version.approved` (`POST /api/pieces/:id/agent-runs`). **It is not a round of changes**: the round cap
 does not stop it and it does not count towards it (the budgets do), and **no version can be uploaded inside it**. It ends with the outcome
 `scheduled` (or `failed`, `needs_people`…). The runner does this with an optional template for `version.approved`: see

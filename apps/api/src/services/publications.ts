@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { authorize, type Principal } from '../auth/principal.js';
+import { can } from '../domain/roles.js';
 import type { Ctx } from '../context.js';
 import type { Queryable, Row } from '../db.js';
 import { isKnown, msg, type Key, type Localized } from '../i18n/index.js';
@@ -151,14 +152,16 @@ export async function validatePublication(ctx: Ctx, p: Principal, versionId: str
 /**
  * Who puts a publication on the calendar. Always after a person's approval of that version, for an account it was approved for: a
  * person scheduling it (or approving a piece made for a slot, which schedules it at the slot), the studio filling a free slot ('auto'),
- * or the agent, with a producer token inside one of its runs, where the brand allows it ('agent').
+ * or the agent, with a producer token inside one of its runs, where the brand allows it ('agent'). `byGrant` marks a person who may only
+ * because the brand lets the agent schedule what is approved (a producer through an assistant): held to what the agent may do.
  */
-export type ScheduledBy = { kind: 'person'; userId: string } | { kind: 'auto' } | { kind: 'agent'; tokenId: string };
+export type ScheduledBy = { kind: 'person'; userId: string; byGrant?: true } | { kind: 'auto' } | { kind: 'agent'; tokenId: string };
 
 /**
  * Schedules an approved version on an account. Only what is approved, for the accounts approved, can be scheduled. A person with the
- * permission to schedule may; so may a producer token, inside an agent run on the piece that is still going, when the brand lets the
- * agent schedule what is approved (agent.can_schedule_approved): it is then recorded as scheduled by the agent.
+ * permission to schedule may. When the brand lets the agent schedule what is approved (agent.can_schedule_approved), so may a producer
+ * token, inside an agent run on the piece that is still going (recorded as scheduled by the agent), and a producer signed in through an
+ * assistant (MCP), which is how an agent with a member account of its own works (recorded as that person, via the assistant).
  */
 export async function schedule(ctx: Ctx, p: Principal, versionId: string, raw: unknown) {
   const input = scheduleInput.parse(raw);
@@ -178,8 +181,16 @@ async function schedulerOf(ctx: Ctx, db: Queryable, p: Principal, brandId: strin
     if (!(await runCovering(db, p.tokenId, pieceId, ctx.now(), 'schedule'))) throw conflict('no_run', msg('sched.agent.noRun'));
     return { kind: 'agent', tokenId: p.tokenId };
   }
-  await authorize(db, p, brandId, 'publication.schedule');
-  return { kind: 'person', userId: requireUser(p) };
+  const role = await authorize(db, p, brandId, 'brand.view');
+  const userId = requireUser(p);
+  if (can(role, 'publication.schedule')) return { kind: 'person', userId };
+  // An agent that signs in as a member of its own is a producer through an assistant. In the browser a producer still cannot schedule.
+  if (role === 'producer' && p.via) {
+    const brand = await loadBrand(db, brandId);
+    if (!agentOf(brand).can_schedule_approved) throw new AppError(403, 'agent_cannot_schedule', msg('sched.agent.off'));
+    return { kind: 'person', userId, byGrant: true };
+  }
+  throw forbidden(msg('error.role.cannot', { role: msg(`role.${role}` as Key) }));
 }
 
 /**
@@ -192,7 +203,7 @@ export async function scheduleVersion(
 ): Promise<Row> {
   const when = new Date(input.scheduledAt);
   // A post that depends on another holds that other one to its order: the agent does not get to tie a person's post down.
-  if (by.kind === 'agent' && input.dependsOn) throw badRequest('invalid_dependency', msg('sched.agent.noDependency'));
+  if ((by.kind === 'agent' || (by.kind === 'person' && by.byGrant)) && input.dependsOn) throw badRequest('invalid_dependency', msg('sched.agent.noDependency'));
   const version = await loadVersion(db, versionId);
   await lockVariant(db, version.variant_id);
   const brand = await loadBrand(db, version.brand_id);

@@ -251,7 +251,7 @@ comment the approver gave when approving, or none. While the setting is on, the 
 
 ### The agent scheduling what is approved
 
-A brand can also let its agent schedule approved versions, from inside an agent run: see [agents](agents.md#the-agent-scheduling-what-is-approved).
+A brand can also let its agent schedule approved versions, from inside an agent run or signed in through an assistant as a producer member of its own: see [agents](agents.md#the-agent-scheduling-what-is-approved).
 
 ## Known limitations
 
