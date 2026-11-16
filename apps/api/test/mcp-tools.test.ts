@@ -390,11 +390,14 @@ describe('scheduling', () => {
     expect(await env.db.one('select 1 from publication where version_id = $1', [v.versionId])).toBeNull();
 
     expect((await tool(env, as.approver.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.youtube, at })).error.code).toBe('account_not_approved');
+    // The dry run says so too, instead of describing a post on an account the approval does not cover.
+    expect((await tool(env, as.approver.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.youtube, at, dry_run: true })).error.code).toBe('account_not_approved');
     expect((await tool(env, as.reviewer.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.instagram, at })).error.code).toBe('forbidden');
     expect((await tool(env, as.approver.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.instagram, at: 'next tuesday' })).error.code).toBe('bad_time');
     expect((await tool(env, as.approver.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.instagram, at: localIn(-2) })).error.code).toBe('past_date');
     const unapproved = await inReview();
     expect((await tool(env, as.approver.access, 'schedule_publication', { version_id: unapproved.versionId, account_id: env.accounts.instagram, at })).error.code).toBe('not_approved');
+    expect((await tool(env, as.approver.access, 'schedule_publication', { version_id: unapproved.versionId, account_id: env.accounts.instagram, at, dry_run: true })).error.code).toBe('not_approved');
 
     const pub = await tool(env, as.approver.access, 'schedule_publication', { version_id: v.versionId, account_id: env.accounts.instagram, at, text: 'Otoño' });
     expect(pub.ok, JSON.stringify(pub.error)).toBe(true);

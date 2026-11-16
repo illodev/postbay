@@ -133,12 +133,18 @@ const errorsOf = (plan: Plan) => plan.issues.filter((i) => i.severity === 'error
 
 /**
  * Checks what scheduling this would do, without doing it: whether the app will publish it itself or a person has to, which
- * kind of post it would be, and anything the network would refuse. The editor calls this as the person types.
+ * kind of post it would be, and anything the network would refuse. The editor calls this as the person types, and an assistant before it
+ * schedules (dry_run). Like scheduling, it refuses a version that is not approved, or not for that account.
  */
 export async function validatePublication(ctx: Ctx, p: Principal, versionId: string, raw: unknown) {
   const input = validateInput.parse(raw);
   const version = await loadVersion(ctx.db, versionId);
   await schedulerOf(ctx, ctx.db, p, version.brand_id, version.piece_id);
+  // The dry run refuses what scheduling would refuse first: a version that is not approved, or not for this account. Without it an
+  // assistant was told a post would go out on an account the approval never covered.
+  const eff = await effectiveApproval(ctx.db, versionId);
+  if (!eff.approved) throw conflict('not_approved', msg('error.pub.versionNotApproved'));
+  if (!eff.accountIds.includes(input.accountId)) throw conflict('account_not_approved', msg('error.pub.versionNotForAccount'));
   const variant = await loadVariant(ctx.db, version.variant_id);
   const piece = await ctx.db.one('select * from piece where id = $1', [version.piece_id]);
   const plan = await planPublication(ctx, {
