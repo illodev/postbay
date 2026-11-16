@@ -76,7 +76,9 @@ export function connectorEnv(ctx: Ctx, accountId: string, persist: (h: Handle) =
 
 /**
  * Asks the network whether the connection still works, and when it will stop. Done daily: it catches a revoked grant
- * before a post is due, and keeps refresh tokens in use (Google drops one that sits unused for six months).
+ * before a post is due, and keeps refresh tokens in use (Google drops one that sits unused for six months). A connection that works
+ * but whose events are not subscribed (Meta refused, or an older Postbay asked in a way Meta refuses) is asked again here,
+ * instead of only at the next reconnection or when prizes or a rule start.
  */
 export async function checkHealth(ctx: Ctx, accountId: string): Promise<{ valid: boolean } | null> {
   const account = await loadConnectorAccount(ctx, accountId);
@@ -94,6 +96,7 @@ export async function checkHealth(ctx: Ctx, accountId: string): Promise<{ valid:
       else await markReconnectRequired(ctx, accountId, english(msg('connect.noLongerValid')), msg('connect.noLongerValid'));
       return { valid: false };
     }
+    if (connector.subscribeEvents && account.providerData.events?.subscribed !== true) await subscribeEvents(ctx, accountId);
     if (res.expiresAt) {
       const days = (new Date(res.expiresAt).getTime() - ctx.now().getTime()) / 86_400_000;
       if (days <= 7) await warnExpiring(ctx, accountId, res.expiresAt);

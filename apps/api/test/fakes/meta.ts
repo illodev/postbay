@@ -38,6 +38,11 @@ export class FakeMeta {
   appId = 'app';
   /** Apps subscribed to each Page's webhooks, with their fields. A POST sets the app's fields to what it sends (it does not add). */
   subscriptions = new Map<string, { id: string; name: string; subscribed_fields: string[] }[]>();
+  /**
+   * What the app itself is subscribed to, set in its dashboard (GET /{app-id}/subscriptions, with the app's token). By default an app
+   * set up as Postbay's guide says: Instagram's comments and the Page's feed.
+   */
+  appSubscriptions: { object: string; fields: string[] }[] = [{ object: 'instagram', fields: ['comments'] }, { object: 'page', fields: ['feed'] }];
   /** Photos uploaded to a Page, by id, with what they were uploaded with. */
   photos = new Map<string, Record<string, string>>();
   /** Milliseconds a call to a path matching this takes to be answered, for tests that need something to be in flight. */
@@ -169,6 +174,11 @@ export class FakeMeta {
     if (c.path === 'debug_token') {
       return { data: { is_valid: true, scopes: this.grantedScopes, data_access_expires_at: Math.floor(this.now() / 1000) + 90 * 86400 } };
     }
+    // The app's own webhook subscriptions, read with the app's token ("{app-id}|{app-secret}").
+    if (c.path === `${this.appId}/subscriptions`) {
+      if (token !== `${this.appId}|secret`) return this.err(190, 'Invalid OAuth access token - Cannot parse access token');
+      return { data: this.appSubscriptions.map((s) => ({ object: s.object, callback_url: 'https://postbay.test/api/meta/webhook', active: true, fields: s.fields.map((name) => ({ name, version: 'v23.0' })) })) };
+    }
     if (!this.tokenOk(token)) return this.err(190, 'Error validating access token: Session has expired');
 
     if (c.path === 'me/accounts') {
@@ -190,8 +200,12 @@ export class FakeMeta {
       if (c.method === 'GET') return { data: list };
       if (c.method === 'DELETE') { this.subscriptions.set(page, list.filter((a) => a.id !== this.appId)); return { success: true }; }
       const fields = String(c.body.subscribed_fields ?? c.query.subscribed_fields ?? '').split(',').filter(Boolean);
-      const known = ['feed', 'mention', 'messages', 'messaging_postbacks', 'comments', 'live_comments', 'mentions', 'story_insights'];
-      if (!fields.length || fields.some((f) => !known.includes(f))) return this.err(100, '(#100) Param subscribed_fields must be one of the known fields');
+      // Page fields only, as Meta answered on 16-nov-2026: Instagram's ("comments", "mentions"…) are subscribed in the app's dashboard,
+      // and sending one here is refused with the list of the Page's fields (shortened here).
+      const known = ['feed', 'mention', 'name', 'picture', 'messages', 'messaging_postbacks', 'message_reactions', 'live_videos', 'videos'];
+      const bad = fields.findIndex((f) => !known.includes(f));
+      if (!fields.length) return this.err(100, '(#100) The parameter subscribed_fields is required.');
+      if (bad >= 0) return this.err(100, `(#100) Param subscribed_fields[${bad}] must be one of {${known.join(', ')}} - got "${fields[bad]}".`);
       this.subscriptions.set(page, [...list.filter((a) => a.id !== this.appId), { id: this.appId, name: 'Estudio', subscribed_fields: fields }]);
       return { success: true };
     }

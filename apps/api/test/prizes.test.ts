@@ -218,7 +218,7 @@ describe('the rule on a post', () => {
     try {
       const pub = await published(ig);
       await ruleOn(pub.id);
-      expect(env.meta.subscriptions.get('111')).toEqual([{ id: 'app', name: 'Estudio', subscribed_fields: ['comments'] }]);
+      expect(env.meta.subscriptions.get('111')).toEqual([{ id: 'app', name: 'Estudio', subscribed_fields: ['feed'] }]);
       expect((await env.db.one('select provider_data from social_account where id = $1', [ig]))!.provider_data.events).toMatchObject({ subscribed: true });
       // Already subscribed: the next rule does not ask again.
       const asked = env.meta.callsTo(/subscribed_apps$/).length;

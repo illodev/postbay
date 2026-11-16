@@ -3,13 +3,27 @@ import { ConnectorError, type EventSubscription } from '../types.js';
 import type { MetaClient } from './client.js';
 
 /**
- * Meta pushes a Page's events (its feed, the comments on its Instagram account) to the app's webhook only once the app is
- * subscribed to that Page: POST /{page-id}/subscribed_apps with the fields, using the Page's token, which needs
- * pages_manage_metadata. Registering the webhook address in the app's dashboard is not enough by itself.
+ * Meta pushes an account's comments to the app's webhook only with two subscriptions:
  *
- * A Facebook account and an Instagram account can share one Page, and each asks for its own field, so the fields already there
- * are read first and kept: a subscription is never narrowed by connecting the other account.
+ * - the app's own, made in its dashboard: the Page object's "feed" for a Facebook Page, the Instagram object's "comments" for an
+ *   Instagram account;
+ * - the app's to the Page (for Instagram, the Page the account is linked to): POST /{page-id}/subscribed_apps, with the Page's token,
+ *   which needs pages_manage_metadata. It takes Page fields only: Meta refuses "comments" there ("You cannot use the subscribed_fields
+ *   parameter to configure or subscribe to Webhooks for Instagram"), and an Instagram account's events need the Page subscribed to any
+ *   Page field. Both accounts ask for "feed".
+ *
+ * The fields already on the Page are read first and kept: a subscription is never narrowed by connecting the other account.
  */
+
+/** The Page field an account's comments need the app to be subscribed to on the Page, for Facebook and Instagram alike. */
+export const PAGE_FIELD = 'feed';
+
+/** Where the app's own subscription for an account's comments lives: an object of the app's webhooks and one of its fields. */
+export interface AppSubscription {
+  object: 'page' | 'instagram';
+  field: string;
+}
+
 interface SubscribedApp {
   id?: string;
   name?: string;
@@ -21,6 +35,14 @@ export async function subscribedFields(client: MetaClient, page: string, token: 
   const r = await client.get<{ data?: SubscribedApp[] }>(`${page}/subscribed_apps`, token);
   const ours = (r.data ?? []).find((a) => a.id === client.cfg.appId);
   return ours ? (ours.subscribed_fields ?? []) : null;
+}
+
+/** Whether the app itself is subscribed to that field of that object (its dashboard's Webhooks), read with the app's token. */
+export async function appSubscribed(client: MetaClient, want: AppSubscription): Promise<boolean> {
+  const r = await client.get<{ data?: { object?: string; active?: boolean; fields?: { name?: string }[] }[] }>(
+    `${client.cfg.appId}/subscriptions`, `${client.cfg.appId}|${client.cfg.appSecret}`);
+  const obj = (r.data ?? []).find((s) => s.object === want.object && s.active !== false);
+  return !!obj?.fields?.some((f) => f.name === want.field);
 }
 
 export async function subscribe(client: MetaClient, page: string, token: string, wanted: string[], granted?: string[]): Promise<EventSubscription> {
@@ -55,12 +77,21 @@ export async function unsubscribe(client: MetaClient, page: string, token: strin
   await client.post(`${page}/subscribed_apps`, token, { subscribed_fields: [...new Set(keep)].join(',') });
 }
 
-/** What the account check says about the subscription: a line a person can act on, in the request's language. Never fails the check. */
-export async function describeSubscription(client: MetaClient, page: string, token: string, field: string): Promise<string> {
+/**
+ * What the account check says about the subscriptions (the Page's and the app's own): a line a person can act on, in the request's
+ * language. Never fails the check.
+ */
+export async function describeSubscription(client: MetaClient, page: string, token: string, app: AppSubscription): Promise<string> {
   try {
     const fields = await subscribedFields(client, page, token);
-    return tr(fields?.includes(field) ? 'connect.events.subscribed' : 'connect.events.notSubscribed', { field });
+    if (!fields?.includes(PAGE_FIELD)) return tr('connect.events.notSubscribed', { field: PAGE_FIELD });
   } catch (err) {
     return tr('connect.events.unreadable', { error: (err as Error).message });
   }
+  try {
+    if (!(await appSubscribed(client, app))) return tr('connect.events.appNotSubscribed', { object: app.object, field: app.field });
+  } catch (err) {
+    return tr('connect.events.appUnreadable', { error: (err as Error).message });
+  }
+  return tr(app.object === 'instagram' ? 'connect.events.subscribedInstagram' : 'connect.events.subscribed', { field: PAGE_FIELD });
 }

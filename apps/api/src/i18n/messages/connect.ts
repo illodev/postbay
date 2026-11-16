@@ -67,7 +67,13 @@ export const connect = define({
       'Meta no ha dejado suscribir la app a los eventos de la página ({error}). Hace falta pages_manage_metadata, que solo se pide con los premios activados; mientras, los comentarios se leen cada pocos minutos.',
     'connect.events.unconfirmed': 'Meta no ha confirmado la suscripción a la página',
     'connect.events.refused': 'La red no ha aceptado la suscripción: {error}',
-    'connect.events.subscribed': 'Meta manda a la app los comentarios de esta cuenta en cuanto llegan (la app está suscrita a los eventos «{field}» de la página).',
+    'connect.events.subscribed':
+      'La app está suscrita a los eventos «{field}» de la página: Meta manda los comentarios de esta cuenta en cuanto llegan si ha revisado la app (sin la revisión no los manda, y se leen cada pocos minutos).',
+    'connect.events.subscribedInstagram':
+      'La app está suscrita a los «comments» de Instagram y a los eventos «{field}» de la página vinculada: Meta manda los comentarios de esta cuenta en cuanto llegan si ha revisado la app (sin la revisión no los manda, y se leen cada pocos minutos).',
+    'connect.events.appNotSubscribed':
+      'La app de Meta no está suscrita a «{field}» del objeto «{object}» en su panel (Webhooks), así que Meta no manda los comentarios de esta cuenta: se leen cada pocos minutos. Suscríbela allí, con la dirección del webhook de Postbay.',
+    'connect.events.appUnreadable': 'No se ha podido leer a qué está suscrita la app de Meta en su panel ({error}).',
     'connect.events.notSubscribed':
       'La app no está suscrita a los eventos «{field}» de esta página, así que Meta no manda sus comentarios: se encuentran leyéndolos cada pocos minutos. Los premios la suscriben; si sigue así, vuelve a conectar la cuenta con los premios activados.',
     'connect.events.unreadable':
@@ -137,7 +143,13 @@ export const connect = define({
       "Meta refused to subscribe the app to the Page's events ({error}). It needs pages_manage_metadata, asked for only when prizes are on; comments are read every few minutes instead.",
     'connect.events.unconfirmed': 'Meta did not confirm the subscription to the Page',
     'connect.events.refused': 'The network refused the subscription: {error}',
-    'connect.events.subscribed': 'Meta sends this account\'s comments to the app as they happen (the app is subscribed to the Page\'s "{field}" events).',
+    'connect.events.subscribed':
+      'The app is subscribed to the Page\'s "{field}" events: Meta sends this account\'s comments as they happen once it has reviewed the app (until then it sends none, and they are read every few minutes).',
+    'connect.events.subscribedInstagram':
+      'The app is subscribed to Instagram\'s "comments" and to the linked Page\'s "{field}" events: Meta sends this account\'s comments as they happen once it has reviewed the app (until then it sends none, and they are read every few minutes).',
+    'connect.events.appNotSubscribed':
+      'The Meta app is not subscribed to "{field}" of the "{object}" object in its dashboard (Webhooks), so Meta does not push this account\'s comments: they are read every few minutes. Subscribe it there, with Postbay\'s webhook address.',
+    'connect.events.appUnreadable': 'Could not read what the Meta app is subscribed to in its dashboard ({error}).',
     'connect.events.notSubscribed':
       'The app is not subscribed to this Page\'s "{field}" events, so Meta does not push its comments: they are found by reading them every few minutes. Prizes subscribe it; connect the account again with prizes on if this stays.',
     'connect.events.unreadable':

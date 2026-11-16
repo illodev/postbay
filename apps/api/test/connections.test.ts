@@ -224,19 +224,29 @@ describe("Meta's webhooks: the app subscribed to the Page's events", () => {
       const idOf = (n: string): string => chosen.body.find((a: any) => a.network === n).id;
       const fbId = idOf('facebook');
       const igId = idOf('instagram');
-      // One Page, two accounts: the Page's feed for Facebook, comments for Instagram, neither undoing the other.
-      expect(env.meta.subscriptions.get('777')).toEqual([{ id: 'app', name: 'Estudio', subscribed_fields: ['feed', 'comments'] }]);
-      expect((await accountRow(fbId)).provider_data.events).toMatchObject({ subscribed: true, fields: ['feed'] });
-      expect((await accountRow(igId)).provider_data.events).toMatchObject({ subscribed: true, fields: ['feed', 'comments'] });
-
-      // The account check says whether Meta pushes the comments.
-      const check = await env.call(env.users.admin, 'POST', brandUrl(`/accounts/${igId}/check`));
-      expect(check.body.results.find((r: any) => r.id === 'health').detail).toContain('subscribed to the Page\'s "comments" events');
-
-      // Disconnecting Instagram keeps the Page's feed for Facebook; disconnecting Facebook too takes the app off the Page.
-      expect((await env.call(env.users.admin, 'POST', brandUrl(`/accounts/${igId}/disconnect`))).status).toBe(200);
+      // One Page, two accounts, one Page field: Meta takes no Instagram field ("comments") on a Page, and an Instagram account's
+      // comments need the Page subscribed with a Page field. Neither connection undoes the other.
       expect(env.meta.subscriptions.get('777')).toEqual([{ id: 'app', name: 'Estudio', subscribed_fields: ['feed'] }]);
+      expect((await accountRow(fbId)).provider_data.events).toMatchObject({ subscribed: true, fields: ['feed'] });
+      expect((await accountRow(igId)).provider_data.events).toMatchObject({ subscribed: true, fields: ['feed'] });
+
+      // The account check looks at both subscriptions: the Page's, and the app's own to the account's comments.
+      const health = async (id: string) => (await env.call(env.users.admin, 'POST', brandUrl(`/accounts/${id}/check`))).body.results.find((r: any) => r.id === 'health').detail as string;
+      expect(await health(igId)).toContain('subscribed to Instagram\'s "comments" and to the linked Page\'s "feed" events');
+      expect(await health(fbId)).toContain('subscribed to the Page\'s "feed" events');
+      const app = env.meta.appSubscriptions;
+      env.meta.appSubscriptions = [{ object: 'page', fields: ['feed'] }];
+      try {
+        expect(await health(igId)).toContain('not subscribed to "comments" of the "instagram" object');
+        expect(await health(fbId)).toContain('subscribed to the Page\'s "feed" events');
+      } finally {
+        env.meta.appSubscriptions = app;
+      }
+
+      // Disconnecting Facebook keeps the Page's feed for Instagram; disconnecting Instagram too takes the app off the Page.
       expect((await env.call(env.users.admin, 'POST', brandUrl(`/accounts/${fbId}/disconnect`))).status).toBe(200);
+      expect(env.meta.subscriptions.get('777')).toEqual([{ id: 'app', name: 'Estudio', subscribed_fields: ['feed'] }]);
+      expect((await env.call(env.users.admin, 'POST', brandUrl(`/accounts/${igId}/disconnect`))).status).toBe(200);
       expect(env.meta.subscriptions.get('777')).toEqual([]);
     } finally {
       env.meta.grantedScopes = scopes;
@@ -257,9 +267,9 @@ describe("Meta's webhooks: the app subscribed to the Page's events", () => {
 
       const on = await env.call(env.users.admin, 'PATCH', `/api/brands/${env.brandId}`, { prizes: { enabled: true } });
       expect(on.status, JSON.stringify(on.body)).toBe(200);
-      expect(env.meta.subscriptions.get('781')).toEqual([{ id: 'app', name: 'Estudio', subscribed_fields: ['feed', 'comments'] }]);
+      expect(env.meta.subscriptions.get('781')).toEqual([{ id: 'app', name: 'Estudio', subscribed_fields: ['feed'] }]);
       expect((await listed(fb)).details.events).toMatchObject({ subscribed: true, fields: ['feed'] });
-      expect((await listed(ig)).details.events).toMatchObject({ subscribed: true, fields: ['feed', 'comments'] });
+      expect((await listed(ig)).details.events).toMatchObject({ subscribed: true, fields: ['feed'] });
 
       // Saving the settings again with prizes still on asks Meta nothing more.
       const posts = env.meta.callsTo(/^781\/subscribed_apps$/, 'POST').length;
@@ -294,6 +304,28 @@ describe("Meta's webhooks: the app subscribed to the Page's events", () => {
       const check = await env.call(env.users.admin, 'POST', brandUrl(`/accounts/${id}/check`));
       expect(check.body.results.find((r: any) => r.id === 'health')).toMatchObject({ status: 'pass', detail: expect.stringContaining('pages_manage_metadata') });
     } finally {
+      env.meta.pages = [{ id: '111', name: 'Lumen Coffee', token: 'page-token-111', ig: { id: '222', username: 'lumen.coffee' } }];
+    }
+  });
+
+  it('asks again at the daily check when the subscription did not take, and leaves a subscribed account alone', async () => {
+    env.meta.pages = [{ id: '783', name: 'Retry Page', token: 'page-token-783', ig: { id: '784', username: 'retry.page' } }];
+    const scopes = env.meta.grantedScopes;
+    env.meta.grantedScopes = [...scopes, 'pages_manage_metadata'];
+    try {
+      // As an older Postbay left it: Meta refused "comments" on the Page.
+      const refused = { subscribed: false, fields: [], note: 'The network refused the subscription: (#100) Param subscribed_fields[1] must be one of {feed, …} - got "comments".' };
+      const ig = await env.connect('instagram', { externalId: '784', name: '@retry.page', token: 'page-token-783', providerData: { igUserId: '784', pageId: '783', events: refused } });
+      expect(await checkHealth(env.ctx, ig)).toEqual({ valid: true });
+      expect(env.meta.subscriptions.get('783')).toEqual([{ id: 'app', name: 'Estudio', subscribed_fields: ['feed'] }]);
+      expect((await accountRow(ig)).provider_data.events).toMatchObject({ subscribed: true, fields: ['feed'] });
+      expect((await accountRow(ig)).provider_data.events).not.toHaveProperty('note');
+
+      const asked = env.meta.callsTo(/^783\/subscribed_apps$/).length;
+      expect(await checkHealth(env.ctx, ig)).toEqual({ valid: true });
+      expect(env.meta.callsTo(/^783\/subscribed_apps$/)).toHaveLength(asked + 1); // only the check's own reading, nothing asked
+    } finally {
+      env.meta.grantedScopes = scopes;
       env.meta.pages = [{ id: '111', name: 'Lumen Coffee', token: 'page-token-111', ig: { id: '222', username: 'lumen.coffee' } }];
     }
   });

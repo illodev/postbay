@@ -65,12 +65,15 @@ version may or may not have been approved.
    else. A person's link works for the hours you chose and at most five downloads; a file is then handed over by a link that works five
    minutes. The page is not indexed by search engines.
 
-Meta only pushes a Page's events once the app is **subscribed to that Page** (`POST /{page-id}/subscribed_apps`, which needs
-`pages_manage_metadata`). Postbay subscribes when a Facebook Page (field `feed`) or an Instagram account (field `comments`, through its
-Page) is connected with that permission, when prizes are switched on for the brand (every Meta account of the brand, at once), and again
-when a rule that answers by message starts. It keeps the other account's fields when both share a Page, and takes its own away when the
-account is disconnected. *Check* on the account says whether Meta pushes its comments, and the account list carries the subscription
-(`details.events`: subscribed, fields, and why not).
+Meta pushes an account's comments only with two subscriptions. One is the app's own, made in its dashboard ([below](#setting-up-meta-for-prizes)):
+`comments` of the Instagram object, `feed` of the Page object. The other is the app's to the Page (`POST /{page-id}/subscribed_apps`,
+which needs `pages_manage_metadata`; for an Instagram account, the Page it is linked to). That one takes Page fields only (Meta refuses
+`comments` there), so Postbay asks for `feed` for both. It subscribes to the Page when a Facebook Page or an Instagram account is
+connected with that permission, when prizes are switched on for the brand (every Meta account of the brand, at once), when a rule that
+answers by message starts, and at the account's daily check while it is not subscribed. It keeps the other account's fields when both
+share a Page, and takes its own away when the account is disconnected. *Check* on the account says whether both subscriptions are there,
+and the account list carries the Page's (`details.events`: subscribed, fields, and why not). Even with both, Meta pushes no comments
+until it has reviewed the app ([known limitations](#known-limitations)): they are read every few minutes meanwhile.
 
 ## Networks that cannot message
 
@@ -92,8 +95,8 @@ id.
 
 In the Meta app, register:
 
-- `$APP_URL/api/meta/webhook` as the webhook (objects *Instagram* and *Page*, comments), with the verify token you put in
-  `META_WEBHOOK_VERIFY_TOKEN` (any long random string);
+- `$APP_URL/api/meta/webhook` as the webhook, with the verify token you put in `META_WEBHOOK_VERIFY_TOKEN` (any long random string),
+  subscribed to `comments` of the *Instagram* object and `feed` of the *Page* object;
 - `$APP_URL/api/meta/data-deletion` as the data-deletion callback, and `$APP_URL/data-deletion` as its instructions page.
 
 *Settings → Prizes* shows these addresses. Postbay subscribes the app to each Page itself (above).
@@ -103,9 +106,10 @@ account.
 
 ## Known limitations
 
-- **Meta must review the app** before it pushes comments from, or lets private messages go to, accounts outside your team. Until then the
-  worker reads the comments itself, and reading comments that way on Instagram is not clearly promised by Meta's documentation. Where Meta
-  gives only a username for an Instagram commenter, it is used as both the person's id and name.
+- **Meta must review the app** before it pushes comments (Instagram's, even from your own accounts: Meta asks Advanced Access for them, and
+  the app published) or lets private messages go to accounts outside your team. Until then the worker reads the comments itself, and reading
+  comments that way on Instagram is not clearly promised by Meta's documentation. Where Meta gives only a username for an Instagram
+  commenter, it is used as both the person's id and name.
 - The 7-day window and the one-message-per-comment rule are Meta's.
 - **Prize permissions need a reconnect** for accounts connected before prizes were switched on.
 - **The prize link is a bearer link**: anyone who gets it can use it until it expires or is used five times. A person who forwards it

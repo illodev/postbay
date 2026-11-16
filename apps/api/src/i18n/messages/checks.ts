@@ -41,7 +41,7 @@ export const checks = define({
     'check.linkedin.oldHint': 'Prepárate para subirla.',
     'check.linkedin.pass': { one: 'LINKEDIN_VERSION={version} ({count} mes).', other: 'LINKEDIN_VERSION={version} ({count} meses).' },
     'check.metaWebhook.title': 'Webhook de Meta',
-    'check.metaWebhook.pass': 'Registra {url} en la app de Meta (objetos de Instagram y de página, comentarios) con el token de verificación que has puesto.',
+    'check.metaWebhook.pass': 'Registra {url} en la app de Meta, con el token de verificación que has puesto, y suscríbela a «comments» del objeto Instagram y a «feed» del objeto Página.',
     'check.metaWebhook.missing': 'META_WEBHOOK_VERIFY_TOKEN no está puesta.',
     'check.metaWebhook.missingHint': 'Solo hace falta para los premios. Sin ella, los comentarios se buscan cada pocos minutos en vez de llegar al momento.',
 
@@ -194,7 +194,7 @@ export const checks = define({
     'check.linkedin.oldHint': 'Plan to raise it.',
     'check.linkedin.pass': { one: 'LINKEDIN_VERSION={version} ({count} month old).', other: 'LINKEDIN_VERSION={version} ({count} months old).' },
     'check.metaWebhook.title': 'Meta webhook',
-    'check.metaWebhook.pass': 'Register {url} in the Meta app (Instagram and Page objects, comments) with the verify token you set.',
+    'check.metaWebhook.pass': 'Register {url} in the Meta app with the verify token you set, and subscribe it to "comments" of the Instagram object and "feed" of the Page object.',
     'check.metaWebhook.missing': 'META_WEBHOOK_VERIFY_TOKEN is not set.',
     'check.metaWebhook.missingHint': 'Only needed for prizes. Without it comments are found by polling every few minutes instead of arriving at once.',
 

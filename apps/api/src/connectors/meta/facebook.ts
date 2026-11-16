@@ -6,7 +6,7 @@ import {
   type MediaItem, type MetricsResult, type NetworkComment, type PrepareResult, type Published, type PublishInput, type VerifyResult,
 } from '../types.js';
 import type { MetaClient } from './client.js';
-import { describeSubscription, subscribe, unsubscribe } from './webhooks.js';
+import { describeSubscription, PAGE_FIELD, subscribe, unsubscribe } from './webhooks.js';
 
 /**
  * Facebook Page publishing through the Graph API with a Page token.
@@ -310,14 +310,14 @@ export function createFacebook(client: MetaClient): Connector {
     async health(account, env): Promise<HealthResult> {
       const token = (await env.token()).accessToken;
       await client.get(account.externalId, token, { fields: 'id,name' });
-      return { valid: true, expiresAt: account.providerData.dataAccessExpiresAt as string | undefined, note: await describeSubscription(client, account.externalId, token, 'feed') };
+      return { valid: true, expiresAt: account.providerData.dataAccessExpiresAt as string | undefined, note: await describeSubscription(client, account.externalId, token, { object: 'page', field: PAGE_FIELD }) };
     },
 
-    // A Page's comments reach the webhook only once the app is subscribed to its "feed" events.
-    eventFields: ['feed'],
+    // A Page's comments reach the webhook once the app is subscribed to the Page object's "feed" (in its dashboard) and to this Page's.
+    eventFields: [PAGE_FIELD],
     async subscribeEvents(account, env) {
       const t = await env.token();
-      return subscribe(client, account.externalId, t.accessToken, ['feed'], t.scopes);
+      return subscribe(client, account.externalId, t.accessToken, [PAGE_FIELD], t.scopes);
     },
     async unsubscribeEvents(account, env, keep) {
       await unsubscribe(client, account.externalId, (await env.token()).accessToken, keep);
