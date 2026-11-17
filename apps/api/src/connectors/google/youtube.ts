@@ -21,6 +21,9 @@ import { ANALYTICS_SCOPE } from './oauth.js';
  * A Short is not a separate kind of upload: YouTube decides from the shape (vertical or square) and the length (up to 3
  * minutes). The "short" placement exists so the review screen can show where YouTube's own interface covers the frame.
  */
+/** YouTube's limit on a video's title, in characters. */
+const TITLE_MAX = 100;
+
 /** YouTube's declaration that a video is, or is not, made for children (COPPA). Required of every channel; nobody is chosen for. */
 const MADE_FOR_KIDS = [
   { value: 'no', label: "No, it's not made for kids" },
@@ -43,6 +46,7 @@ const CAPS: Capabilities = {
   aiLabel: true,
   nativeScheduling: { minLeadMinutes: 1, maxLeadDays: 3650 },
   options: [
+    { key: 'title', label: 'Video title', type: 'text', maxLength: TITLE_MAX, help: 'The title of the piece is used if this is empty.' },
     {
       key: 'madeForKids', label: 'Is this video made for kids?', type: 'select', required: true, choices: MADE_FOR_KIDS,
       help: "YouTube requires this declaration for every video (children's privacy law, COPPA). The channel's default is filled in when one is set in Settings → Accounts.",
@@ -92,7 +96,6 @@ interface AnalyticsReport {
   rows?: (string | number)[][];
 }
 
-const TITLE_MAX = 100;
 const mainVideo = (input: PublishInput): MediaItem | undefined => input.media.find((m) => m.kind === 'video');
 const titleOf = (input: PublishInput) => String(typeof input.options.title === 'string' && input.options.title.trim() ? input.options.title : input.title).replace(/[<>]/g, '');
 

@@ -173,7 +173,8 @@ its hour is looked at again after 1, 2, 5 and 10 minutes and then every 15, for 
 
 Each connector declares the settings it needs. When an account is chosen, the schedule dialog asks the server for that account's
 settings (`GET /api/brands/:brandId/accounts/:accountId/options`) and shows only the ones that apply to the kind of post; the API checks
-them, and nothing hidden is saved. Among them: alt text, Pinterest's title and destination link, YouTube's *made for kids* (nothing chosen
+them, and nothing hidden is saved. Among them: alt text, Pinterest's title and destination link, YouTube's video title (up to 100
+characters; the piece's title when it is left empty), YouTube's *made for kids* (nothing chosen
 to begin with, or the channel's default when an admin set one in *Settings → Accounts*; a video nobody declared is sent without a
 declaration, so YouTube applies the channel's own setting).
 

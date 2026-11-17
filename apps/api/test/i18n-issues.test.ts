@@ -146,9 +146,11 @@ describe('the names the schedule dialog shows', () => {
         expect(f.default).toEqual(was.default);
       });
     }
-    const yt = localizeOptions('youtube', c('youtube').capabilities(account('youtube', { providerData: { madeForKids: true } })).options!, 'es')[0]!;
+    const yt = localizeOptions('youtube', c('youtube').capabilities(account('youtube', { providerData: { madeForKids: true } })).options!, 'es').find((f) => f.key === 'madeForKids')!;
     expect(yt).toMatchObject({ key: 'madeForKids', label: '¿Este vídeo es para niños?', default: 'yes' });
     expect(yt.choices).toEqual([{ value: 'no', label: 'No, no es para niños' }, { value: 'yes', label: 'Sí, es para niños' }]);
+    const ytTitle = localizeOptions('youtube', c('youtube').capabilities().options!, 'es').find((f) => f.key === 'title')!;
+    expect(ytTitle).toMatchObject({ label: 'Título del vídeo', help: 'Si lo dejas vacío, se usa el título de la pieza.' });
   });
 
   it('translates what TikTok said about this creator, and what the creator switched off, keeping the values', async () => {

@@ -544,6 +544,17 @@ describe('YouTube', () => {
     expect(field(channelSaysNo).default).toBe('no');
   });
 
+  it("sends the title a person wrote, or the piece's when they left it empty", async () => {
+    const en = env(token, files);
+    const own = await yt().prepare(vid({ title: 'Spring menu', options: { title: 'Our spring menu, in 30 seconds' } }), ytAccount(), {}, en);
+    expect(google.videos.get(own.handle.videoId as string)!.snippet.title).toBe('Our spring menu, in 30 seconds');
+    const blank = await yt().prepare(vid({ title: 'Spring menu', options: { title: '  ' } }), ytAccount(), {}, en);
+    expect(google.videos.get(blank.handle.videoId as string)!.snippet.title).toBe('Spring menu');
+    // The dialog asks for it, up to YouTube's 100 characters, on a video and on a Short alike.
+    expect(yt().capabilities(ytAccount()).options!.find((o) => o.key === 'title')).toMatchObject({ type: 'text', maxLength: 100 });
+    expect(yt().capabilities(ytAccount()).options!.find((o) => o.key === 'title')!.placements).toBeUndefined();
+  });
+
   it('sends a description YouTube accepts: no < or >, and no more than 5,000 bytes', async () => {
     const en = env(token, files);
     const r = await yt().prepare(vid({ text: 'Prices <today> only: 2 > 1' }), ytAccount(), {}, en);

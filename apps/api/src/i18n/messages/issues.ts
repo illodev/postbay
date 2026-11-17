@@ -32,7 +32,7 @@ export const issues = define({
       '{name} dura {seconds} s. La referencia de Meta no da una duración para un vídeo de un carrusel, y los vídeos del feed tenían un límite de 60 segundos: puede que Instagram lo rechace.',
 
     // YouTube
-    'issue.title.length': 'El título tiene {count} caracteres; YouTube admite {max}. Acorta el título de la pieza.',
+    'issue.title.length': 'El título tiene {count} caracteres; YouTube admite {max}. Escribe uno más corto en «Título del vídeo» o acorta el título de la pieza.',
     'issue.text.bytes':
       'YouTube cuenta la descripción en bytes: esta ocupa {bytes} de {max} (las letras con tilde ocupan dos, los emojis cuatro, y cada < o > se envía como ‹ o ›, que ocupan tres). Acórtala.',
     'issue.text.angle': 'YouTube no admite < ni > en una descripción: se enviarán como ‹ y ›.',
@@ -113,6 +113,7 @@ export const issues = define({
     'option.altText.helpEvery': 'Se lee en voz alta a quien no puede ver la imagen. Se usa para todas las imágenes del post.',
     'option.titleFallback.help': 'Si lo dejas vacío, se usa el título de la pieza.',
 
+    'option.youtube.title.label': 'Título del vídeo',
     'option.youtube.madeForKids.label': '¿Este vídeo es para niños?',
     'option.youtube.madeForKids.help':
       'YouTube pide esta declaración para cada vídeo (por la ley de privacidad infantil, COPPA). Si el canal tiene un valor por defecto en Ajustes → Cuentas, se rellena con él.',
@@ -176,7 +177,7 @@ export const issues = define({
     'issue.carousel.video.length':
       "{name} runs {seconds} s. Meta's reference gives no length for a video in a carousel, and feed videos were limited to 60 seconds: Instagram may refuse it.",
 
-    'issue.title.length': 'The title has {count} characters; YouTube allows {max}. Shorten the piece title.',
+    'issue.title.length': 'The title has {count} characters; YouTube allows {max}. Write a shorter one in "Video title", or shorten the piece title.',
     'issue.text.bytes':
       'YouTube counts the description in bytes: this one takes {bytes} of {max} (accented letters take two, emoji four, and each < or > is sent as ‹ or ›, three). Shorten it.',
     'issue.text.angle': 'YouTube does not allow < or > in a description: they will be sent as ‹ and ›.',
@@ -250,6 +251,7 @@ export const issues = define({
     'option.altText.helpEvery': 'Read aloud to people who cannot see the picture. It is used for every picture of the post.',
     'option.titleFallback.help': 'The title of the piece is used if this is empty.',
 
+    'option.youtube.title.label': 'Video title',
     'option.youtube.madeForKids.label': 'Is this video made for kids?',
     'option.youtube.madeForKids.help':
       "YouTube requires this declaration for every video (children's privacy law, COPPA). The channel's default is filled in when one is set in Settings → Accounts.",
