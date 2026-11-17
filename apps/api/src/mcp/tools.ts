@@ -263,7 +263,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
 
   server.registerTool('get_version', {
     title: 'Get a version',
-    description: 'One version of a piece: its files (each with a download_url, valid for an hour, to fetch its exact bytes: to look at it, edit it or render the next version from it), fingerprint, who uploaded it, the decisions taken on it, the brand\'s approval rules (checklist), the accounts it could be approved for, and what approving it would schedule. Use it before approving.',
+    description: 'One version of a piece: its files (each with a download_url, valid for an hour, to fetch its exact bytes: to look at it, edit it or render the next version from it), fingerprint, who uploaded it, the decisions taken on it and the accounts approvers added afterwards, the accounts it is approved for now (approved_account_ids), the brand\'s approval rules (checklist), the accounts it could be approved for, and what approving it would schedule. Use it before approving.',
     inputSchema: { version_id: uuid('The version id') },
     annotations: read,
   }, run(async (a) => {
@@ -284,6 +284,8 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
       })),
       open_comments: open,
       decisions: v.approvals.map((x: Out) => ({ by: x.approver, decision: x.decision, note: x.note || null, at: x.created_at, still_counts: x.matches_fingerprint })),
+      accounts_added_later: v.approval_extensions.map((x: Out) => ({ by: x.approver, account_ids: x.account_ids, note: x.note || null, at: x.created_at, still_counts: x.matches_fingerprint })),
+      approved_account_ids: v.approved_account_ids,
       approval_rules: { required_approvals: rules.required_approvals, checklist: rules.checklist, assistant_can_approve: mcpOf(brand).allow_approval },
       accounts: accounts.map((x) => ({ id: x.id, network: x.network, name: x.display_name, status: x.status })),
       on_approval: v.slot_schedule ? { summary: v.slot_schedule.summary, ready: v.slot_schedule.ready, code: v.slot_schedule.code, reason: v.slot_schedule.reason, reason_i18n: v.slot_schedule.reason_i18n } : null,
@@ -834,7 +836,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
 
   server.registerTool('approve_version', {
     title: 'Approve a version',
-    description: 'Approves a version for the given accounts, as the person. Only where a brand admin enabled approving from assistants, and only for people whose role can approve (never their own upload, never with open comments). Before calling it, show the person what they are approving (piece, version number, fingerprint), get their explicit yes, and pass it in "confirm". The approval is bound to the version\'s files: changing a byte later voids it. If the brand has a checklist, every item must be confirmed by the person.',
+    description: 'Approves a version for the given accounts, as the person. Only where a brand admin enabled approving from assistants, and only for people whose role can approve (never their own upload, never with open comments). Before calling it, show the person what they are approving (piece, version number, fingerprint), get their explicit yes, and pass it in "confirm". The approval is bound to the version\'s files: changing a byte later voids it. If the brand has a checklist, every item must be confirmed by the person. On a version that is already approved it approves it for more accounts (a network connected afterwards, say): only the accounts it is not approved for yet are added, with the same rules, and nothing already scheduled moves.',
     inputSchema: {
       version_id: uuid('The version id'),
       account_ids: z.array(z.string().uuid()).min(1).max(50).describe('The accounts it is approved to go out on'),
@@ -847,9 +849,14 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
     },
     annotations: write,
   }, run(async (a) => {
-    await gate(a.version_id, a.confirm);
+    const version = await gate(a.version_id, a.confirm);
+    const checklist = Object.fromEntries((a.checklist_confirmed ?? []).map((k) => [k, true]));
+    if (version.review_state === 'approved') {
+      const r = await approvals.extendApproval(ctx, p, a.version_id, { accountIds: a.account_ids, checklist, note: a.note ?? '' });
+      return { version_id: r.versionId, state: r.review_state, approved: true, fingerprint: shortFp(r.fingerprint), account_ids: r.account_ids, added_account_ids: r.added, awaiting_account_ids: r.awaiting, url: link.review(r.versionId) };
+    }
     const r = await approvals.decide(ctx, p, a.version_id, {
-      decision: 'approve', accountIds: a.account_ids, checklist: Object.fromEntries((a.checklist_confirmed ?? []).map((k) => [k, true])),
+      decision: 'approve', accountIds: a.account_ids, checklist,
       note: a.note ?? '', autoSchedule: a.auto_schedule, scheduleText: a.schedule_text ?? '', scheduleFirstComment: a.schedule_first_comment ?? '',
     });
     return { version_id: r.versionId, state: r.review_state, approved: r.review_state === 'approved', fingerprint: shortFp(r.fingerprint), on_approval: r.slot_schedule ?? null, url: link.review(r.versionId) };

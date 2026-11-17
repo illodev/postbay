@@ -98,6 +98,10 @@ off, `approve_version` and `request_changes` refuse (`assistant_approval_off`) a
 - the assistant has to say back what is being decided on, in `confirm`: the piece (title or id), the version number and the fingerprint as
   the web shows it (its first 12 characters, or all of it). If it is not the very version, nothing happens (`confirmation_mismatch`, with
   what the version actually is, so the assistant can ask the person again).
+- on a version that is approved already, `approve_version` approves it for more accounts ([approving for more accounts](review.md#approving-for-more-accounts)):
+  only the accounts it is not approved for yet are added, by the same rules and with the same confirmation, and the answer says which
+  counted (`added_account_ids`) and which wait for another approver (`awaiting_account_ids`). `get_version` gives the accounts it is
+  approved for now (`approved_account_ids`) and the ones added afterwards (`accounts_added_later`).
 
 Nothing changes about publishing: only what a person approved goes on the calendar, through the same checks as the web.
 

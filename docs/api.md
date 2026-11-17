@@ -19,12 +19,13 @@ The tables below are the routes that matter most; `apps/api/src/routes/index.ts`
 | `POST /variants/:id/uploads` | Declare files with their size and sha256 and get signed upload addresses; with `resumable: true` for a big file, an upload to send in pieces instead |
 | `GET`, `PATCH /uploads/:id/resumable`, `POST /uploads/:id/resumable/finish` | Ask how much of a big file has arrived, send the next piece (`Upload-Offset`, raw bytes), and have the whole checked and stored |
 | `POST /variants/:id/versions` | Close a version: the uploaded files, notes and the comments it resolves. With a producer token, only inside a run it started on the piece |
-| `GET /versions/:id` | A version, with `slot_schedule` (what approving it will schedule at its slot, or why not) and `auto_fill_slots` |
+| `GET /versions/:id` | A version, with `slot_schedule` (what approving it will schedule at its slot, or why not) and `auto_fill_slots`, the accounts it is approved for now (`approved_account_ids`) and the ones approvers added afterwards (`approval_extensions`) |
 | `GET /versions/:id/comments?status=open&carried=true`, `POST /versions/:id/comments` | Comments with their anchor, drawing and frame; start a thread |
 | `POST /comments/:id/replies`, `/resolve`, `/reopen` | Reply (fixed, cannot do and why, or needs a person), resolve, reopen |
 | `POST /comments/:id/people-only` | Mark or unmark a comment as for people only (people only, not tokens) |
 | `GET /versions/:versionId/subtitles` | The subtitle lines of a version's video |
 | `POST /versions/:id/approvals`, `/request-changes` | Decide on a version. An approval may say `autoSchedule: false` and give `scheduleText`, `scheduleFirstComment`; its answer says what was scheduled (`slot_schedule`) |
+| `POST /versions/:id/approval-extensions` | Approve an approved version for more accounts (`accountIds`, `checklist`, `note`), by the rules of approving; answers the accounts it is approved for now (`account_ids`), the ones that counted (`added`) and the ones still waiting for more approvers (`awaiting`) |
 
 ## Publishing and the calendar
 
@@ -32,6 +33,7 @@ The tables below are the routes that matter most; `apps/api/src/routes/index.ts`
 | --- | --- |
 | `POST /versions/:id/publications/validate` | How a post would go out, and what would block it, before scheduling; refused, like scheduling, for a version that is not approved or not for that account |
 | `POST /versions/:id/publications` | Schedule an approved version on an account (an approver or admin; where the brand lets the agent schedule what is approved, also a producer token inside an agent run, or a producer through an assistant) |
+| `POST /versions/:id/publications/batch` | The same on several accounts at once, each with its own text, time and settings (`items`, one per account, up to 20): all are scheduled or none, and a refusal names the item (`details.item`, `details.accountId`) |
 | `PATCH /publications/:id`; `POST /publications/:id/cancel`, `/confirm`, `/reschedule` | Move or edit, cancel, confirm a change that needs a second approver, bring a held post back onto a new version |
 | `POST /publications/:id/retry`, `/hand-over`, `/recheck`; `GET /publications/:id/attempts` | Act on a failed or private post; read every attempt |
 | `GET /publications/:id/pack`, `POST /publications/:id/mark-published` | What a person needs to publish by hand; record that it is out, with its link |

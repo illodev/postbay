@@ -208,6 +208,106 @@ function DecisionDialog({ version, decision, openCount, onClose, onSeeComments }
   );
 }
 
+/**
+ * Approving an approved version for more accounts: a network connected after it was approved, say. The files are the same, so the
+ * approval stands and nothing scheduled moves; the rules are those of approving (no open comments, the checklist ticked).
+ */
+function ApproveMoreDialog({ version, openCount, onClose, onSeeComments }: {
+  version: VersionDetail;
+  openCount: number;
+  onClose: () => void;
+  onSeeComments: () => void;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { brand } = useSession();
+  const rules = version.brand.approval_rules;
+  const { data: accounts } = useQuery({ queryKey: ['accounts', brand.id], queryFn: () => api.get<Account[]>(`/api/brands/${brand.id}/accounts`) });
+  const approved = new Set(approvedAccountIds(version));
+  const usable = (accounts ?? []).filter((a) => a.status !== 'reconnect_required');
+  const already = (accounts ?? []).filter((a) => approved.has(a.id));
+  const offer = usable.filter((a) => !approved.has(a.id));
+  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const chosen = picked ?? new Set(offer.length === 1 ? [offer[0]!.id] : []);
+  const [checks, setChecks] = useState<Record<string, boolean>>({});
+  const [note, setNote] = useState('');
+  const send = useMutation({
+    mutationFn: () => api.post<{ added: string[]; awaiting: string[] }>(`/api/versions/${version.id}/approval-extensions`, { accountIds: [...chosen], checklist: checks, note }),
+    onSuccess: (r) => {
+      for (const k of ['version', 'piece', 'pieces', 'calendar']) qc.invalidateQueries({ queryKey: [k] });
+      toast(r.added.length ? t('review.more.done', { count: r.added.length }) : t('review.more.counted'));
+      onClose();
+    },
+  });
+  const toggle = (id: string) => {
+    const n = new Set(chosen);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    setPicked(n);
+  };
+  const allChecked = rules.checklist.every((c) => checks[c]);
+  const ready = chosen.size > 0 && allChecked && openCount === 0;
+  return (
+    <Dialog title={t('review.more.title', { n: version.number })} onClose={onClose}>
+      <form className="stack" onSubmit={(e) => { e.preventDefault(); send.mutate(); }}>
+        <p className="muted">
+          {t('review.more.lead')}
+          {rules.required_approvals > 1 && <> {t('review.more.needs', { count: rules.required_approvals })}</>}
+        </p>
+        <p className="small muted rv-fp">{t('review.details.fingerprint')} <span className="mono">{version.fingerprint.slice(0, 12)}</span></p>
+        {openCount > 0 && (
+          <div className="notice notice-warn rv-notice-row" role="alert">
+            <span>{t('review.approve.openBlock', { count: openCount })}</span>
+            <button type="button" className="btn btn-small" onClick={() => { onClose(); onSeeComments(); }}>{t('review.approve.seeComments')}</button>
+          </div>
+        )}
+        {already.length > 0 && (
+          <div className="stack">
+            <span className="field-label">{t('review.more.already')}</span>
+            {already.map((a) => (
+              <span key={a.id} className="check rv-acct">
+                <NetMark network={a.network} size="sm" />
+                <span>{NETWORK_LABEL[a.network] ?? a.network} · {a.display_name}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        <fieldset className="options">
+          <legend>{t('review.more.accounts')}</legend>
+          <div className="stack">
+            {accounts && offer.length === 0 && <span className="muted">{t('review.more.none')}</span>}
+            {offer.map((a) => (
+              <label key={a.id} className="check rv-acct">
+                <input type="checkbox" checked={chosen.has(a.id)} onChange={() => toggle(a.id)} />
+                <NetMark network={a.network} size="sm" />
+                <span>{NETWORK_LABEL[a.network] ?? a.network} · {a.display_name}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        {rules.checklist.length > 0 && (
+          <fieldset className="options">
+            <legend>{t('review.approve.checklist')}</legend>
+            <div className="stack">
+              {rules.checklist.map((item) => (
+                <label key={item} className="check">
+                  <input type="checkbox" checked={!!checks[item]} onChange={(e) => setChecks({ ...checks, [item]: e.target.checked })} />
+                  <span>{item}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
+        <Field label={t('review.approve.note')}><textarea value={note} onChange={(e) => setNote(e.target.value)} style={{ minHeight: 56 }} /></Field>
+        {send.error && <ErrorBox error={send.error} />}
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
+          <button className="btn btn-primary" disabled={!ready || send.isPending}>{t('review.more.submit')}</button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
 /** Asking for changes: the open comments go back with the version; with none open, a note says what to change. */
 function RequestChanges({ version, openCount, onClose }: { version: VersionDetail; openCount: number; onClose: () => void }) {
   const qc = useQueryClient();
@@ -242,11 +342,13 @@ function RequestChanges({ version, openCount, onClose }: { version: VersionDetai
   );
 }
 
-type DialogKind = null | 'approve' | 'reject' | 'changes' | 'schedule';
+type DialogKind = null | 'approve' | 'reject' | 'changes' | 'schedule' | 'more';
 
 /** What the person looking at a version can decide on it, and what to say when they cannot. */
 function useDecision(v: VersionDetail, openCount: number) {
-  const { me, can } = useSession();
+  const { me, can, brand } = useSession();
+  // Accounts it could still be approved for: connected ones it is not approved for yet (the list is the one the dialogs read).
+  const { data: accounts } = useQuery({ queryKey: ['accounts', brand.id], queryFn: () => api.get<Account[]>(`/api/brands/${brand.id}/accounts`), enabled: v.review_state === 'approved' && can('approve') });
   const mine = v.approvals.find((a) => a.approver === (me.user.name ?? me.user.email) || a.approver === me.user.email);
   const isAuthor = v.author_user_id === me.user.id;
   const valid = v.approvals.filter((a) => a.decision === 'approve' && a.matches_fingerprint).length;
@@ -258,7 +360,10 @@ function useDecision(v: VersionDetail, openCount: number) {
   // What the state chip says: the state, and for an approved version, for how many accounts.
   const stateLabel = v.review_state === 'approved' ? t('review.decision.approvedFor', { count: approvedAccountIds(v).length }) : undefined;
   const approvals = inReview && required > 1 ? { done: valid, count: required } : null;
-  return { can, inReview, canDecide, approveBlocked, latest, mine, isAuthor, stateLabel, approvals };
+  const approvedNow = new Set(approvedAccountIds(v));
+  const canApproveMore = v.review_state === 'approved' && can('approve') && !isAuthor
+    && (accounts ?? []).some((a) => a.status !== 'reconnect_required' && !approvedNow.has(a.id));
+  return { can, inReview, canDecide, approveBlocked, latest, mine, isAuthor, stateLabel, approvals, canApproveMore };
 }
 
 /** The state, quietly: a dot and a word, and how many approvals it has when it needs more than one. */
@@ -296,8 +401,13 @@ function DecisionButtons({ v, openCount, onDialog, compact }: { v: VersionDetail
   if (v.review_state === 'changes_requested' && d.can('upload')) {
     return <Link className="btn rv-btn" to={`/pieces/${v.piece.id}`}><Icon name="upload" size={15} />{t('review.decision.uploadNew')}</Link>;
   }
-  if (v.review_state === 'approved' && d.can('schedule')) {
-    return <button type="button" className="btn btn-primary rv-btn" onClick={() => onDialog('schedule')}><Icon name="calendar" size={15} />{t('review.decision.schedule')}</button>;
+  if (v.review_state === 'approved' && (d.can('schedule') || d.canApproveMore)) {
+    return (
+      <>
+        {d.canApproveMore && <button type="button" className="btn rv-btn" onClick={() => onDialog('more')}>{!compact && <Icon name="check" size={15} />}{t('review.decision.approveMore')}</button>}
+        {d.can('schedule') && <button type="button" className="btn btn-primary rv-btn" onClick={() => onDialog('schedule')}><Icon name="calendar" size={15} />{t('review.decision.schedule')}</button>}
+      </>
+    );
   }
   if (v.review_state === 'superseded' && d.latest && d.latest.id !== v.id) {
     return <Link className="btn rv-btn" to={`/review/${d.latest.id}`}>{t('review.decision.toLatest', { n: d.latest.number })}</Link>;
@@ -598,6 +708,20 @@ function Details({ v }: { v: VersionDetail }) {
             </div>
             {!a.matches_fingerprint && <span className="chip chip-failed">{t('review.details.changedSince')}</span>}
             {a.note && <p className="rv-quote">“{a.note}”</p>}
+          </div>
+        ))}
+        {(v.approval_extensions ?? []).map((x) => (
+          <div key={x.id} className="rv-approval">
+            <div className="rv-approval-h">
+              <Avatar name={shortName(x.approver)} size={22} />
+              <strong>{shortName(x.approver)}</strong>
+              <Chip state="approved" label={t('review.details.approvedMore')} />
+              <span className="grow" />
+              <time className="muted small" dateTime={x.created_at}>{fmtDateTime(x.created_at, v.brand.timezone)}</time>
+            </div>
+            <span className="muted small">{x.accounts.map((a) => `${NETWORK_LABEL[a.network] ?? a.network} · ${a.display_name}`).join(', ')}</span>
+            {!x.matches_fingerprint && <span className="chip chip-failed">{t('review.details.changedSince')}</span>}
+            {x.note && <p className="rv-quote">“{x.note}”</p>}
           </div>
         ))}
       </section>
@@ -914,6 +1038,9 @@ function Review({ versionId }: { versionId: string }) {
         <DecisionDialog version={v} decision={dialog} openCount={openCount} onClose={() => setDialog(null)} onSeeComments={() => { setTab('comments'); setFilter({ ...NO_FILTER, status: 'open' }); }} />
       )}
       {dialog === 'changes' && <RequestChanges version={v} openCount={openCount} onClose={() => setDialog(null)} />}
+      {dialog === 'more' && (
+        <ApproveMoreDialog version={v} openCount={openCount} onClose={() => setDialog(null)} onSeeComments={() => { setTab('comments'); setFilter({ ...NO_FILTER, status: 'open' }); }} />
+      )}
       {dialog === 'schedule' && <ScheduleDialog version={v} brandId={brand.id} zone={v.brand.timezone} onClose={() => setDialog(null)} />}
     </div>
   );

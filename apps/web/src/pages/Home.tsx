@@ -358,6 +358,7 @@ function ActivityEvent({ e }: { e: ActivityItem }) {
     case 'comment': line = rich(t('home.activity.comment'), parts); break;
     case 'version': line = rich(t('home.activity.version', { n: e.version_number ?? 1 }), parts); break;
     case 'approved': line = e.networks.length ? rich(t('home.activity.approved', { networks }), parts) : rich(t('home.activity.approvedPlain'), parts); break;
+    case 'approved_more': line = rich(t('home.activity.approvedMore', { networks }), parts); break;
     case 'rejected': line = rich(t('home.activity.rejected', { n: e.version_number ?? 1 }), parts); break;
     case 'changes_requested': line = rich(t('home.activity.changes'), parts); break;
     case 'published': line = e.actor ? rich(t('home.activity.publishedBy', { network: networks }), parts) : rich(t('home.activity.published', { network: networks }), parts); break;

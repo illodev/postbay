@@ -95,7 +95,7 @@ export interface AttentionItem {
   action: AttentionAction | null;
 }
 
-export type ActivityKind = 'comment' | 'version' | 'approved' | 'rejected' | 'changes_requested' | 'published' | 'agent_handed';
+export type ActivityKind = 'comment' | 'version' | 'approved' | 'approved_more' | 'rejected' | 'changes_requested' | 'published' | 'agent_handed';
 
 export interface ActivityItem {
   kind: ActivityKind;
@@ -346,6 +346,15 @@ async function recentActivity(ctx: Ctx, brandId: string, limit = 20): Promise<Ac
       join app_user u on u.id = a.approver_user_id
       where p.brand_id = $1
       order by a.created_at desc limit $2)
+     union all
+     (select 'approved_more', x.id::text, x.created_at, ${WHO('u', 'u')}, false,
+        p.id, p.title, ver.id, ver.number, nullif(left(split_part(trim(x.note), E'\\n', 1), 200), ''), null,
+        array(select distinct sa.network from social_account sa where sa.id = any(x.account_ids) order by sa.network), null, null,
+        (select ae.via->>'client_name' from audit_event ae where ae.entity = 'version' and ae.entity_id = ver.id and ae.action = 'version.approval_extended' and ae.actor_user_id = x.approver_user_id and ae.via is not null limit 1)
+      from approval_extension x join version ver on ver.id = x.version_id join variant v on v.id = ver.variant_id join piece p on p.id = v.piece_id
+      join app_user u on u.id = x.approver_user_id
+      where p.brand_id = $1
+      order by x.created_at desc limit $2)
      union all
      (select 'changes_requested', e.id::text, e.at, ${WHO('u', 't')}, (e.actor_token_id is not null),
         p.id, p.title, ver.id, ver.number, null, null, '{}'::text[], null, null, e.via->>'client_name'

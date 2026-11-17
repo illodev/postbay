@@ -245,6 +245,17 @@ export interface Approval {
   checklist: Record<string, boolean>;
 }
 
+/** Accounts an approver added to an approved version afterwards. */
+export interface ApprovalExtension {
+  id: string;
+  account_ids: string[];
+  accounts: { id: string; network: string; display_name: string }[];
+  note: string;
+  created_at: string;
+  approver: string;
+  matches_fingerprint: boolean;
+}
+
 export interface VersionDetail {
   id: string;
   number: number;
@@ -265,6 +276,10 @@ export interface VersionDetail {
   brand: { name: string; timezone: string; approval_rules: BrandSettings['rules']; paused: boolean };
   assets: Asset[];
   approvals: Approval[];
+  /** Accounts added afterwards, by whom. */
+  approval_extensions: ApprovalExtension[];
+  /** The accounts it is approved for right now, the ones added afterwards included: what it can be scheduled on. */
+  approved_account_ids: string[];
   versions: { id: string; number: number }[];
   /** For a piece made for a slot: what approving it schedules there, or why it would not. */
   slot_schedule?: SlotSchedule | null;
@@ -851,7 +866,7 @@ export interface AttentionItem {
   action: AttentionAction | null;
 }
 
-export type ActivityKind = 'comment' | 'version' | 'approved' | 'rejected' | 'changes_requested' | 'published' | 'agent_handed';
+export type ActivityKind = 'comment' | 'version' | 'approved' | 'approved_more' | 'rejected' | 'changes_requested' | 'published' | 'agent_handed';
 
 export interface ActivityItem {
   kind: ActivityKind;

@@ -29,6 +29,13 @@ export const decisionInput = z.object({
   scheduleFirstComment: z.string().max(5000).default(''),
 });
 
+/** Approving an approved version for more accounts: which ones, and the checklist and note, as when approving it. */
+export const extendInput = z.object({
+  accountIds: z.array(z.string().uuid()).min(1).max(50),
+  checklist: z.record(z.string(), z.boolean()).default({}),
+  note: z.string().max(5000).default(''),
+});
+
 export const requestChangesInput = z.object({
   note: z.string().trim().max(5000).default(''),
 });
@@ -133,12 +140,7 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
       const missing = rules.checklist.filter((item) => input.checklist[item] !== true);
       if (missing.length) throw badRequest('checklist_incomplete', msg('error.approval.checklist'), { missing });
       if (input.accountIds.length === 0) throw badRequest('no_accounts', msg('error.approval.noAccounts'));
-      const accounts = await db.query<{ id: string; status: string }>(
-        'select id, status from social_account where brand_id = $1 and id = any($2)',
-        [version.brand_id, input.accountIds],
-      );
-      if (accounts.length !== new Set(input.accountIds).size) throw badRequest('invalid_accounts', msg('error.approval.accountNotInBrand'));
-      if (accounts.some((x) => x.status === 'reconnect_required')) throw badRequest('invalid_accounts', msg('error.approval.accountReconnect'));
+      await assertApprovableAccounts(db, version.brand_id, input.accountIds);
     }
 
     // What goes to a network besides the files is approved with them: the title and the AI label as the approver saw them.
@@ -199,10 +201,79 @@ export async function decide(ctx: Ctx, p: Principal, versionId: string, raw: unk
   });
 }
 
+/** The accounts of a brand someone approves for: all of the brand, and none that needs connecting again. */
+async function assertApprovableAccounts(db: Queryable, brandId: string, accountIds: string[]) {
+  const accounts = await db.query<{ id: string; status: string }>(
+    'select id, status from social_account where brand_id = $1 and id = any($2)',
+    [brandId, accountIds],
+  );
+  if (accounts.length !== new Set(accountIds).size) throw badRequest('invalid_accounts', msg('error.approval.accountNotInBrand'));
+  if (accounts.some((x) => x.status === 'reconnect_required')) throw badRequest('invalid_accounts', msg('error.approval.accountReconnect'));
+}
+
+/**
+ * An approver approves an approved version for more accounts: a network connected after it was approved, say. It is the same files, so
+ * the approval is not voided and nothing scheduled moves; the accounts are added. The rules of approving hold: a person whose role can
+ * approve, never their own upload, never with open comments, the checklist ticked, and the stored files still the approved ones. An
+ * added account counts once as many approvers as the brand needs have approved it (see `effectiveApproval`); until then the answer says
+ * it is waiting. Nothing is scheduled by it.
+ */
+export async function extendApproval(ctx: Ctx, p: Principal, versionId: string, raw: unknown) {
+  const input = extendInput.parse(raw);
+  return ctx.db.tx(async (db) => {
+    await db.query('select 1 from version where id = $1 for update', [versionId]);
+    const version = await loadVersion(db, versionId);
+    await authorize(db, p, version.brand_id, 'version.approve');
+    if (p.kind !== 'user') throw forbidden(msg('error.approval.peopleOnly'));
+    if (version.review_state !== 'approved') throw conflict('invalid_state', msg('error.approval.extendOnlyApproved'));
+    if (version.author_user_id === p.userId) throw forbidden(msg('error.approval.ownUpload'));
+    const fingerprint = await recomputeFingerprint(db, versionId);
+    if (fingerprint !== version.fingerprint || !(await storedFilesMatch(ctx, versionId, db))) {
+      ctx.log.error({ versionId }, 'stored files no longer match the version fingerprint');
+      throw conflict('fingerprint_mismatch', msg('error.approval.fingerprint'));
+    }
+    const before = await effectiveApproval(db, versionId);
+    if (!before.approved) throw conflict('not_approved', msg('error.pub.versionNotApproved'));
+    const open = await openCommentCount(db, version.variant_id);
+    if (open > 0) throw conflict('open_comments', msg('error.approval.openComments', { count: open }), { open });
+    const rules = rulesOf(await loadBrand(db, version.brand_id));
+    const missing = rules.checklist.filter((item) => input.checklist[item] !== true);
+    if (missing.length) throw badRequest('checklist_incomplete', msg('error.approval.checklist'), { missing });
+    await assertApprovableAccounts(db, version.brand_id, input.accountIds);
+
+    // What this approver has approved already, for these files: their approval of the version and what they added since.
+    const mine = new Set((await db.query<{ account_ids: string[] }>(
+      `select account_ids from approval where version_id = $1 and approver_user_id = $2 and decision = 'approve' and approved_fingerprint = $3
+       union all
+       select account_ids from approval_extension where version_id = $1 and approver_user_id = $2 and approved_fingerprint = $3`,
+      [versionId, p.userId, fingerprint],
+    )).flatMap((r) => r.account_ids));
+    const asked = [...new Set(input.accountIds)];
+    const adding = asked.filter((id) => !before.accountIds.includes(id) && !mine.has(id));
+    if (adding.length === 0) {
+      throw conflict('already_approved', asked.every((id) => before.accountIds.includes(id)) ? msg('error.approval.alreadyFor') : msg('error.approval.alreadyYoursFor'));
+    }
+    await db.query(
+      `insert into approval_extension (version_id, approver_user_id, account_ids, approved_fingerprint, checklist, note)
+       values ($1,$2,$3,$4,$5,$6)`,
+      [versionId, p.userId, adding, fingerprint, JSON.stringify(input.checklist), input.note],
+    );
+    const after = await effectiveApproval(db, versionId);
+    const added = adding.filter((id) => after.accountIds.includes(id));
+    const awaiting = adding.filter((id) => !after.accountIds.includes(id));
+    await audit(db, p, version.brand_id, 'version.approval_extended', 'version', versionId,
+      { accounts: before.accountIds },
+      { accounts: after.accountIds, adding, added, awaiting, fingerprint, note: input.note, uploaded_by: await uploaderOf(db, versionId) });
+    return { versionId, review_state: 'approved', fingerprint, account_ids: after.accountIds, added, awaiting };
+  });
+}
+
 /**
  * Whether a version is approved right now, and for which accounts. An approval only counts when
  * the version is in the approved state, the files still hash to the approved fingerprint, and enough distinct
- * approvers approved exactly that fingerprint.
+ * approvers approved exactly that fingerprint. It is approved for the accounts every one of them agreed on, and for each account added
+ * afterwards (`extendApproval`) that as many approvers as the brand needs have approved, a first approval counting for the accounts it
+ * named.
  */
 export interface EffectiveApproval {
   approved: boolean;
@@ -224,15 +295,28 @@ export async function effectiveApproval(db: Queryable, versionId: string): Promi
   if (!version || version.review_state !== 'approved') return none;
   if ((await recomputeFingerprint(db, versionId)) !== version.fingerprint) return none;
   const rules = rulesOf(await loadBrand(db, version.brand_id));
-  const rows = await db.query<{ account_ids: string[]; piece_title: string | null; ai_generated: boolean | null }>(
-    `select account_ids, piece_title, ai_generated from approval where version_id = $1 and decision = 'approve' and approved_fingerprint = $2 order by created_at, id`,
+  const rows = await db.query<{ approver_user_id: string; account_ids: string[]; piece_title: string | null; ai_generated: boolean | null }>(
+    `select approver_user_id, account_ids, piece_title, ai_generated from approval where version_id = $1 and decision = 'approve' and approved_fingerprint = $2 order by created_at, id`,
     [versionId, version.fingerprint],
   );
   if (rows.length === 0 || rows.length < rules.required_approvals) return none;
   const common = rows.map((r) => r.account_ids).reduce((acc, ids) => acc.filter((x) => ids.includes(x)));
+  const accountIds = [...common];
+  if (common.length > 0) {
+    const added = await db.query<{ approver_user_id: string; account_ids: string[] }>(
+      'select approver_user_id, account_ids from approval_extension where version_id = $1 and approved_fingerprint = $2 order by created_at, id',
+      [versionId, version.fingerprint],
+    );
+    // Who approved each account, by their approval of the version or since: an added account counts with enough distinct approvers.
+    const approvers = new Map<string, Set<string>>();
+    for (const r of [...rows, ...added]) for (const id of r.account_ids) approvers.set(id, (approvers.get(id) ?? new Set()).add(r.approver_user_id));
+    for (const r of added) {
+      for (const id of r.account_ids) if (!accountIds.includes(id) && approvers.get(id)!.size >= rules.required_approvals) accountIds.push(id);
+    }
+  }
   const titled = rows.filter((r) => r.piece_title !== null);
   return {
-    approved: common.length > 0, accountIds: common, fingerprint: version.fingerprint,
+    approved: common.length > 0, accountIds, fingerprint: version.fingerprint,
     title: titled.length ? titled[titled.length - 1]!.piece_title : null, aiGenerated: rows.some((r) => r.ai_generated === true),
   };
 }

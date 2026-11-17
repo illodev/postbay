@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createEnv, type Env } from './helpers.js';
+import { createEnv, inDays, type Env } from './helpers.js';
 
 let env: Env;
 beforeAll(async () => { env = await createEnv(); });
@@ -371,6 +371,97 @@ describe('approval', () => {
     const second = await approve(users.approver2, v.body.id, [accounts.youtube, accounts.facebook]);
     expect(second.body.review_state).toBe('approved');
     await db.query(`update brand set approval_rules = approval_rules || '{"required_approvals":1}' where id = $1`, [brandId]);
+  });
+
+  it('approves an approved version for more accounts, by the rules of approving, and it can then be scheduled there', async () => {
+    const { users, call, db, brandId, makePiece, newVersion, approve, accounts } = env;
+    const { variantId } = await makePiece(users.producer);
+    const v = await newVersion(users.producer, variantId);
+    const extend = (as: typeof users.admin, accountIds: string[], extra: Record<string, unknown> = {}) =>
+      call(as, 'POST', `/api/versions/${v.body.id}/approval-extensions`, { accountIds, ...extra });
+    const schedule = (accountId: string) =>
+      call(users.approver, 'POST', `/api/versions/${v.body.id}/publications`, { accountId, scheduledAt: inDays(5), text: 'Hello' });
+
+    // Only a version that is approved already; and once it is, a second approval is not the way to add an account.
+    expect((await extend(users.approver, [accounts.facebook])).body.error.code).toBe('invalid_state');
+    expect((await approve(users.approver, v.body.id, [accounts.instagram])).body.review_state).toBe('approved');
+    expect((await approve(users.approver2, v.body.id, [accounts.facebook])).body.error.code).toBe('invalid_state');
+    expect((await schedule(accounts.facebook)).body.error.code).toBe('account_not_approved');
+
+    // People whose role approves.
+    for (const who of [users.reviewer, users.producer, users.reader]) expect((await extend(who, [accounts.facebook])).status).toBe(403);
+    // Something new, of this brand.
+    const same = await extend(users.approver2, [accounts.instagram]);
+    expect(same.status).toBe(409);
+    expect(same.body.error.code).toBe('already_approved');
+    expect((await extend(users.approver2, ['00000000-0000-4000-8000-000000000000'])).body.error.code).toBe('invalid_accounts');
+    expect((await extend(users.approver2, [])).status).toBe(400);
+    // An open comment stops it, as it stops approving; so does an unticked checklist.
+    const c = await call(users.reviewer, 'POST', `/api/versions/${v.body.id}/comments`, { body: 'One more thing' });
+    expect(c.status).toBe(201);
+    expect((await extend(users.approver2, [accounts.facebook])).body.error.code).toBe('open_comments');
+    expect((await call(users.approver, 'POST', `/api/comments/${c.body.id}/resolve`)).status).toBe(200);
+    await call(users.admin, 'PATCH', `/api/brands/${brandId}`, { rules: { checklist: ['Text checked for the network'] } });
+    expect((await extend(users.approver2, [accounts.facebook])).body.error.code).toBe('checklist_incomplete');
+
+    const ok = await extend(users.approver2, [accounts.facebook, accounts.instagram], { note: 'Facebook too', checklist: { 'Text checked for the network': true } });
+    await db.query(`update brand set approval_rules = approval_rules || '{"checklist":[]}' where id = $1`, [brandId]);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+    expect(ok.body.added).toEqual([accounts.facebook]);
+    expect(ok.body.awaiting).toEqual([]);
+    expect([...ok.body.account_ids].sort()).toEqual([accounts.instagram, accounts.facebook].sort());
+
+    // The version says what it is approved for now, and who added what; the files' approval is the same one.
+    const got = (await call(users.reader, 'GET', `/api/versions/${v.body.id}`)).body;
+    expect(got.review_state).toBe('approved');
+    expect([...got.approved_account_ids].sort()).toEqual([accounts.instagram, accounts.facebook].sort());
+    expect(got.approvals).toHaveLength(1);
+    expect(got.approval_extensions).toMatchObject([{ account_ids: [accounts.facebook], note: 'Facebook too', matches_fingerprint: true }]);
+    expect((await schedule(accounts.facebook)).status).toBe(201);
+    expect((await schedule(accounts.youtube)).body.error.code).toBe('account_not_approved');
+
+    const log = await call(users.approver, 'GET', `/api/brands/${brandId}/audit?entity=version&entityId=${v.body.id}`);
+    expect(log.body[0]).toMatchObject({ action: 'version.approval_extended', before: { accounts: [accounts.instagram] }, after: { added: [accounts.facebook] } });
+    // The record of it cannot be changed or taken away.
+    await expect(db.query(`update approval_extension set account_ids = '{}' where version_id = $1`, [v.body.id])).rejects.toThrow(/append-only/);
+    await expect(db.query(`delete from approval_extension where version_id = $1`, [v.body.id])).rejects.toThrow(/append-only/);
+    await expect(db.query('truncate approval_extension')).rejects.toThrow(/append-only/);
+  });
+
+  it('never lets someone approve their own upload for more accounts', async () => {
+    const { users, call, makePiece, newVersion, approve, accounts } = env;
+    const { variantId } = await makePiece(users.approver);
+    const v = await newVersion(users.approver, variantId);
+    expect((await approve(users.approver2, v.body.id, [accounts.instagram])).status).toBe(201);
+    const r = await call(users.approver, 'POST', `/api/versions/${v.body.id}/approval-extensions`, { accountIds: [accounts.facebook] });
+    expect(r.status).toBe(403);
+    expect(r.body.error.message).toMatch(/uploaded yourself/);
+  });
+
+  it('with two required approvals, an added account counts once two approvers have approved it', async () => {
+    const { users, call, db, brandId, makePiece, newVersion, approve, accounts } = env;
+    await call(users.admin, 'PATCH', `/api/brands/${brandId}`, { rules: { required_approvals: 2 } });
+    try {
+      const { variantId } = await makePiece(users.producer);
+      const v = await newVersion(users.producer, variantId);
+      const extend = (as: typeof users.admin) => call(as, 'POST', `/api/versions/${v.body.id}/approval-extensions`, { accountIds: [accounts.facebook] });
+      expect((await approve(users.approver, v.body.id, [accounts.instagram])).body.review_state).toBe('in_review');
+      expect((await approve(users.approver2, v.body.id, [accounts.instagram])).body.review_state).toBe('approved');
+
+      const first = await extend(users.approver);
+      expect(first.status).toBe(201);
+      expect(first.body).toMatchObject({ added: [], awaiting: [accounts.facebook], account_ids: [accounts.instagram] });
+      const again = await extend(users.approver);
+      expect(again.body.error.code).toBe('already_approved');
+      expect(again.body.error.message).toMatch(/another approver/);
+      expect((await call(users.approver, 'POST', `/api/versions/${v.body.id}/publications`, { accountId: accounts.facebook, scheduledAt: inDays(5) })).body.error.code).toBe('account_not_approved');
+
+      const second = await extend(users.admin);
+      expect(second.body).toMatchObject({ added: [accounts.facebook], awaiting: [] });
+      expect([...second.body.account_ids].sort()).toEqual([accounts.instagram, accounts.facebook].sort());
+    } finally {
+      await db.query(`update brand set approval_rules = approval_rules || '{"required_approvals":1}' where id = $1`, [brandId]);
+    }
   });
 
   it('records everything in the audit log', async () => {

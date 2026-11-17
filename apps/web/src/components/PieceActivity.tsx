@@ -25,7 +25,7 @@ interface AuditRow {
   actor: string | null;
 }
 
-type Kind = 'created' | 'edited' | 'discarded' | 'reset' | 'version' | 'comment' | 'reply' | 'approved' | 'rejected' | 'changes' | 'published' | 'failed';
+type Kind = 'created' | 'edited' | 'discarded' | 'reset' | 'version' | 'comment' | 'reply' | 'approved' | 'approvedMore' | 'rejected' | 'changes' | 'published' | 'failed';
 
 interface Ev {
   key: string;
@@ -134,6 +134,10 @@ export function PieceActivity({ piece, zone, className }: { piece: ActivityPiece
     for (const a of q.data?.approvals ?? []) {
       events.push({ key: `a-${a.id}`, at: a.created_at, kind: a.decision === 'approve' ? 'approved' : 'rejected', who: { name: a.approver }, version: { id: q.data!.id, number: q.data!.number }, text: a.note || undefined });
     }
+    for (const x of q.data?.approval_extensions ?? []) {
+      const accounts = x.accounts.map((a) => `${NETWORK_LABEL[a.network] ?? a.network} · ${a.display_name}`).join(', ');
+      events.push({ key: `ax-${x.id}`, at: x.created_at, kind: 'approvedMore', who: { name: x.approver }, version: { id: q.data!.id, number: q.data!.number }, text: accounts });
+    }
   }
   for (const p of piece.publications) {
     if (p.status === 'published' && p.published_at) events.push({ key: `p-${p.id}`, at: p.published_at, kind: 'published', network: p.network, text: p.account_name, version: { id: p.version_id, number: p.version_number } });
@@ -183,7 +187,7 @@ export function PieceActivity({ piece, zone, className }: { piece: ActivityPiece
                   {e.who && <Tipped label={e.who.agent ? (e.who.name ?? undefined) : undefined}><strong className={e.who.agent ? 'pc-agent-name' : undefined}>{e.who.agent ? t('common.agent') : short(e.who.name)}</strong></Tipped>}{' '}
                   <Sentence e={e} />
                 </p>
-                {(e.mark || (e.text && e.kind !== 'published' && e.kind !== 'failed')) && (
+                {(e.mark || (e.text && e.kind !== 'published' && e.kind !== 'failed' && e.kind !== 'approvedMore')) && (
                   <p className="pc-tl-quote">
                     {e.mark && <span className="tc">{e.mark}</span>}
                     {e.text && <span>{e.text}</span>}
@@ -225,6 +229,7 @@ function Sentence({ e }: { e: Ev }) {
     case 'comment': return withVersion('piece.act.comment', e.version);
     case 'reply': return withVersion('piece.act.reply', e.version);
     case 'approved': return withVersion('piece.act.approved', e.version);
+    case 'approvedMore': return <>{withVersion('piece.act.approvedMore', e.version)} <span className="pc-tl-variant">· {e.text}</span></>;
     case 'rejected': return withVersion('piece.act.rejected', e.version);
     case 'changes': return withVersion('piece.act.changes', e.version);
     case 'published': return <>{withVersion('piece.act.published', e.version, { network })} <span className="pc-tl-variant">· {e.text}</span></>;

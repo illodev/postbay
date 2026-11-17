@@ -156,11 +156,12 @@ it in *Settings → Audit log* (`GET /api/brands/:id/audit`).
 | Rule | Where it is enforced |
 | --- | --- |
 | A version cannot change after it is created | database trigger, plus no code path edits it |
-| A version's files, approvals, the record of when it reached its approval, the attempt log and the audit log are append-only | database triggers (also against `TRUNCATE`) |
+| A version's files, approvals (and the accounts added to them afterwards), the record of when it reached its approval, the attempt log and the audit log are append-only | database triggers (also against `TRUNCATE`) |
 | An approval counts only for the exact files it was given for | fingerprint recomputed from the file records, and each stored object's size and sha256 read back from storage, on every approve, schedule and publish (`services/versions.ts`) |
 | What goes out with the files (the title, the AI label) is what was approved; a producer can add the AI label but never take it away once a version is approved | the approval records both, the publication takes them from it (`services/approvals.ts`, `services/publications.ts`, `services/pieces.ts`) |
 | Nobody approves their own upload, whatever their role. What a producer token uploads is the token's, not its maker's: the version and the approval's record name both | `services/approvals.ts` |
 | No approval with open comments, an incomplete checklist or no accounts | `services/approvals.ts` |
+| Approving an approved version for more accounts follows the rules of approving (role, never one's own upload, no open comments, the checklist, the stored files still the approved ones), and an added account counts only with as many approvers as the brand needs | `services/approvals.ts` (`extendApproval`, `effectiveApproval`) |
 | A new version voids the previous approval and puts anything scheduled on hold | `services/versions.ts` |
 | Only what is approved, for the accounts approved, can be scheduled, even while a new version is being closed | `services/publications.ts` (the variant's lock) |
 | Once a version is approved or anything is scheduled, only an approver can discard the piece | `services/pieces.ts` |

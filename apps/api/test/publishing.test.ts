@@ -19,6 +19,38 @@ const schedule = (versionId: string, extra: Record<string, unknown> = {}, as = e
     accountId: env.accounts.instagram, scheduledAt: inDays(5), text: 'Hello world', ...extra,
   });
 
+describe('scheduling several accounts at once', () => {
+  it('puts every account on the calendar with its own text and time, or none of them', async () => {
+    const { users, call, db, accounts } = env;
+    const { versionId } = await approved([accounts.instagram, accounts.youtube]);
+    const batch = (items: Record<string, unknown>[], as = users.approver) => call(as, 'POST', `/api/versions/${versionId}/publications/batch`, { items });
+    const count = async () => (await db.one<{ n: number }>('select count(*)::int as n from publication where version_id = $1', [versionId]))!.n;
+    const ig = { accountId: accounts.instagram, scheduledAt: inDays(6, 9), text: 'For Instagram' };
+    const yt = { accountId: accounts.youtube, scheduledAt: inDays(7, 15), text: 'For YouTube' };
+
+    // One account it was not approved for: it says which, and nothing at all is scheduled.
+    const refused = await batch([ig, { accountId: accounts.facebook, scheduledAt: inDays(6, 10), text: 'For Facebook' }]);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.code).toBe('account_not_approved');
+    expect(refused.body.error.details).toMatchObject({ item: 1, accountId: accounts.facebook });
+    const past = await batch([ig, { ...yt, scheduledAt: '2020-01-01T10:00:00Z' }]);
+    expect(past.body.error).toMatchObject({ code: 'past_date', details: { item: 1 } });
+    expect(await count()).toBe(0);
+    // Each account once; at least one; only those who can schedule.
+    expect((await batch([ig, { ...ig, text: 'Again' }])).body.error.code).toBe('duplicate_account');
+    expect((await batch([])).status).toBe(400);
+    expect((await batch([ig, yt], users.reviewer)).status).toBe(403);
+    expect((await batch([ig, yt], users.producer)).status).toBe(403);
+    expect(await count()).toBe(0);
+
+    const ok = await batch([ig, yt]);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+    expect(ok.body.publications.map((x: any) => [x.social_account_id, x.text, new Date(x.scheduled_at).toISOString()]))
+      .toEqual([[accounts.instagram, 'For Instagram', ig.scheduledAt], [accounts.youtube, 'For YouTube', yt.scheduledAt]]);
+    expect(await count()).toBe(2);
+  });
+});
+
 describe('scheduling', () => {
   it('only schedules what is approved, for the accounts it was approved for, by approvers', async () => {
     const { users, makePiece, newVersion, accounts } = env;

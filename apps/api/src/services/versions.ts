@@ -7,6 +7,7 @@ import { fingerprintOf } from '../domain/fingerprint.js';
 import type { ProbeResult } from '../media/ffmpeg.js';
 import { badRequest, conflict, forbidden } from '../errors.js';
 import { msg, type Key } from '../i18n/index.js';
+import { effectiveApproval } from './approvals.js';
 import { audit } from './audit.js';
 import { loadVariant, loadVersion, rulesOf } from './loaders.js';
 import { slotScheduleOf } from './scheduling.js';
@@ -342,6 +343,15 @@ export async function getVersion(ctx: Ctx, p: Principal, versionId: string) {
      from approval a join app_user u on u.id = a.approver_user_id where a.version_id = $1 order by a.created_at`,
     [versionId, version.fingerprint],
   );
+  // Accounts added to an approved version afterwards, by whom (services/approvals.ts, extendApproval).
+  const extensions = await ctx.db.query(
+    `select x.id, x.account_ids, x.note, x.created_at, coalesce(u.name, u.email) as approver, x.approved_fingerprint = $2 as matches_fingerprint,
+       coalesce((select json_agg(json_build_object('id', sa.id, 'network', sa.network, 'display_name', sa.display_name) order by sa.network, sa.display_name)
+                 from social_account sa where sa.id = any(x.account_ids)), '[]') as accounts
+     from approval_extension x join app_user u on u.id = x.approver_user_id where x.version_id = $1 order by x.created_at, x.id`,
+    [versionId, version.fingerprint],
+  );
+  const effective = await effectiveApproval(ctx.db, versionId);
   const siblings = await ctx.db.query<{ id: string; number: number }>(
     'select id, number from version where variant_id = $1 order by number',
     [version.variant_id],
@@ -359,7 +369,9 @@ export async function getVersion(ctx: Ctx, p: Principal, versionId: string) {
     author_user_id: version.author_user_id, by_agent: version.author_token_id !== null, uploaded_by: await uploaderOf(ctx.db, versionId),
     variant: { id: variant.id, format: variant.format, style: variant.style, piece_id: variant.piece_id },
     piece: await ctx.db.one('select id, title, kind, brief, ai_generated, review_state, slot_id, slot_at from piece where id = $1', [version.piece_id]),
-    brand, assets: withUrls, approvals, versions: siblings,
+    brand, assets: withUrls, approvals, approval_extensions: extensions, versions: siblings,
+    // The accounts it is approved for right now, the ones added afterwards included: what it can be scheduled on.
+    approved_account_ids: effective.accountIds,
     // What approving it would schedule by itself: at its slot (a piece made for one), and whether the brand fills free slots with what is approved.
     slot_schedule: await slotScheduleOf(ctx, ctx.db, versionId),
     auto_fill_slots: rulesOf(brand!).auto_fill_slots,

@@ -1,8 +1,8 @@
 import { ScheduledBy } from './Scheduling';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
-import { api, type Account, type AccountOptionsReply, type Attempt, type CalendarData, type Capabilities, type Integrations, type Issue, type Plan, type PublicationRow, type VersionDetail } from '../api';
+import { api, ApiError, type Account, type AccountOptionsReply, type Attempt, type CalendarData, type Capabilities, type Integrations, type Issue, type Plan, type PublicationRow, type VersionDetail } from '../api';
 import { getLocale, t, type Key } from '../i18n';
 import { countHashtags, countLength, countMentions, truncatePreview } from '../lib/text';
 import { ERROR_CLASS_LABEL, fmtBytes, fmtDateTime, isoToZonedInput, NETWORK_LABEL, STEP_LABEL, VISIBILITY_LABEL, zonedToIso } from '../lib/format';
@@ -12,11 +12,9 @@ import { Icon as UiIcon, type IconName } from './icons';
 import { PrizeDialog } from './PrizeDialog';
 import '../styles/publications.css';
 
-/** Accounts a version is approved for right now: the ones every counted approver agreed on. */
+/** Accounts a version is approved for right now, as the server counts them (the ones added afterwards included). */
 export function approvedAccountIds(v: VersionDetail): string[] {
-  const rows = v.approvals.filter((a) => a.decision === 'approve' && a.matches_fingerprint);
-  if (!rows.length) return [];
-  return rows.map((r) => r.account_ids).reduce((acc, ids) => acc.filter((x) => ids.includes(x)));
+  return v.approved_account_ids ?? [];
 }
 
 function useInvalidate() {
@@ -263,6 +261,22 @@ function Section({ title, hint, children, className }: { title: string; hint?: R
 const accountMode = (a: Account) =>
   a.automated ? t('publications.account.auto') : a.status === 'reconnect_required' ? t('publications.account.reconnect') : t('publications.account.manual');
 
+/** What is written for one account in the schedule dialog: its own time, text, first comment, kind of post and settings. */
+interface Draft {
+  when: string;
+  text: string;
+  firstComment: string;
+  placement: string;
+  byHand: boolean;
+  typed: OptionValues;
+}
+const blankDraft = (when: string): Draft => ({ when, text: '', firstComment: '', placement: '', byHand: false, typed: {} });
+
+/**
+ * Scheduling an approved version on one account or on several at once, each with its own time, text, first comment, kind of post and
+ * settings. An account ticked afterwards starts with the time and the text of the one on show; from then on each goes its own way. One
+ * press schedules them all, or none: the server says which one stopped it, and that one comes to the front.
+ */
 export function ScheduleDialog({ version, brandId, zone, initialWhen, onClose }: {
   version: VersionDetail;
   brandId: string;
@@ -281,85 +295,132 @@ export function ScheduleDialog({ version, brandId, zone, initialWhen, onClose }:
   const cal = useQuery({ queryKey: ['calendar', brandId, from, to], queryFn: () => api.get<CalendarData>(`/api/brands/${brandId}/calendar?from=${from}&to=${to}`) });
   const allowed = approvedAccountIds(version);
   const options = (accounts ?? []).filter((a) => allowed.includes(a.id));
-  const [accountId, setAccountId] = useState('');
-  const [when, setWhen] = useState(initialWhen ?? '');
-  const [text, setText] = useState('');
-  const [firstComment, setFirstComment] = useState('');
-  const [placement, setPlacement] = useState('');
-  const [byHand, setByHand] = useState(false);
-  const [typed, setTyped] = useState<OptionValues>({});
+  const accountOf = (id: string) => options.find((a) => a.id === id);
+  // The accounts ticked, in the order they were ticked; the first approved one to begin with.
+  const [ticked, setTicked] = useState<string[] | null>(null);
+  const selected = (ticked ?? (options[0] ? [options[0].id] : [])).filter((id) => !!accountOf(id));
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [shownId, setShownId] = useState('');
+  const current = selected.includes(shownId) ? shownId : (selected[0] ?? '');
+  const draftOf = (id: string): Draft => drafts[id] ?? blankDraft(initialWhen ?? '');
+  const update = (id: string, patch: Partial<Draft>) => setDrafts((all) => ({ ...all, [id]: { ...(all[id] ?? blankDraft(initialWhen ?? '')), ...patch } }));
   const [formError, setFormError] = useState<string | null>(null);
-  const chosen = accountId || options[0]?.id || '';
-  const account = options.find((a) => a.id === chosen);
-  const caps = account ? integ?.capabilities[account.network] : undefined;
-  const mode = byHand ? 'manual' : undefined;
-  // The settings for this account, asked when the account is chosen: TikTok has to be asked, as the post is written, what this
-  // creator may do, and only that is offered.
-  const accountOpts = useQuery({
-    queryKey: ['account-options', brandId, chosen],
-    enabled: !!account?.automated && !byHand,
-    staleTime: 0,
-    queryFn: () => api.get<AccountOptionsReply>(`/api/brands/${brandId}/accounts/${chosen}/options`),
-  });
-  const fields = account?.automated && !byHand ? accountOpts.data?.fields : undefined;
-  // What the network asks for, with its defaults under whatever the person has changed. Only what is showing is sent.
-  const values: OptionValues = { ...defaultValues(fields), ...typed };
+  const capsOf = (id: string) => {
+    const a = accountOf(id);
+    return a ? integ?.capabilities[a.network] : undefined;
+  };
+  // A first comment goes only where the network has one: text carried over from another account stays behind.
+  const commentOf = (id: string) => (capsOf(id)?.text.firstComment === false ? '' : draftOf(id).firstComment);
 
-  // The server decides how it would go out and what would stop it. Asked again a moment after typing stops.
-  const probe = useDebounced({ chosen, text, firstComment, placement, mode, when, options: sendableOptions(fields, placement || undefined, values) }, 350);
-  const plan = useQuery({
-    queryKey: ['plan', version.id, probe],
-    enabled: !!probe.chosen,
-    placeholderData: keepPreviousData,
-    queryFn: () => {
-      let scheduledAt: string | undefined;
-      try { scheduledAt = probe.when ? zonedToIso(probe.when, zone) : undefined; } catch { scheduledAt = undefined; }
-      return api.post<Plan>(`/api/versions/${version.id}/publications/validate`, {
-        accountId: probe.chosen, text: probe.text, firstComment: probe.firstComment, placement: probe.placement || undefined, mode: probe.mode, scheduledAt, options: probe.options,
-      });
-    },
+  // The settings for each account, asked when it is ticked: TikTok has to be asked, as the post is written, what this creator may do,
+  // and only that is offered.
+  const asked = useQueries({
+    queries: selected.map((id) => ({
+      queryKey: ['account-options', brandId, id],
+      enabled: !!accountOf(id)?.automated && !draftOf(id).byHand,
+      staleTime: 0,
+      queryFn: () => api.get<AccountOptionsReply>(`/api/brands/${brandId}/accounts/${id}/options`),
+    })),
   });
-  const p = plan.data;
-  const issues = p?.issues ?? [];
-  const errors = issues.filter((i) => i.severity === 'error');
-  const warnings = issues.filter((i) => i.severity !== 'error');
-  const blocked = !!p?.automated && errors.length > 0;
-  const textIssues = issues.filter((i) => i.field === 'text');
-  const commentIssues = issues.filter((i) => i.field === 'firstComment');
-  const otherIssues = issues.filter((i) => i.field !== 'text' && i.field !== 'firstComment');
+  const askedOf = (id: string) => asked[selected.indexOf(id)];
+  const fieldsOf = (id: string) => (accountOf(id)?.automated && !draftOf(id).byHand ? askedOf(id)?.data?.fields : undefined);
+  // What the network asks for, with its defaults under whatever the person has changed. Only what is showing is sent.
+  const valuesOf = (id: string): OptionValues => ({ ...defaultValues(fieldsOf(id)), ...draftOf(id).typed });
+  const modeOf = (id: string) => (draftOf(id).byHand ? ('manual' as const) : undefined);
+
+  // The server decides how each would go out and what would stop it. Asked again a moment after typing stops.
+  const probes = useDebounced(selected.map((id) => {
+    const d = draftOf(id);
+    return { id, text: d.text, firstComment: commentOf(id), placement: d.placement, mode: modeOf(id), when: d.when, options: sendableOptions(fieldsOf(id), d.placement || undefined, valuesOf(id)) };
+  }), 350);
+  const plans = useQueries({
+    queries: probes.map((probe) => ({
+      queryKey: ['plan', version.id, probe],
+      // While it asks again, the last answer for the same account stays on show, never another account's.
+      placeholderData: (prev: Plan | undefined, prevQuery: { queryKey: readonly unknown[] } | undefined) =>
+        ((prevQuery?.queryKey[2] as { id?: string } | undefined)?.id === probe.id ? prev : undefined),
+      queryFn: () => {
+        let scheduledAt: string | undefined;
+        try { scheduledAt = probe.when ? zonedToIso(probe.when, zone) : undefined; } catch { scheduledAt = undefined; }
+        return api.post<Plan>(`/api/versions/${version.id}/publications/validate`, {
+          accountId: probe.id, text: probe.text, firstComment: probe.firstComment, placement: probe.placement || undefined, mode: probe.mode, scheduledAt, options: probe.options,
+        });
+      },
+    })),
+  });
+  const planQuery = (id: string) => plans[probes.findIndex((x) => x.id === id)];
+  const planOf = (id: string) => planQuery(id)?.data;
+  const issuesOf = (id: string) => planOf(id)?.issues ?? [];
+  const errorsOf = (id: string) => issuesOf(id).filter((i) => i.severity === 'error');
+  const warningsOf = (id: string) => issuesOf(id).filter((i) => i.severity !== 'error');
+  const blockedOf = (id: string) => !!planOf(id)?.automated && errorsOf(id).length > 0;
+  const blocked = selected.filter(blockedOf);
+  const errorCount = selected.reduce((n, id) => n + errorsOf(id).length, 0);
+  const warningCount = selected.reduce((n, id) => n + warningsOf(id).length, 0);
+  const missingWhen = selected.filter((id) => !draftOf(id).when);
   const issuesId = useId();
 
   const create = useMutation({
-    mutationFn: () => api.post(`/api/versions/${version.id}/publications`, {
-      accountId: chosen, scheduledAt: zonedToIso(when, zone), text, firstComment, placement: placement || undefined, mode,
-      options: sendableOptions(fields, p?.placement ?? (placement || undefined), values),
-    }),
-    onSuccess: () => {
+    mutationFn: (items: Record<string, unknown>[]) => api.post<{ publications: { manual: boolean }[] }>(`/api/versions/${version.id}/publications/batch`, { items }),
+    onSuccess: (r) => {
       invalidate();
-      toast(p?.automated ? t('publications.schedule.doneAuto') : t('publications.schedule.doneManual'));
+      const made = r.publications;
+      toast(made.length > 1 ? t('publications.schedule.doneMany', { count: made.length }) : made[0]?.manual ? t('publications.schedule.doneManual') : t('publications.schedule.doneAuto'));
       onClose();
     },
+    // The account that stopped it comes to the front.
+    onError: (err) => {
+      const id = err instanceof ApiError ? err.details?.accountId : undefined;
+      if (typeof id === 'string' && selected.includes(id)) setShownId(id);
+    },
   });
+  const failedOn = create.error instanceof ApiError && selected.length > 1 ? accountOf(String(create.error.details?.accountId ?? '')) : undefined;
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
-    try {
-      zonedToIso(when, zone);
-    } catch (err) {
-      setFormError((err as Error).message);
+    const items: Record<string, unknown>[] = [];
+    for (const id of selected) {
+      const d = draftOf(id);
+      let scheduledAt: string;
+      try {
+        if (!d.when) throw new Error(t('publications.schedule.needsWhen'));
+        scheduledAt = zonedToIso(d.when, zone);
+      } catch (err) {
+        const a = accountOf(id)!;
+        setShownId(id);
+        setFormError(selected.length > 1 ? `${netName(a.network)} · ${a.display_name}: ${(err as Error).message}` : (err as Error).message);
+        return;
+      }
+      items.push({
+        accountId: id, scheduledAt, text: d.text, firstComment: commentOf(id), placement: d.placement || undefined, mode: modeOf(id),
+        options: sendableOptions(fieldsOf(id), planOf(id)?.placement ?? (d.placement || undefined), valuesOf(id)),
+      });
+    }
+    create.mutate(items);
+  };
+  const toggle = (id: string) => {
+    setFormError(null);
+    if (selected.includes(id)) {
+      setTicked(selected.filter((x) => x !== id));
       return;
     }
-    create.mutate();
+    // Another account starts with the time and the text of the one on show; from then on each goes its own way.
+    if (!drafts[id] && current) {
+      const shown = draftOf(current);
+      setDrafts((all) => ({ ...all, [id]: { ...blankDraft(shown.when), text: shown.text, firstComment: shown.firstComment } }));
+    }
+    setTicked([...selected, id]);
+    setShownId(id);
   };
-  const pick = (id: string) => {
-    setAccountId(id);
-    setPlacement('');
-    setTyped({});
+  // To the first account with something to look at, and to the list of what it is.
+  const goTo = (id: string | undefined) => {
+    if (id) setShownId(id);
+    requestAnimationFrame(() => document.getElementById(issuesId)?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
   };
-  const canComment = caps ? caps.text.firstComment : true;
-  const placementNow = placement || p?.placement || '';
-  const placementLabel = p?.placements.find((x) => x.id === p.placement)?.label;
-  const free = (cal.data?.slots ?? []).filter((s) => s.account_id === chosen && !s.filled && !s.past && !s.blocked).slice(0, 4);
+  const account = accountOf(current);
+  const free = (cal.data?.slots ?? []).filter((s) => s.account_id === current && !s.filled && !s.past && !s.blocked).slice(0, 4);
+  const several = selected.length > 1;
 
   return (
     <Dialog title={t('publications.schedule.title')} onClose={onClose} wide>
@@ -372,150 +433,227 @@ export function ScheduleDialog({ version, brandId, zone, initialWhen, onClose }:
         <Section title={t('publications.account.title')} hint={t('publications.account.hint')}>
           {accounts && options.length === 0 && <div className="notice notice-warn">{t('publications.account.none')}</div>}
           {options.length > 0 && (
-            <div className="pb-accounts" role="radiogroup" aria-label={t('publications.account.title')}>
-              {options.map((a) => (
-                <label key={a.id} className="pb-acct" data-on={a.id === chosen || undefined}>
-                  <input type="radio" className="sr-only" name="pb-account" value={a.id} checked={a.id === chosen} onChange={() => pick(a.id)} />
-                  <NetMark network={a.network} />
-                  <span className="pb-acct-who">
-                    <strong>{a.display_name}</strong>
-                    <span className="pb-acct-meta">
-                      {netName(a.network)} · <span data-auto={a.automated || undefined}>{accountMode(a)}</span>
+            <div className="pb-accounts" role="group" aria-label={t('publications.account.title')}>
+              {options.map((a) => {
+                const on = selected.includes(a.id);
+                return (
+                  <label key={a.id} className="pb-acct" data-on={on || undefined}>
+                    <input type="checkbox" className="sr-only" name="pb-account" value={a.id} checked={on} onChange={() => toggle(a.id)} />
+                    <NetMark network={a.network} />
+                    <span className="pb-acct-who">
+                      <strong>{a.display_name}</strong>
+                      <span className="pb-acct-meta">
+                        {netName(a.network)} · <span data-auto={a.automated || undefined}>{accountMode(a)}</span>
+                      </span>
                     </span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          )}
-
-          {p && (
-            <div className="pb-plan" data-mode={p.automated ? 'auto' : 'manual'} data-testid="plan">
-              <Icon d={p.automated ? ICON.auto : ICON.hand} className="pb-plan-icon" />
-              <div>
-                <strong>{p.automated ? t('publications.plan.autoTitle') : t('publications.plan.manualTitle')}</strong>
-                {p.automated && placementLabel && <> {t('publications.plan.autoAs', { placement: placementLabel })}</>}
-                <p>
-                  {!p.automated && p.manualReason && <>{sentence(p.manualReason)} </>}
-                  {p.automated ? t('publications.plan.autoBody') : t('publications.plan.manualBody')}
-                </p>
-              </div>
-            </div>
-          )}
-          {!p && chosen && plan.isFetching && <p className="muted small pb-quiet">{t('publications.plan.checking')}</p>}
-
-          {p?.automated && p.placements.length > 1 && (
-            <fieldset className="pb-choice-set">
-              <legend className="field-label">{t('publications.placement.title')}</legend>
-              <div className="pb-choices">
-                {p.placements.map((x) => (
-                  <label key={x.id} className="pb-choice" data-on={placementNow === x.id || undefined}>
-                    <input type="radio" className="sr-only" name="pb-placement" value={x.id} checked={placementNow === x.id} onChange={() => setPlacement(x.id)} />
-                    <span>{x.label}</span>
+                    <span className="pb-acct-tick" aria-hidden="true">{on && <UiIcon name="check" />}</span>
                   </label>
-                ))}
-              </div>
-              {!placement && <span className="muted small">{t('publications.placement.hint')}</span>}
-            </fieldset>
-          )}
-          {p && (p.automated || byHand) && account?.automated && (
-            <label className="check pb-byhand">
-              <input type="checkbox" checked={byHand} onChange={(e) => setByHand(e.target.checked)} />
-              <span>
-                {t('publications.byHand.label')}
-                <span className="muted small pb-help">{t('publications.byHand.hint')}</span>
-              </span>
-            </label>
-          )}
-        </Section>
-
-        <Section title={t('publications.when.title')}>
-          <WhenField value={when} onChange={setWhen} zone={zone} blocked={cal.data?.blocked} />
-          {free.length > 0 && (
-            <div className="pb-slots">
-              <span className="field-label">{t('publications.when.slots')}</span>
-              <div className="pb-slot-list">
-                {free.map((s) => {
-                  const v = isoToZonedInput(s.at, zone);
-                  const label = DateTime.fromISO(s.at, { zone }).toFormat('ccc d LLL · HH:mm');
-                  return (
-                    <button key={s.id + s.at} type="button" className="pb-slot" aria-pressed={when === v} aria-label={t('publications.when.slotUse', { when: label })} onClick={() => setWhen(v)}>
-                      <span className="mono">{label}</span>
-                      {s.label && <span className="pb-slot-label">{s.label}</span>}
-                    </button>
-                  );
-                })}
-              </div>
+                );
+              })}
             </div>
           )}
         </Section>
 
-        <Section title={t('publications.text.title')}>
-          <NetworkText
-            caps={caps}
-            label={t('publications.text.label')}
-            hint={t('publications.text.hint')}
-            value={text}
-            onChange={setText}
-            account={account?.display_name}
-            network={account?.network}
-            issues={textIssues}
-          >
-          {canComment && (
-            <div className="pb-comment">
-              <label className="field">
-                <span className="field-label">
-                  {t('publications.firstComment.label')} <span className="pb-opt">{t('publications.optional')}</span>
-                </span>
-                <textarea className="pb-textarea pb-textarea-short" value={firstComment} onChange={(e) => setFirstComment(e.target.value)} />
-              </label>
-              {caps?.text.firstCommentMaxChars !== undefined && (
-                <div className="pb-counters">
-                  <Counter label={t('publications.count.chars')} value={countLength(firstComment, caps.text.unit)} max={caps.text.firstCommentMaxChars} />
-                </div>
-              )}
-              <span className="muted small">{t('publications.firstComment.hint')}</span>
-              <IssueList issues={commentIssues} />
+        {several && (
+          <div className="pb-tabs-wrap">
+            <div className="pb-tabs" role="tablist" aria-label={t('publications.tabs.label')}>
+              {selected.map((id) => {
+                const a = accountOf(id)!;
+                const flag = blockedOf(id) ? 'error' : !draftOf(id).when ? 'missing' : undefined;
+                return (
+                  <button key={id} type="button" role="tab" aria-selected={id === current} className="pb-tab" data-flag={flag} onClick={() => setShownId(id)}>
+                    <NetMark network={a.network} size="xs" />
+                    <span className="pb-tab-name">{a.display_name}</span>
+                    {flag && <Tip label={flag === 'error' ? t('publications.tabs.blocked') : t('publications.tabs.noWhen')}><span className="pb-tab-dot" /></Tip>}
+                  </button>
+                );
+              })}
             </div>
-          )}
-          {account && integ && !canComment && <p className="muted small pb-quiet">{t('publications.firstComment.none', { network: netName(account.network) })}</p>}
-          </NetworkText>
-        </Section>
-
-        {account && !byHand && accountOpts.isLoading && <p className="muted small pb-quiet">{t('publications.opt.asking', { network: netName(account.network) })}</p>}
-        {account && !byHand && accountOpts.error && <ErrorBox error={accountOpts.error} />}
-        {account && !byHand && (
-          <NetworkOptions network={account.network} fields={fields} placement={p?.placement ?? (placement || undefined)} values={values} onChange={(k, v) => setTyped((x) => ({ ...x, [k]: v }))} />
+            <p className="muted small pb-tabs-hint">{t('publications.tabs.hint')}</p>
+          </div>
         )}
 
-        <IssueList issues={otherIssues} id={issuesId} />
+        {account && (
+          <AccountDraft
+            key={account.id}
+            account={account}
+            draft={draftOf(account.id)}
+            onChange={(patch) => update(account.id, patch)}
+            plan={planOf(account.id)}
+            checking={!planOf(account.id) && (planQuery(account.id)?.isFetching ?? true)}
+            asked={askedOf(account.id)}
+            fields={fieldsOf(account.id)}
+            values={valuesOf(account.id)}
+            caps={capsOf(account.id)}
+            capsKnown={!!integ}
+            zone={zone}
+            blockedDays={cal.data?.blocked}
+            free={free}
+            issuesId={issuesId}
+          />
+        )}
+
         {formError && <div className="notice notice-bad" role="alert">{formError}</div>}
-        {create.error && <ErrorBox error={create.error} />}
+        {create.error && (failedOn ? (
+          <div className="notice notice-bad" role="alert"><strong>{netName(failedOn.network)} · {failedOn.display_name}:</strong> {errorMessage(create.error)}</div>
+        ) : <ErrorBox error={create.error} />)}
 
         <footer className="pb-foot">
           <span className="pb-foot-status">
-            {errors.length > 0 && (
-              <button type="button" className="pb-foot-link" data-severity="error" onClick={() => document.getElementById(issuesId)?.scrollIntoView({ block: 'center', behavior: 'smooth' })}>
-                {t('publications.schedule.blocked', { count: errors.length })}
+            {errorCount > 0 && (
+              <button type="button" className="pb-foot-link" data-severity="error" onClick={() => goTo(selected.find((id) => errorsOf(id).length > 0))}>
+                {t('publications.schedule.blocked', { count: errorCount })}
               </button>
             )}
-            {errors.length === 0 && warnings.length > 0 && (
-              <button type="button" className="pb-foot-link" data-severity="warning" onClick={() => document.getElementById(issuesId)?.scrollIntoView({ block: 'center', behavior: 'smooth' })}>
-                {t('publications.schedule.warnings', { count: warnings.length })}
+            {errorCount === 0 && warningCount > 0 && (
+              <button type="button" className="pb-foot-link" data-severity="warning" onClick={() => goTo(selected.find((id) => warningsOf(id).length > 0))}>
+                {t('publications.schedule.warnings', { count: warningCount })}
               </button>
             )}
           </span>
           <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
           {/* A disabled button takes no pointer: the tooltip that says why hangs on a wrapper. */}
-          <Tipped label={blocked ? t('publications.schedule.blockedHint') : !when ? t('publications.schedule.needsWhen') : undefined}>
+          <Tipped label={blocked.length ? t('publications.schedule.blockedHint') : missingWhen.length ? t('publications.schedule.needsWhen') : undefined}>
             <span className="tip-host">
-              <button className="btn btn-primary" disabled={create.isPending || !chosen || blocked}>
-                {create.isPending ? t('publications.schedule.submitting') : t('publications.schedule.submit')}
+              <button className="btn btn-primary" disabled={create.isPending || selected.length === 0 || blocked.length > 0}>
+                {create.isPending ? t('publications.schedule.submitting') : several ? t('publications.schedule.submitMany', { count: selected.length }) : t('publications.schedule.submit')}
               </button>
             </span>
           </Tipped>
         </footer>
       </form>
     </Dialog>
+  );
+}
+
+/** What goes out on one account of the schedule dialog: how it goes out and as which kind of post, when, the text, and the network's settings. */
+function AccountDraft({ account, draft, onChange, plan: p, checking, asked, fields, values, caps, capsKnown, zone, blockedDays, free, issuesId }: {
+  account: Account;
+  draft: Draft;
+  onChange: (patch: Partial<Draft>) => void;
+  plan: Plan | undefined;
+  checking: boolean;
+  asked: { isLoading: boolean; error: unknown } | undefined;
+  fields: AccountOptionsReply['fields'] | undefined;
+  values: OptionValues;
+  caps: Capabilities | undefined;
+  capsKnown: boolean;
+  zone: string;
+  blockedDays?: { day: string; reason: string }[];
+  free: CalendarData['slots'];
+  issuesId: string;
+}) {
+  const issues = p?.issues ?? [];
+  const textIssues = issues.filter((i) => i.field === 'text');
+  const commentIssues = issues.filter((i) => i.field === 'firstComment');
+  const otherIssues = issues.filter((i) => i.field !== 'text' && i.field !== 'firstComment');
+  const canComment = caps ? caps.text.firstComment : true;
+  const placementNow = draft.placement || p?.placement || '';
+  const placementLabel = p?.placements.find((x) => x.id === p.placement)?.label;
+  return (
+    <>
+      <Section title={t('publications.plan.title')}>
+        {p && (
+          <div className="pb-plan" data-mode={p.automated ? 'auto' : 'manual'} data-testid="plan">
+            <Icon d={p.automated ? ICON.auto : ICON.hand} className="pb-plan-icon" />
+            <div>
+              <strong>{p.automated ? t('publications.plan.autoTitle') : t('publications.plan.manualTitle')}</strong>
+              {p.automated && placementLabel && <> {t('publications.plan.autoAs', { placement: placementLabel })}</>}
+              <p>
+                {!p.automated && p.manualReason && <>{sentence(p.manualReason)} </>}
+                {p.automated ? t('publications.plan.autoBody') : t('publications.plan.manualBody')}
+              </p>
+            </div>
+          </div>
+        )}
+        {!p && checking && <p className="muted small pb-quiet">{t('publications.plan.checking')}</p>}
+
+        {p?.automated && p.placements.length > 1 && (
+          <fieldset className="pb-choice-set">
+            <legend className="field-label">{t('publications.placement.title')}</legend>
+            <div className="pb-choices">
+              {p.placements.map((x) => (
+                <label key={x.id} className="pb-choice" data-on={placementNow === x.id || undefined}>
+                  <input type="radio" className="sr-only" name={`pb-placement-${account.id}`} value={x.id} checked={placementNow === x.id} onChange={() => onChange({ placement: x.id })} />
+                  <span>{x.label}</span>
+                </label>
+              ))}
+            </div>
+            {!draft.placement && <span className="muted small">{t('publications.placement.hint')}</span>}
+          </fieldset>
+        )}
+        {p && (p.automated || draft.byHand) && account.automated && (
+          <label className="check pb-byhand">
+            <input type="checkbox" checked={draft.byHand} onChange={(e) => onChange({ byHand: e.target.checked })} />
+            <span>
+              {t('publications.byHand.label')}
+              <span className="muted small pb-help">{t('publications.byHand.hint')}</span>
+            </span>
+          </label>
+        )}
+      </Section>
+
+      <Section title={t('publications.when.title')}>
+        <WhenField value={draft.when} onChange={(when) => onChange({ when })} zone={zone} blocked={blockedDays} />
+        {free.length > 0 && (
+          <div className="pb-slots">
+            <span className="field-label">{t('publications.when.slots')}</span>
+            <div className="pb-slot-list">
+              {free.map((s) => {
+                const v = isoToZonedInput(s.at, zone);
+                const label = DateTime.fromISO(s.at, { zone }).toFormat('ccc d LLL · HH:mm');
+                return (
+                  <button key={s.id + s.at} type="button" className="pb-slot" aria-pressed={draft.when === v} aria-label={t('publications.when.slotUse', { when: label })} onClick={() => onChange({ when: v })}>
+                    <span className="mono">{label}</span>
+                    {s.label && <span className="pb-slot-label">{s.label}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </Section>
+
+      <Section title={t('publications.text.title')}>
+        <NetworkText
+          caps={caps}
+          label={t('publications.text.label')}
+          hint={t('publications.text.hint')}
+          value={draft.text}
+          onChange={(text) => onChange({ text })}
+          account={account.display_name}
+          network={account.network}
+          issues={textIssues}
+        >
+        {canComment && (
+          <div className="pb-comment">
+            <label className="field">
+              <span className="field-label">
+                {t('publications.firstComment.label')} <span className="pb-opt">{t('publications.optional')}</span>
+              </span>
+              <textarea className="pb-textarea pb-textarea-short" value={draft.firstComment} onChange={(e) => onChange({ firstComment: e.target.value })} />
+            </label>
+            {caps?.text.firstCommentMaxChars !== undefined && (
+              <div className="pb-counters">
+                <Counter label={t('publications.count.chars')} value={countLength(draft.firstComment, caps.text.unit)} max={caps.text.firstCommentMaxChars} />
+              </div>
+            )}
+            <span className="muted small">{t('publications.firstComment.hint')}</span>
+            <IssueList issues={commentIssues} />
+          </div>
+        )}
+        {capsKnown && !canComment && <p className="muted small pb-quiet">{t('publications.firstComment.none', { network: netName(account.network) })}</p>}
+        </NetworkText>
+      </Section>
+
+      {!draft.byHand && asked?.isLoading && <p className="muted small pb-quiet">{t('publications.opt.asking', { network: netName(account.network) })}</p>}
+      {!draft.byHand && !!asked?.error && <ErrorBox error={asked.error} />}
+      {!draft.byHand && (
+        <NetworkOptions network={account.network} fields={fields} placement={p?.placement ?? (draft.placement || undefined)} values={values} onChange={(k, v) => onChange({ typed: { ...draft.typed, [k]: v } })} />
+      )}
+
+      <IssueList issues={otherIssues} id={issuesId} />
+    </>
   );
 }
 

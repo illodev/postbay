@@ -17,7 +17,10 @@ whose role can approve. An approval binds the exact files of that version.
 4. **Then** `approve_version` with `version_id`, `account_ids`, `checklist_confirmed` (each item the person confirmed, word for word)
    and `confirm`: `{ "piece": "<title as shown>", "version_number": <n>, "fingerprint": "<first 12 characters or more>" }`. If the
    piece was made for a slot, `auto_schedule` (on by default) schedules it there; untick it if the person says so. If Postbay answers `confirmation_mismatch`, the version changed: show the new one and ask again.
-5. **Requesting changes:** `request_changes` with `version_id`, the same `confirm`, and a `note` saying what has to change when the
+5. **More accounts on an approved version** (a network connected afterwards, say): the same `approve_version`, with the same
+   confirmation, on the version that is approved already. Only the accounts it is not approved for yet are added (`get_version`'s
+   `approved_account_ids` says which it has); the answer says which counted and which wait for another approver. Nothing scheduled moves.
+6. **Requesting changes:** `request_changes` with `version_id`, the same `confirm`, and a `note` saying what has to change when the
    comments do not already say it.
 
 If it is refused with `assistant_approval_off`, the person can approve in the web (share the version's `url`) or ask an admin to

@@ -44,6 +44,22 @@
 .pb-acct-who strong { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pb-acct-meta { font-size: .8125rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pb-acct-line { display: flex; align-items: center; gap: .65rem; min-width: 0; flex-wrap: wrap; }
+/* ticked or not: several accounts can go at once */
+.pb-acct-tick { margin-left: auto; flex: none; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; border: 1.5px solid var(--faint); background: var(--bg); color: var(--accent-contrast); }
+.pb-acct[data-on] .pb-acct-tick { background: var(--accent); border-color: var(--accent); }
+.pb-acct-tick svg { width: 12px; height: 12px; }
+
+/* several accounts: a tab for each, with what is written for it */
+.pb-tabs-wrap { display: flex; flex-direction: column; gap: .4rem; min-width: 0; }
+.pb-tabs { display: flex; gap: 2px; align-self: flex-start; max-width: 100%; overflow-x: auto; scrollbar-width: none; padding: 2px; border-radius: 8px; background: var(--field); }
+.pb-tabs::-webkit-scrollbar { display: none; }
+.pb-tab { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 32px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: .8125rem; font-weight: 500; line-height: 1; cursor: pointer; white-space: nowrap; }
+.pb-tab:hover { color: var(--text); }
+.pb-tab[aria-selected='true'] { color: var(--text); background: var(--surface-3); }
+.pb-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pb-tab-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+.pb-tab[data-flag='error'] .pb-tab-dot { background: var(--bad); }
+.pb-tabs-hint { margin: 0; }
 .pb-pack-state { margin-left: auto; display: inline-flex; align-items: center; gap: .75rem; font-size: .8125rem; color: var(--muted); flex-wrap: wrap; }
 
 /* how it goes out: the app, or a person */

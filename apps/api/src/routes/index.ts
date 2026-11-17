@@ -460,8 +460,12 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/versions/:id/request-changes', async (req) => approvals.requestChanges(ctx, P(req), params(req, 'id').id, req.body ?? {}));
   app.post('/api/versions/:id/approvals', async (req, reply) =>
     reply.code(201).send(await approvals.decide(ctx, P(req), params(req, 'id').id, req.body)));
+  app.post('/api/versions/:id/approval-extensions', async (req, reply) =>
+    reply.code(201).send(await approvals.extendApproval(ctx, P(req), params(req, 'id').id, req.body)));
   app.post('/api/versions/:id/publications', async (req, reply) =>
     reply.code(201).send(await pubs.schedule(ctx, P(req), params(req, 'id').id, req.body)));
+  app.post('/api/versions/:id/publications/batch', async (req, reply) =>
+    reply.code(201).send(await pubs.scheduleMany(ctx, P(req), params(req, 'id').id, req.body)));
 
   app.post('/api/comments/:id/replies', async (req, reply) =>
     reply.code(201).send(await comments.replyToComment(ctx, P(req), params(req, 'id').id, req.body)));

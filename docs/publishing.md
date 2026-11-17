@@ -13,6 +13,13 @@ post goes out one of two ways:
 Approvers and admins schedule from the piece page or the calendar. Times are given in the brand's time zone and stored in UTC with the
 brand's IANA zone, so a post set for 19:00 stays at 19:00 across a clock change.
 
+**Several accounts at once.** The dialog lists the accounts the version is approved for, and any of them can be ticked. Each one ticked gets
+a tab with its own date and time, text, first comment, kind of post and network settings; one ticked afterwards starts with the time and
+text of the one on show, and from then on each goes its own way. One press schedules them all, or none
+(`POST /api/versions/:id/publications/batch`, `{ items: [...] }`, each item what `POST /api/versions/:id/publications` takes, one per
+account, up to 20): every item goes through every check scheduling one does, in one transaction, and a refusal says which item it was for
+(`details.item`, from 0, and `details.accountId`); the dialog brings that account to the front.
+
 Scheduling is refused while the brand is paused, on a blocked day, for a time that has passed, or for a version whose stored files are no
 longer the approved ones. A version can be scheduled even while a new version of the same variant is being uploaded: the variant's lock
 makes sure only what is approved goes on the calendar.

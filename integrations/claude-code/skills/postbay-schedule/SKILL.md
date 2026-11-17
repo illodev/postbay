@@ -7,7 +7,9 @@ description: Schedule, move or cancel publications in Postbay, for versions that
 
 Only an approved version can be scheduled, and only on an account it was approved for. Nothing goes out without that approval.
 
-1. **Find the approved version** (`get_piece`: each version's state and the accounts approved) and the account (`list_accounts`).
+1. **Find the approved version** (`get_piece`: each version's state and the accounts approved) and the account (`list_accounts`). Several
+   networks at once is one call per account, each with its own `text`, `first_comment` and `at`. If the person wants an account the version
+   is not approved for, an approver can add it (see postbay-approve).
 2. **Pick the time** (`at`) in the brand's time zone, as `YYYY-MM-DDTHH:mm`. `calendar` shows what is already planned and the free weekly
    slots: prefer a free slot of that account when the person has no time in mind, and avoid blocked days.
 3. **Check first.** `schedule_publication` with the version, `account_id`, `at`, `text`, `first_comment` and `dry_run: true` says whether Postbay or a person will publish it, the network's

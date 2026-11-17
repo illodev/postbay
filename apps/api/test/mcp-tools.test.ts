@@ -323,6 +323,16 @@ describe('approving from an assistant', () => {
     // The full fingerprint is as good as the web's twelve characters.
     const w = await inReview();
     expect((await tool(env, as.approver.access, 'approve_version', { version_id: w.versionId, account_ids: [env.accounts.instagram], confirm: { piece: w.pieceId, version_number: 1, fingerprint: w.fingerprint } })).ok).toBe(true);
+
+    // On a version approved already, it approves it for more accounts, as in the web; the version then says what it is approved for.
+    const more = await tool(env, as.admin.access, 'approve_version', { version_id: v.versionId, account_ids: [env.accounts.instagram, env.accounts.facebook], confirm });
+    expect(more.ok, JSON.stringify(more.error)).toBe(true);
+    expect(more.data).toMatchObject({ state: 'approved', approved: true, added_account_ids: [env.accounts.facebook], awaiting_account_ids: [] });
+    expect(await viaOf('version.approval_extended', v.versionId)).toMatchObject({ actor_user_id: env.users.admin.id, via: { client_name: 'Claude' } });
+    const got = (await tool(env, as.approver.access, 'get_version', { version_id: v.versionId })).data;
+    expect([...got.approved_account_ids].sort()).toEqual([env.accounts.instagram, env.accounts.facebook].sort());
+    expect(got.accounts_added_later).toMatchObject([{ account_ids: [env.accounts.facebook], still_counts: true }]);
+    expect((await tool(env, as.admin.access, 'approve_version', { version_id: v.versionId, account_ids: [env.accounts.facebook], confirm })).error.code).toBe('already_approved');
   });
 
   it('keeps the approval rules of the web: never one\'s own upload, never with open comments, the checklist', async () => {

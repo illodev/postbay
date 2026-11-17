@@ -100,6 +100,20 @@ second approval is refused until they align.
 A version made with a producer token has no person behind it, so any approver can approve it, including the admin who made the token. The
 version and the approval record name both the token and its maker.
 
+### Approving for more accounts
+
+An approved version can be approved afterwards for accounts it was not approved for: a network connected later, say. It is the same
+files, so the approval stands and nothing scheduled moves; the accounts are added (*Approve for more accounts…* on the review,
+`POST /api/versions/:id/approval-extensions` with `accountIds`, `checklist` and `note`, or `approve_version` from an assistant on a version
+that is approved already). The rules of approving hold: a person whose role approves, never their own upload, no open comments, the
+checklist ticked, accounts of the brand that do not need connecting again, and the stored files still the approved ones.
+
+An added account counts once as many approvers as the brand needs have approved it, a first approval of the version counting for the
+accounts it named: with one approval, it counts at once; with two, it waits for a second approver, and the answer says so (`added` and
+`awaiting`). Each addition is kept, append-only, with who made it, the fingerprint and the checklist (`approval_extension`), and audited as
+`version.approval_extended`. `GET /api/versions/:id` lists them in `approval_extensions` and gives the accounts it is approved for now in
+`approved_account_ids`. Adding an account schedules nothing by itself.
+
 ### The fingerprint
 
 The fingerprint is the sha256 of one line per file, `position<TAB>kind<TAB>sha256`, sorted by position and kind: a different cover, a

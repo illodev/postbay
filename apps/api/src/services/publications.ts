@@ -37,6 +37,11 @@ export const scheduleInput = z.object({
 
 export const validateInput = scheduleInput.partial({ scheduledAt: true });
 
+/** Several accounts at once, one item each, every item with its own text, time and settings. */
+export const scheduleManyInput = z.object({
+  items: z.array(scheduleInput).min(1).max(20),
+});
+
 export const patchInput = z.object({
   scheduledAt: iso.optional(),
   text: z.string().max(10_000).optional(),
@@ -175,6 +180,31 @@ export async function schedule(ctx: Ctx, p: Principal, versionId: string, raw: u
     const version = await loadVersion(db, versionId);
     const by = await schedulerOf(ctx, db, p, version.brand_id, version.piece_id);
     return scheduleVersion(ctx, db, p, versionId, input, by);
+  });
+}
+
+/**
+ * Schedules an approved version on several accounts at once, each with its own text, time and settings, in one transaction: all of
+ * them go on the calendar, or none does. Each goes through every check scheduling one does, and a refusal says which item it was for
+ * (`details.item`, counting from 0, and `details.accountId`). One item per account.
+ */
+export async function scheduleMany(ctx: Ctx, p: Principal, versionId: string, raw: unknown) {
+  const input = scheduleManyInput.parse(raw);
+  const accounts = input.items.map((i) => i.accountId);
+  if (new Set(accounts).size !== accounts.length) throw badRequest('duplicate_account', msg('error.pub.duplicateAccount'));
+  return ctx.db.tx(async (db) => {
+    const version = await loadVersion(db, versionId);
+    const by = await schedulerOf(ctx, db, p, version.brand_id, version.piece_id);
+    const publications: Row[] = [];
+    for (const [item, one] of input.items.entries()) {
+      try {
+        publications.push(await scheduleVersion(ctx, db, p, versionId, one, by));
+      } catch (err) {
+        if (err instanceof AppError) err.details = { ...(err.details && typeof err.details === 'object' ? err.details : {}), item, accountId: one.accountId };
+        throw err;
+      }
+    }
+    return { publications };
   });
 }
 

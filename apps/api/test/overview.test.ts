@@ -209,6 +209,8 @@ describe('what just happened', () => {
     expect(v2.number, JSON.stringify(v2)).toBe(2);
     await call(agent, 'POST', `/api/agent-runs/${run.id}/finish`, { outcome: 'uploaded', cost: 0.2, versionId: v2.id });
     expect((await approve(users.approver, v2.id, [env.accounts.instagram, env.accounts.facebook])).status).toBe(201);
+    const more = await call(users.approver2, 'POST', `/api/versions/${v2.id}/approval-extensions`, { accountIds: [env.accounts.youtube] });
+    expect(more.status).toBe(201);
     const pub = await publication(v2.id, { at: new Date(), status: 'published', manual: false });
 
     const o = await overview(users.reader);
@@ -220,6 +222,7 @@ describe('what just happened', () => {
     expect(o.activity.find((x: { kind: string; version_id: string }) => x.kind === 'changes_requested' && x.version_id === v1.id)).toMatchObject({ actor: 'reviewer', version_number: 1 });
     expect(find('version', v2.id)).toMatchObject({ actor: 'Agent runner', by_agent: true, version_number: 2, resolves: 1 });
     expect(o.activity.find((x: { kind: string; version_id: string }) => x.kind === 'approved' && x.version_id === v2.id)).toMatchObject({ actor: 'approver', networks: ['facebook', 'instagram'] });
+    expect(o.activity.find((x: { kind: string; version_id: string }) => x.kind === 'approved_more' && x.version_id === v2.id)).toMatchObject({ actor: 'approver2', networks: ['youtube'] });
     expect(find('published', pub)).toMatchObject({ actor: null, networks: ['instagram'], account_name: 'brand_ig' });
   });
 });
