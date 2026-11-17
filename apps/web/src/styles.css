@@ -124,7 +124,7 @@ details > summary { cursor: pointer; color: var(--muted); }
 .coll-sq { width: 14px; height: 14px; border-radius: 4px; flex: none; box-shadow: inset 0 0 0 1.5px currentColor; background: color-mix(in srgb, currentColor 20%, transparent); }
 .sb-grow { flex: 1; min-height: 12px; }
 .content { min-width: 0; display: flex; flex-direction: column; background: var(--panel); border-radius: 12px; margin: 8px 8px 8px 6px; min-height: calc(100dvh - 16px); }
-.sb-search { display: flex; align-items: center; gap: 9px; width: 100%; height: 32px; padding: 0 9px; margin: 0 0 8px; border-radius: 8px; border: 0; background: var(--field); color: var(--faint); font: inherit; font-size: .8125rem; cursor: pointer; }
+.sb-search { display: flex; align-items: center; gap: 9px; width: 100%; height: 32px; flex: none; padding: 0 9px; margin: 0 0 8px; border-radius: 8px; border: 0; background: var(--field); color: var(--faint); font: inherit; font-size: .8125rem; cursor: pointer; }
 .sb-search:hover { color: var(--muted); background: var(--control); }
 .sb-search svg { width: 14px; height: 14px; flex: none; }
 .kbd { margin-left: auto; font: 500 .6875rem var(--mono); color: var(--faint); background: var(--control); border-radius: 5px; padding: 0 5px; }
