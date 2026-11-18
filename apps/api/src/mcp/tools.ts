@@ -774,12 +774,13 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
 
   server.registerTool('move_publication', {
     title: 'Move or edit a scheduled publication',
-    description: 'Moves a scheduled publication to another time and/or changes its caption or first comment, as the person. Some brands then need a second person to confirm the change.',
+    description: 'Moves a scheduled publication to another time and/or changes its caption, first comment or network settings (a YouTube video\'s title, made for kids…), as the person, checked as scheduling checks them. Some brands then need a second person to confirm the change.',
     inputSchema: {
       publication_id: uuid('The publication id'),
       at: z.string().max(40).optional().describe('New time: "YYYY-MM-DDTHH:mm" in the brand\'s time zone, or an ISO time with offset'),
       text: z.string().max(10_000).optional(),
       first_comment: z.string().max(5000).optional(),
+      options: z.record(z.string(), z.unknown()).optional().describe('The network\'s settings, all of them (e.g. YouTube: { "title": "…", "madeForKids": "no" }): they replace the ones it had'),
     },
     annotations: write,
   }, run(async (a) => {
@@ -789,6 +790,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
     const zone = owner ? await zoneOf(owner.brand_id) : 'UTC';
     const pub = await pubs.patchPublication(ctx, p, a.publication_id, {
       ...(a.at ? { scheduledAt: when(a.at, zone) } : {}), ...(a.text !== undefined ? { text: a.text } : {}), ...(a.first_comment !== undefined ? { firstComment: a.first_comment } : {}),
+      ...(a.options !== undefined ? { options: a.options } : {}),
     });
     return { id: pub.id, status: pub.status, at: iso(pub.scheduled_at), at_local: local(pub.scheduled_at, zone), needs_confirmation: pub.status === 'awaiting_reapproval', url: owner ? link.piece(owner.piece_id) : null };
   }));

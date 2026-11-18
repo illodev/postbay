@@ -39,9 +39,15 @@ the network allows it. The title and the AI label that go out are the ones the v
 
 ### Changing what is scheduled
 
-An approver can move a post (drag it on the calendar, or *Move* on the piece page), edit its text, or cancel it. A brand can turn on
-*Changing something already scheduled needs a second approver to confirm* (*Settings → General → Approval rules*): moving the date or
-editing the text then waits, *Awaiting confirmation*, until a second approver confirms it.
+An approver can move a post (drag it on the calendar), edit it, or cancel it. **Clicking a post that has not gone out yet on the calendar
+opens its edit dialog** (*Move or edit*, also on the piece page): its date and time, its text, its first comment where the network has one,
+and the network's own settings (a YouTube video's title, whether it is made for kids…), checked as scheduling checks them; the dialog links
+on to the piece. A post already out, or one the person cannot change, opens the piece; a click with a modifier key opens the piece in a new
+tab. An automatic post can be edited until its preparation starts. `PATCH /api/publications/:id` takes `scheduledAt`, `text`,
+`firstComment`, `title` and `options` (the network's settings, all of them: they replace the ones it had); the audit entry
+`publication.changed` keeps the text, first comment, title and settings before and after. A brand can turn on
+*Changing something already scheduled needs a second approver to confirm* (*Settings → General → Approval rules*): any of those changes
+then waits, *Awaiting confirmation*, until a second approver confirms it.
 
 **A new version puts what is scheduled on hold** instead of moving it to the new content. Once the new version is approved, an approver
 brings each post back with *Reschedule* onto it. Carrying a date over silently would let something go out that nobody approved for that
@@ -269,6 +275,6 @@ A brand can also let its agent schedule approved versions, from inside an agent 
   note to check the network. X, LinkedIn and Pinterest are searched within a minute of the attempt.
 - **A post Postbay schedules by itself** has the text the approver gave when approving, or none: no caption is written for it.
 - **Filling free slots** looks two weeks ahead and tries at most three slots per version per sweep.
-- **Dragging on the calendar needs a mouse.** The list view and the *Move* dialog on the piece page do the same without one.
+- **Dragging on the calendar needs a mouse.** The list view and the *Move or edit* dialog (a click on the post) do the same without one.
 - **Converted videos are checked with ffprobe, not played back**, and YouTube's resumable upload has not yet been tried with very large
   files.

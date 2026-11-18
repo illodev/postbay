@@ -77,6 +77,31 @@ describe('what goes out with the files is what was approved', () => {
     expect(changed.body.title).toBe('Winter menu, the long cut');
     expect((await env.call(env.users.producer, 'PATCH', `/api/publications/${pub.body.id}`, { title: 'Mine' })).status).toBe(403);
   });
+
+  it("lets an approver change a scheduled publication's network settings, checked as scheduling checks them, and they go out", async () => {
+    const { versionId } = await approvedPiece({ title: 'Spring menu' });
+    const pub = await schedule(versionId, { options: { madeForKids: 'no', title: 'Spring menu, first cut' } });
+    expect(pub.status, JSON.stringify(pub.body)).toBe(201);
+    // A title YouTube would refuse is refused here too, and nothing changes.
+    const long = await env.call(env.users.approver, 'PATCH', `/api/publications/${pub.body.id}`, { options: { madeForKids: 'no', title: 'x'.repeat(101) } });
+    expect(long.status).toBe(400);
+    expect(long.body.error.code).toBe('validation_failed');
+    expect((await row(pub.body.id)).options).toEqual({ madeForKids: 'no', title: 'Spring menu, first cut' });
+    // The same settings in another order are no change at all.
+    const same = await env.call(env.users.approver, 'PATCH', `/api/publications/${pub.body.id}`, { options: { title: 'Spring menu, first cut', madeForKids: 'no' } });
+    expect(same.status).toBe(200);
+    expect(same.body.moved_by ?? null).toBeNull();
+    const changed = await env.call(env.users.approver, 'PATCH', `/api/publications/${pub.body.id}`, { options: { madeForKids: 'no', title: 'Our spring menu, in 30 seconds' } });
+    expect(changed.status, JSON.stringify(changed.body)).toBe(200);
+    expect(changed.body.options).toEqual({ madeForKids: 'no', title: 'Our spring menu, in 30 seconds' });
+    const audit = (await env.db.one(`select before, after from audit_event where action = 'publication.changed' and entity_id = $1 order by id desc limit 1`, [pub.body.id]))!;
+    expect(audit.before.options.title).toBe('Spring menu, first cut');
+    expect(audit.after.options.title).toBe('Our spring menu, in 30 seconds');
+    expect((await env.call(env.users.producer, 'PATCH', `/api/publications/${pub.body.id}`, { options: { madeForKids: 'yes' } })).status).toBe(403);
+    env.clock.set(new Date(changed.body.prepare_at));
+    await env.settle();
+    expect(env.google.videos.get((await row(pub.body.id)).handle.videoId)!.snippet.title).toBe('Our spring menu, in 30 seconds');
+  });
 });
 
 describe('editing a piece', () => {

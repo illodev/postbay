@@ -172,6 +172,9 @@ export interface PublicationRow {
   status: PublicationStatus;
   scheduled_at: string;
   text: string;
+  first_comment?: string;
+  /** The network's own settings it goes out with (a YouTube video's title…). */
+  options?: Record<string, unknown> | null;
   hold_reason: string | null;
   url: string | null;
   network: string;

@@ -1,11 +1,11 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DateTime, Info } from 'luxon';
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api, type Account, type CalendarData, type PieceDetail, type PieceSummary, type VersionDetail } from '../api';
+import { api, type Account, type BrandSettings, type CalendarData, type PieceDetail, type PieceSummary, type VersionDetail } from '../api';
 import { Icon } from '../components/icons';
 import { PageBar } from '../components/PageBar';
-import { PublicationBadges, ScheduleDialog } from '../components/publications';
+import { MoveDialog, PublicationBadges, ScheduleDialog } from '../components/publications';
 import { Chip, Dialog, ErrorBox, errorMessage, Field, NetMark, Popover, Segmented, Select, Skeleton, Tip, useToast } from '../components/ui';
 import { t, tMaybe, type Key } from '../i18n';
 import { NETWORK_LABEL, STATE_LABEL } from '../lib/format';
@@ -320,6 +320,9 @@ export function CalendarPage() {
   const [dropDay, setDropDay] = useState<string | null>(null);
   const [blocking, setBlocking] = useState(false);
   const [scheduling, setScheduling] = useState<{ versionId: string; when?: string } | null>(null);
+  const [editing, setEditing] = useState<CalendarData['publications'][number] | null>(null);
+  // The brand's rules, for the edit dialog to say when a change needs a second approver's confirmation.
+  const { data: settings } = useQuery({ queryKey: ['brand', brand.id], queryFn: () => api.get<BrandSettings>(`/api/brands/${brand.id}`), enabled: !!editing });
   // A free slot someone wants a piece made for: the new piece is linked to it, and approving it schedules it there.
   const [forSlot, setForSlot] = useState<ForSlot | null>(null);
   const canCreate = can('createPiece');
@@ -445,6 +448,7 @@ export function CalendarPage() {
           to={`/pieces/${p.piece_id}`}
           className={`oc-item oc-pub ${stateClass(p)} ${draggable ? 'movable' : ''} ${tall ? 'tall' : ''}`}
           draggable={draggable}
+          onClick={(ev) => openEditor(ev, p)}
           onDragStart={(ev) => {
             ev.dataTransfer.setData(DRAG_PUB, p.id);
             ev.dataTransfer.setData('text/plain', p.piece_title);
@@ -463,6 +467,18 @@ export function CalendarPage() {
         </Link>
       </Tip>
     );
+  };
+
+  /**
+   * A publication still waiting for its time opens its edit dialog (time, text, first comment, the network's settings), with the
+   * way on to the piece there; one already out, or one this person cannot change, goes to the piece. A click with a modifier key
+   * (a new tab) still follows the link.
+   */
+  const openEditor = (ev: MouseEvent, p: CalendarData['publications'][number]) => {
+    if (!canMove || !(p.status === 'scheduled' || p.status === 'awaiting_reapproval')) return;
+    if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button !== 0) return;
+    ev.preventDefault();
+    setEditing(p);
   };
 
   const dropProps = (day: string, isBlocked: boolean) =>
@@ -597,7 +613,7 @@ export function CalendarPage() {
                         <span className="ops-row-time">{hourIn(e.at, zone)}</span>
                         <Thumb versionId={e.pub.version_id} pieceId={e.pub.piece_id} />
                         <div className="ops-row-main">
-                          <Link to={`/pieces/${e.pub.piece_id}`} className="ops-row-title">{e.pub.piece_title}</Link>
+                          <Link to={`/pieces/${e.pub.piece_id}`} className="ops-row-title" onClick={(ev) => openEditor(ev, e.pub)}>{e.pub.piece_title}</Link>
                           <span className="ops-row-sub">
                             <NetMark network={e.pub.network} size="xs" />
                             {NETWORK_LABEL[e.pub.network] ?? e.pub.network} · {e.pub.account_name}
@@ -758,6 +774,9 @@ export function CalendarPage() {
         </p>
       )}
       {blocking && <BlockDialog brandId={brand.id} onClose={() => setBlocking(false)} />}
+      {editing && (
+        <MoveDialog pub={editing} brandId={brand.id} zone={zone} needsConfirmation={!!settings?.rules?.reapprove_on_move} pieceLink onClose={() => setEditing(null)} />
+      )}
       {scheduling && <ScheduleFor versionId={scheduling.versionId} when={scheduling.when} brandId={brand.id} zone={zone} onClose={() => setScheduling(null)} />}
       {forSlot && <NewPiece campaigns={campaigns.data ?? []} campaignId={null} slot={forSlot} onClose={() => setForSlot(null)} />}
     </div>

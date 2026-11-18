@@ -422,6 +422,10 @@ describe('scheduling', () => {
     expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
     expect(moved.data.at_local).toContain('10:30');
     expect((await viaOf('publication.changed', pub.data.id))!.via).toMatchObject({ client_name: 'Claude' });
+    // The network's settings change too, all of them at once.
+    const edited = await tool(env, as.approver.access, 'move_publication', { publication_id: pub.data.id, options: { altText: 'Una taza de café' } });
+    expect(edited.ok, JSON.stringify(edited.error)).toBe(true);
+    expect((await env.db.one('select options from publication where id = $1', [pub.data.id]))!.options).toEqual({ altText: 'Una taza de café' });
     expect((await tool(env, as.producer.access, 'cancel_publication', { publication_id: pub.data.id })).error.code).toBe('forbidden');
     const cancelled = await tool(env, as.approver.access, 'cancel_publication', { publication_id: pub.data.id });
     expect(cancelled.data.status).toBe('cancelled');

@@ -1,6 +1,7 @@
 import { ScheduledBy } from './Scheduling';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
+import { Link } from 'react-router-dom';
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
 import { api, ApiError, type Account, type AccountOptionsReply, type Attempt, type CalendarData, type Capabilities, type Integrations, type Issue, type Plan, type PublicationRow, type VersionDetail } from '../api';
 import { getLocale, t, type Key } from '../i18n';
@@ -672,26 +673,80 @@ function AccountLine({ network, name, children }: { network: string; name?: stri
   );
 }
 
-export function MoveDialog({ pub, brandId, zone, needsConfirmation, onClose }: {
-  pub: { id: string; scheduled_at: string; text: string; network: string; account_name?: string };
+/** What a publication still waiting for its time looks like to the dialog that edits it (from the calendar or the piece's list). */
+export interface EditablePublication {
+  id: string;
+  scheduled_at: string;
+  text: string;
+  first_comment?: string;
+  options?: Record<string, unknown> | null;
+  network: string;
+  account_name?: string;
+  /** The account: the calendar calls it account_id, the piece's list social_account_id. */
+  account_id?: string;
+  social_account_id?: string;
+  placement?: string | null;
+  manual: boolean;
+  piece_id?: string;
+}
+
+/** Only these keys, in this order: to tell whether the network settings were really changed. */
+const sameOptions = (a: Record<string, unknown>, b: Record<string, unknown>) => {
+  const norm = (o: Record<string, unknown>) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
+  return norm(a) === norm(b);
+};
+
+/**
+ * Changes a scheduled publication before it goes out: its time, its text, its first comment and the network's own settings (a
+ * YouTube video's title, whether it is made for kids…), checked by the server as scheduling checks them. From the calendar it also
+ * offers the way on to the piece.
+ */
+export function MoveDialog({ pub, brandId, zone, needsConfirmation, onClose, pieceLink = false }: {
+  pub: EditablePublication;
   brandId: string;
   zone: string;
   needsConfirmation: boolean;
   onClose: () => void;
+  pieceLink?: boolean;
 }) {
   const invalidate = useInvalidate();
   const toast = useToast();
+  const accountId = pub.account_id ?? pub.social_account_id;
   const [when, setWhen] = useState(isoToZonedInput(pub.scheduled_at, zone));
   const [text, setText] = useState(pub.text);
+  const [firstComment, setFirstComment] = useState(pub.first_comment ?? '');
+  const [typed, setTyped] = useState<OptionValues>({});
   const { data: integ } = useQuery({ queryKey: ['integrations', brandId], queryFn: () => api.get<Integrations>(`/api/brands/${brandId}/integrations`) });
+  const caps = integ?.capabilities[pub.network];
+  const canComment = caps ? caps.text.firstComment : false;
+  // The network's settings go out only with a publication the app makes: one a person posts by hand carries none.
+  const asked = useQuery({
+    queryKey: ['account-options', brandId, accountId],
+    enabled: !pub.manual && !!accountId,
+    queryFn: () => api.get<AccountOptionsReply>(`/api/brands/${brandId}/accounts/${accountId}/options`),
+  });
+  const fields = pub.manual ? [] : asked.data?.fields ?? [];
+  const stored = (pub.options ?? {}) as OptionValues;
+  const values: OptionValues = { ...defaultValues(fields), ...stored, ...typed };
+  const placement = pub.placement ?? undefined;
   const save = useMutation({
-    mutationFn: () => api.patch(`/api/publications/${pub.id}`, { scheduledAt: zonedToIso(when, zone), text }),
+    mutationFn: () => {
+      const options = sendableOptions(fields, placement, values);
+      const optionsChanged = fields.length > 0 && !sameOptions(options, sendableOptions(fields, placement, { ...defaultValues(fields), ...stored }));
+      return api.patch(`/api/publications/${pub.id}`, {
+        scheduledAt: zonedToIso(when, zone),
+        text,
+        ...(canComment ? { firstComment } : {}),
+        ...(optionsChanged ? { options } : {}),
+      });
+    },
     onSuccess: () => {
       invalidate();
       toast(needsConfirmation ? t('publications.move.savedConfirm') : t('publications.move.saved'));
       onClose();
     },
   });
+  const issues = save.error instanceof ApiError && Array.isArray(save.error.details?.issues) ? (save.error.details.issues as Issue[]) : [];
   return (
     <Dialog title={t('publications.move.title')} onClose={onClose} wide>
       <form className="pb-form" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
@@ -701,11 +756,35 @@ export function MoveDialog({ pub, brandId, zone, needsConfirmation, onClose }: {
           <WhenField value={when} onChange={setWhen} zone={zone} />
         </Section>
         <Section title={t('publications.text.title')}>
-          <NetworkText caps={integ?.capabilities[pub.network]} label={t('publications.text.label')} value={text} onChange={setText} account={pub.account_name} network={pub.network} />
+          <NetworkText caps={caps} label={t('publications.text.label')} value={text} onChange={setText} account={pub.account_name} network={pub.network}>
+            {canComment && (
+              <div className="pb-comment">
+                <label className="field">
+                  <span className="field-label">
+                    {t('publications.firstComment.label')} <span className="pb-opt">{t('publications.optional')}</span>
+                  </span>
+                  <textarea className="pb-textarea pb-textarea-short" value={firstComment} onChange={(e) => setFirstComment(e.target.value)} />
+                </label>
+                {caps?.text.firstCommentMaxChars !== undefined && (
+                  <div className="pb-counters">
+                    <Counter label={t('publications.count.chars')} value={countLength(firstComment, caps.text.unit)} max={caps.text.firstCommentMaxChars} />
+                  </div>
+                )}
+                <span className="muted small">{t('publications.firstComment.hint')}</span>
+              </div>
+            )}
+          </NetworkText>
         </Section>
-        {save.error && <ErrorBox error={save.error} />}
+        {!pub.manual && asked.isLoading && <p className="muted small pb-quiet">{t('publications.opt.asking', { network: netName(pub.network) })}</p>}
+        {!pub.manual && !!asked.error && <ErrorBox error={asked.error} />}
+        {fields.length > 0 && (
+          <NetworkOptions network={pub.network} fields={fields} placement={placement} values={values} onChange={(k, v) => setTyped((x) => ({ ...x, [k]: v }))} />
+        )}
+        {issues.length > 0 ? <IssueList issues={issues} /> : save.error && <ErrorBox error={save.error} />}
         <footer className="pb-foot">
-          <span className="pb-foot-status" />
+          <span className="pb-foot-status">
+            {pieceLink && pub.piece_id && <Link to={`/pieces/${pub.piece_id}`} className="btn btn-ghost" onClick={onClose}>{t('publications.move.openPiece')}</Link>}
+          </span>
           <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
           <button className="btn btn-primary" disabled={save.isPending || !when}>{save.isPending ? t('common.saving') : t('common.save')}</button>
         </footer>

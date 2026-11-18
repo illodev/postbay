@@ -205,7 +205,7 @@ export async function getPiece(ctx: Ctx, p: Principal, pieceId: string) {
     [pieceId],
   );
   const publications = await ctx.db.query(
-    `select pub.id, pub.variant_id, pub.social_account_id, pub.version_id, pub.status, pub.scheduled_at, pub.text, pub.first_comment, pub.hold_reason,
+    `select pub.id, pub.variant_id, pub.social_account_id, pub.version_id, pub.status, pub.scheduled_at, pub.text, pub.first_comment, pub.options, pub.title, pub.hold_reason,
        pub.url, pub.manual, pub.visibility, pub.placement, pub.native_scheduled, pub.last_error, pub.last_error_class, pub.published_at,
        sa.network, sa.display_name as account_name, ver.number as version_number,
        pub.scheduled_by, coalesce(cu.name, cu.email, ct.name) as scheduled_by_name, pub.slot_id

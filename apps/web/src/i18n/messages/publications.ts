@@ -100,6 +100,7 @@ export const publications = define({
     'publications.move.confirmNeeded': 'Esta marca pide que otro aprobador confirme cualquier cambio en algo ya programado.',
     'publications.move.saved': 'Guardado',
     'publications.move.savedConfirm': 'Guardado: otro aprobador tiene que confirmarlo',
+    'publications.move.openPiece': 'Ver la pieza',
 
     // ── mark as published ──
     'publications.mark.title': 'Marcar como publicada',
@@ -301,6 +302,7 @@ export const publications = define({
     'publications.move.confirmNeeded': 'This brand needs a second approver to confirm any change to something already scheduled.',
     'publications.move.saved': 'Saved',
     'publications.move.savedConfirm': 'Saved: another approver has to confirm it',
+    'publications.move.openPiece': 'Open the piece',
 
     // ── mark as published ──
     'publications.mark.title': 'Mark as published',

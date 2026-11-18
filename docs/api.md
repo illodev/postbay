@@ -34,7 +34,7 @@ The tables below are the routes that matter most; `apps/api/src/routes/index.ts`
 | `POST /versions/:id/publications/validate` | How a post would go out, and what would block it, before scheduling; refused, like scheduling, for a version that is not approved or not for that account |
 | `POST /versions/:id/publications` | Schedule an approved version on an account (an approver or admin; where the brand lets the agent schedule what is approved, also a producer token inside an agent run, or a producer through an assistant) |
 | `POST /versions/:id/publications/batch` | The same on several accounts at once, each with its own text, time and settings (`items`, one per account, up to 20): all are scheduled or none, and a refusal names the item (`details.item`, `details.accountId`) |
-| `PATCH /publications/:id`; `POST /publications/:id/cancel`, `/confirm`, `/reschedule` | Move or edit, cancel, confirm a change that needs a second approver, bring a held post back onto a new version |
+| `PATCH /publications/:id`; `POST /publications/:id/cancel`, `/confirm`, `/reschedule` | Move or edit (`scheduledAt`, `text`, `firstComment`, `title`, `options`: the network's settings, all of them), cancel, confirm a change that needs a second approver, bring a held post back onto a new version |
 | `POST /publications/:id/retry`, `/hand-over`, `/recheck`; `GET /publications/:id/attempts` | Act on a failed or private post; read every attempt |
 | `GET /publications/:id/pack`, `POST /publications/:id/mark-published` | What a person needs to publish by hand; record that it is out, with its link |
 | `GET /brands/:id/calendar`, `GET /brands/:id/publications/due` | What is planned (with how each post goes out and who scheduled it) and what a person has to publish now |

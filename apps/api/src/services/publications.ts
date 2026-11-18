@@ -48,6 +48,8 @@ export const patchInput = z.object({
   firstComment: z.string().max(5000).optional(),
   /** The title that goes out with it (YouTube, LinkedIn, Pinterest, TikTok). Unset: the one the version was approved with. */
   title: z.string().trim().min(1).max(200).optional(),
+  /** The network's own settings (a YouTube video's title, made for kids…), all of them: they replace the ones it had. */
+  options: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const rescheduleInput = z.object({
@@ -285,8 +287,14 @@ export async function scheduleVersion(
   }
 }
 
+/** Two sets of a network's settings, whatever the order of their keys. */
+const sameSettings = (a: Record<string, unknown>, b: Record<string, unknown>) => {
+  const norm = (o: Record<string, unknown>) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
+  return norm(a) === norm(b);
+};
+
 /**
- * Moves a publication or edits its text. If the brand requires it, any change to something already scheduled
+ * Moves a publication or edits what goes out with it: its text, first comment and network settings. If the brand requires it, any change to something already scheduled
  * needs a second person to confirm it before it counts again. An automatic publication can only be changed before
  * its preparation starts: after that it is already on the network, so it has to be cancelled and scheduled again.
  */
@@ -311,7 +319,8 @@ export async function patchPublication(ctx: Ctx, p: Principal, pubId: string, ra
       moved ||
       (input.text !== undefined && input.text !== before.text) ||
       (input.firstComment !== undefined && input.firstComment !== before.first_comment) ||
-      (input.title !== undefined && input.title !== before.title);
+      (input.title !== undefined && input.title !== before.title) ||
+      (input.options !== undefined && !sameSettings(input.options, (before.options ?? {}) as Record<string, unknown>));
     if (!changed) return before;
 
     const nextWhen = when ?? new Date(before.scheduled_at);
@@ -323,7 +332,7 @@ export async function patchPublication(ctx: Ctx, p: Principal, pubId: string, ra
       const piece = (await db.one('select * from piece where id = $1', [version.piece_id]))!;
       const plan = await planPublication(ctx, {
         brandId: before.brand_id, versionId: before.version_id, accountId: before.social_account_id, piece, variantFormat: variant.format,
-        text: input.text ?? before.text, firstComment: input.firstComment ?? before.first_comment, options: before.options ?? {}, scheduledAt: nextWhen,
+        text: input.text ?? before.text, firstComment: input.firstComment ?? before.first_comment, options: input.options ?? before.options ?? {}, scheduledAt: nextWhen,
         mode: 'auto', placement: before.placement ?? undefined, title: input.title ?? before.title ?? undefined, aiGenerated: !!before.ai_generated || !!piece.ai_generated,
       });
       if (errorsOf(plan).length) throw badRequest('validation_failed', errorsOf(plan).map((i) => i.message).join(' '), { issues: plan.issues });
@@ -335,15 +344,16 @@ export async function patchPublication(ctx: Ctx, p: Principal, pubId: string, ra
       const after = (await db.one(
         `update publication set slot_id = case when $2::timestamptz is null or $2::timestamptz = scheduled_at then slot_id end,
            scheduled_at = coalesce($2, scheduled_at), text = coalesce($3, text),
-           first_comment = coalesce($4, first_comment), title = coalesce($8, title), moved_by = $5, due_notified_at = null, updated_at = now(),
+           first_comment = coalesce($4, first_comment), title = coalesce($8, title), options = coalesce($9::jsonb, options), moved_by = $5, due_notified_at = null, updated_at = now(),
            prepare_at = $7::timestamptz, next_run_at = case when $6::boolean then null else $7::timestamptz end,
            status = case when $6::boolean then 'awaiting_reapproval' else status end
          where id = $1 returning *`,
-        [pubId, when, input.text ?? null, input.firstComment ?? null, userId, needsConfirm, prepare, input.title ?? null],
+        [pubId, when, input.text ?? null, input.firstComment ?? null, userId, needsConfirm, prepare, input.title ?? null,
+          input.options !== undefined ? JSON.stringify(input.options) : null],
       ))!;
       await audit(db, p, before.brand_id, 'publication.changed', 'publication', pubId,
-        { scheduled_at: before.scheduled_at, text: before.text, title: before.title, status: before.status },
-        { scheduled_at: after.scheduled_at, text: after.text, title: after.title, status: after.status });
+        { scheduled_at: before.scheduled_at, text: before.text, first_comment: before.first_comment, title: before.title, options: before.options ?? {}, status: before.status },
+        { scheduled_at: after.scheduled_at, text: after.text, first_comment: after.first_comment, title: after.title, options: after.options ?? {}, status: after.status });
       if (needsConfirm) {
         await notifyRoles(db, before.brand_id, ['approver', 'admin'], 'publication.reapproval',
           { publicationId: pubId, pieceId: before.piece_id }, userId);
@@ -623,7 +633,7 @@ export async function calendarData(ctx: Ctx, brandId: string, from: string, to: 
   const end = DateTime.fromJSDate(zonedInstant(days[days.length - 1]!, '00:00', zone), { zone }).plus({ days: 1 }).toJSDate();
 
   const publications = await ctx.db.query(
-    `select pub.id, pub.status, pub.scheduled_at, pub.text, pub.hold_reason, pub.url, pub.depends_on, pub.social_account_id as account_id,
+    `select pub.id, pub.status, pub.scheduled_at, pub.text, pub.first_comment, pub.options, pub.title, pub.hold_reason, pub.url, pub.depends_on, pub.social_account_id as account_id,
        pub.manual, pub.visibility, pub.last_error, pub.last_error_class, pub.native_scheduled, pub.placement, pub.hold_reason_i18n, pub.last_error_i18n,
        sa.network, sa.display_name as account_name, p.id as piece_id, p.title as piece_title, ver.number as version_number,
        pub.scheduled_by, coalesce(cu.name, cu.email, ct.name) as scheduled_by_name, pub.slot_id
