@@ -781,6 +781,7 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
       text: z.string().max(10_000).optional(),
       first_comment: z.string().max(5000).optional(),
       options: z.record(z.string(), z.unknown()).optional().describe('The network\'s settings, all of them (e.g. YouTube: { "title": "…", "madeForKids": "no" }): they replace the ones it had'),
+      prize_notice_confirmed: z.boolean().optional().describe('Only when the person says so: on a post with a prize, the new text still tells people the reply is automatic and what is done with their data. Without it, a new text pauses the prize until someone confirms that in the web'),
     },
     annotations: write,
   }, run(async (a) => {
@@ -791,8 +792,12 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
     const pub = await pubs.patchPublication(ctx, p, a.publication_id, {
       ...(a.at ? { scheduledAt: when(a.at, zone) } : {}), ...(a.text !== undefined ? { text: a.text } : {}), ...(a.first_comment !== undefined ? { firstComment: a.first_comment } : {}),
       ...(a.options !== undefined ? { options: a.options } : {}),
+      ...(a.prize_notice_confirmed !== undefined ? { prizeNoticeConfirmed: a.prize_notice_confirmed } : {}),
     });
-    return { id: pub.id, status: pub.status, at: iso(pub.scheduled_at), at_local: local(pub.scheduled_at, zone), needs_confirmation: pub.status === 'awaiting_reapproval', url: owner ? link.piece(owner.piece_id) : null };
+    return {
+      id: pub.id, status: pub.status, at: iso(pub.scheduled_at), at_local: local(pub.scheduled_at, zone), needs_confirmation: pub.status === 'awaiting_reapproval',
+      prize_paused: (pub as { prize_notice?: string | null }).prize_notice === 'paused', url: owner ? link.piece(owner.piece_id) : null,
+    };
   }));
 
   server.registerTool('cancel_publication', {

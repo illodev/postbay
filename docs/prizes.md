@@ -52,6 +52,11 @@ version may or may not have been approved.
 - how long each person's link works;
 - a **confirmation that the post's own text says the reply is automatic and what is done with people's data**. A rule does not run without
   it: it is a person's statement about the post's text, and cannot be inferred.
+  **A new text asks for it again**: changing the text of a scheduled post that carries a rule (`PATCH /api/publications/:id`, the edit
+  dialog, an assistant's `move_publication`) keeps the confirmation only with `prizeNoticeConfirmed: true` (the edit dialog asks for it
+  with a checkbox); otherwise the rule waits, unconfirmed, until someone confirms it in *Prize…*. The reply says `prize_notice`
+  (`confirmed`, `paused`, or null when the post has no rule or its text did not change), and `prize.rule_changed` is audited with
+  `because: publication_text_changed`.
 
 ## How a comment becomes a prize
 

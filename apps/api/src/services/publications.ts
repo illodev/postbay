@@ -50,6 +50,11 @@ export const patchInput = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   /** The network's own settings (a YouTube video's title, made for kids…), all of them: they replace the ones it had. */
   options: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * With a new text on a post that carries a prize: the person says the new text still tells people the reply is automatic and what is
+   * done with their data. Without it the prize waits until someone confirms that again.
+   */
+  prizeNoticeConfirmed: z.boolean().optional(),
 });
 
 export const rescheduleInput = z.object({
@@ -354,11 +359,26 @@ export async function patchPublication(ctx: Ctx, p: Principal, pubId: string, ra
       await audit(db, p, before.brand_id, 'publication.changed', 'publication', pubId,
         { scheduled_at: before.scheduled_at, text: before.text, first_comment: before.first_comment, title: before.title, options: before.options ?? {}, status: before.status },
         { scheduled_at: after.scheduled_at, text: after.text, first_comment: after.first_comment, title: after.title, options: after.options ?? {}, status: after.status });
+      // A prize's rule runs only on a person's word that the post's text tells people the reply is automatic and what is done with
+      // their data. That word was about the old text: a new one needs it again, or the prize waits.
+      let prizeNotice: 'confirmed' | 'paused' | null = null;
+      if (input.text !== undefined && input.text !== before.text) {
+        const rule = await db.one<{ id: string; notice_confirmed: boolean }>('select id, notice_confirmed from prize_rule where publication_id = $1 for update', [pubId]);
+        if (rule) {
+          const confirmed = input.prizeNoticeConfirmed === true;
+          prizeNotice = confirmed ? 'confirmed' : 'paused';
+          if (confirmed !== rule.notice_confirmed) {
+            await db.query('update prize_rule set notice_confirmed = $2, updated_at = $3 where id = $1', [rule.id, confirmed, ctx.now()]);
+          }
+          await audit(db, p, before.brand_id, 'prize.rule_changed', 'prize_rule', rule.id,
+            { notice_confirmed: rule.notice_confirmed }, { notice_confirmed: confirmed, because: 'publication_text_changed', publication_id: pubId });
+        }
+      }
       if (needsConfirm) {
         await notifyRoles(db, before.brand_id, ['approver', 'admin'], 'publication.reapproval',
           { publicationId: pubId, pieceId: before.piece_id }, userId);
       }
-      return after;
+      return { ...after, prize_notice: prizeNotice };
     } catch (err) {
       if (isUniqueViolation(err)) throw conflict('slot_taken', msg('error.pub.slotTaken'));
       throw err;

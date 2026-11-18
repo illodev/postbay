@@ -3,7 +3,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { DateTime } from 'luxon';
 import { Link } from 'react-router-dom';
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
-import { api, ApiError, type Account, type AccountOptionsReply, type Attempt, type CalendarData, type Capabilities, type Integrations, type Issue, type Plan, type PublicationRow, type VersionDetail } from '../api';
+import { api, ApiError, type Account, type AccountOptionsReply, type Attempt, type CalendarData, type Capabilities, type Integrations, type Issue, type Plan, type PublicationPrize, type PublicationRow, type VersionDetail } from '../api';
 import { getLocale, t, type Key } from '../i18n';
 import { countHashtags, countLength, countMentions, truncatePreview } from '../lib/text';
 import { ERROR_CLASS_LABEL, fmtBytes, fmtDateTime, isoToZonedInput, NETWORK_LABEL, STEP_LABEL, VISIBILITY_LABEL, zonedToIso } from '../lib/format';
@@ -726,6 +726,11 @@ export function MoveDialog({ pub, brandId, zone, needsConfirmation, onClose, pie
     queryFn: () => api.get<AccountOptionsReply>(`/api/brands/${brandId}/accounts/${accountId}/options`),
   });
   const fields = pub.manual ? [] : asked.data?.fields ?? [];
+  // A post with a prize: its rule runs on a person's word about the text, so a new text asks for that word again.
+  const { data: prizeInfo } = useQuery({ queryKey: ['prize', pub.id], queryFn: () => api.get<PublicationPrize>(`/api/publications/${pub.id}/prize`) });
+  const hasPrize = !!prizeInfo?.rule;
+  const textChanged = text !== pub.text;
+  const [prizeNotice, setPrizeNotice] = useState(false);
   const stored = (pub.options ?? {}) as OptionValues;
   const values: OptionValues = { ...defaultValues(fields), ...stored, ...typed };
   const placement = pub.placement ?? undefined;
@@ -738,11 +743,13 @@ export function MoveDialog({ pub, brandId, zone, needsConfirmation, onClose, pie
         text,
         ...(canComment ? { firstComment } : {}),
         ...(optionsChanged ? { options } : {}),
+        ...(hasPrize && textChanged ? { prizeNoticeConfirmed: prizeNotice } : {}),
       });
     },
-    onSuccess: () => {
+    onSuccess: (saved) => {
       invalidate();
-      toast(needsConfirmation ? t('publications.move.savedConfirm') : t('publications.move.saved'));
+      const paused = (saved as { prize_notice?: string } | undefined)?.prize_notice === 'paused';
+      toast(paused ? t('publications.move.savedPrizePaused') : needsConfirmation ? t('publications.move.savedConfirm') : t('publications.move.saved'));
       onClose();
     },
   });
@@ -779,6 +786,18 @@ export function MoveDialog({ pub, brandId, zone, needsConfirmation, onClose, pie
         {!pub.manual && !!asked.error && <ErrorBox error={asked.error} />}
         {fields.length > 0 && (
           <NetworkOptions network={pub.network} fields={fields} placement={placement} values={values} onChange={(k, v) => setTyped((x) => ({ ...x, [k]: v }))} />
+        )}
+        {hasPrize && textChanged && (
+          <div className="notice notice-warn">
+            <strong>{t('publications.move.prizeTitle')}</strong>
+            <label className="check">
+              <input type="checkbox" checked={prizeNotice} onChange={(e) => setPrizeNotice(e.target.checked)} />
+              <span>
+                {t('publications.move.prizeConfirm')}
+                <span className="muted small" style={{ display: 'block' }}>{t('publications.move.prizeHint')}</span>
+              </span>
+            </label>
+          </div>
         )}
         {issues.length > 0 ? <IssueList issues={issues} /> : save.error && <ErrorBox error={save.error} />}
         <footer className="pb-foot">

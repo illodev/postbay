@@ -186,6 +186,32 @@ describe('the rule on a post', () => {
     expect(r.body.error.message).toContain('automatic');
   });
 
+  it("asks again for the word about the post's text when the text of a scheduled post changes, and waits without it", async () => {
+    const { users, call, makePiece, newVersion, approve } = env;
+    const { variantId } = await makePiece(users.producer, 'video', '9:16');
+    const v = await newVersion(users.producer, variantId, [{ name: 'reel.mp4', mime: 'video/mp4', kind: 'video' }]);
+    await approve(users.approver, v.body.id, [ig]);
+    const pub = await call(users.approver, 'POST', `/api/versions/${v.body.id}/publications`, { accountId: ig, scheduledAt: at(3 * DAY).toISOString(), text: 'Comment RECIPE. Replies are automatic.' });
+    expect(pub.status, JSON.stringify(pub.body)).toBe(201);
+    await ruleOn(pub.body.id);
+    const notice = async () => (await env.db.one('select notice_confirmed from prize_rule where publication_id = $1', [pub.body.id]))!.notice_confirmed;
+    // Moving it says nothing about its text: the word stands.
+    const moved = await call(users.approver, 'PATCH', `/api/publications/${pub.body.id}`, { scheduledAt: at(4 * DAY).toISOString() });
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    expect(moved.body.prize_notice).toBeNull();
+    expect(await notice()).toBe(true);
+    // A new text without the word: the prize waits.
+    const paused = await call(users.approver, 'PATCH', `/api/publications/${pub.body.id}`, { text: 'Comment RECIPE.' });
+    expect(paused.body.prize_notice).toBe('paused');
+    expect(await notice()).toBe(false);
+    // With it, it runs again.
+    const back = await call(users.approver, 'PATCH', `/api/publications/${pub.body.id}`, { text: 'Comment RECIPE. Replies are automatic; your name is deleted in 30 days.', prizeNoticeConfirmed: true });
+    expect(back.body.prize_notice).toBe('confirmed');
+    expect(await notice()).toBe(true);
+    const audits = await env.db.query(`select after from audit_event where action = 'prize.rule_changed' and after->>'because' = 'publication_text_changed' and after->>'publication_id' = $1 order by id`, [pub.body.id]);
+    expect(audits.map((a) => a.after.notice_confirmed)).toEqual([false, true]);
+  });
+
   it('wants the link in the message, and a keyword with something in it', async () => {
     const pub = await published(ig);
     prizeId ??= await linkPrize();

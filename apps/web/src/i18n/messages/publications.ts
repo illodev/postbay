@@ -101,6 +101,10 @@ export const publications = define({
     'publications.move.saved': 'Guardado',
     'publications.move.savedConfirm': 'Guardado: otro aprobador tiene que confirmarlo',
     'publications.move.openPiece': 'Ver la pieza',
+    'publications.move.prizeTitle': 'Esta publicación lleva premio',
+    'publications.move.prizeConfirm': 'El texto nuevo sigue diciendo que la respuesta es automática y qué se hace con los datos.',
+    'publications.move.prizeHint': 'Si no lo marcas, el premio queda en pausa hasta que alguien lo confirme en «Premio…».',
+    'publications.move.savedPrizePaused': 'Guardado. El premio queda en pausa hasta que alguien confirme el texto en «Premio…».',
 
     // ── mark as published ──
     'publications.mark.title': 'Marcar como publicada',
@@ -303,6 +307,10 @@ export const publications = define({
     'publications.move.saved': 'Saved',
     'publications.move.savedConfirm': 'Saved: another approver has to confirm it',
     'publications.move.openPiece': 'Open the piece',
+    'publications.move.prizeTitle': 'This post carries a prize',
+    'publications.move.prizeConfirm': 'The new text still tells people that the reply is automatic and what is done with their data.',
+    'publications.move.prizeHint': 'Unticked, the prize waits until someone confirms it in "Prize…".',
+    'publications.move.savedPrizePaused': 'Saved. The prize waits until someone confirms the text in "Prize…".',
 
     // ── mark as published ──
     'publications.mark.title': 'Mark as published',
