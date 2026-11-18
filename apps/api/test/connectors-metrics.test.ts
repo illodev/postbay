@@ -91,12 +91,23 @@ describe('Facebook numbers', () => {
     meta.posts.set('v-10', { page: '111', kind: 'video', params: { published: 'true' }, comments: [] });
     meta.reels.set('v-10', { page: '111', processingPolls: 0 });
     const m = await set.connector('facebook')!.fetchMetrics!(fb, 'v-10', { objectType: 'video' }, env('page-token-111'), post('reel'));
-    expect(meta.callsTo(/v-10\/video_insights/)[0]!.query.metric).toBe('fb_reels_total_plays,post_impressions_unique,post_video_avg_time_watched,post_video_social_actions');
+    expect(meta.callsTo(/v-10\/video_insights/)[0]!.query.metric).toBe('fb_reels_total_plays,post_video_avg_time_watched,post_video_social_actions');
+    // The people reached come from the Page post the Reel makes, since Meta withdrew post_impressions_unique.
+    expect(meta.callsTo(/^111_10\/insights$/)[0]!.query.metric).toBe('post_total_media_view_unique');
     expect(m.common).toEqual({ views: 1500, reach: 1100, likes: 30, comments: 6, shares: 9, avgWatchSeconds: 5.4 });
     // The way it was asked before (a video's metrics of a Reel, and shares on the Video node) is what Meta refuses.
     const asked = async (path: string) => (await fetch(`${meta.url}/v23.0/${path}&access_token=page-token-111`)).json() as Promise<{ error?: { message: string } }>;
     expect((await asked('v-10/video_insights?metric=total_video_views')).error?.message).toContain('valid insights metric');
+    expect((await asked('v-10/video_insights?metric=post_impressions_unique')).error?.message).toContain('valid insights metric');
+    expect((await asked('111_10/insights?metric=post_impressions_unique')).error?.message).toContain('valid insights metric');
     expect((await asked('v-10?fields=shares')).error?.message).toContain('nonexisting field (shares)');
+  });
+
+  it("keeps a Reel's other numbers when the people it reached cannot be read", async () => {
+    meta.posts.set('v-11', { page: '111', kind: 'video', params: { published: 'true' }, comments: [] });
+    meta.reels.set('v-11', { page: '222', processingPolls: 0 }); // its Page post is not on this Page, so asking for it fails
+    const m = await set.connector('facebook')!.fetchMetrics!(fb, 'v-11', { objectType: 'video' }, env('page-token-111'), post('reel'));
+    expect(m.common).toEqual({ views: 1500, likes: 30, comments: 6, shares: 9, avgWatchSeconds: 5.4 });
   });
 });
 

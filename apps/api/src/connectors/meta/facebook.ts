@@ -20,7 +20,8 @@ import { describeSubscription, PAGE_FIELD, subscribe, unsubscribe } from './webh
  * Commenting as the Page (the first comment) needs pages_manage_engagement; a refusal is kept and said in the post's history.
  * Photos of a scheduled album are uploaded as temporary (published=false, temporary=true), as Meta requires for photos used in a
  * scheduled post. Numbers come from each kind of object's own insights: a post's, a video's (total_video_*), a Reel's
- * (fb_reels_total_plays, post_impressions_unique, post_video_avg_time_watched…); a Video node has no `shares` field.
+ * (fb_reels_total_plays, post_video_avg_time_watched…); a Video node has no `shares` field. A Reel's reach is its Page post's
+ * post_total_media_view_unique: Meta withdrew post_impressions_unique in November 2025, and asking for it fails the whole call.
  */
 const CAPS: Capabilities = {
   network: 'facebook',
@@ -262,7 +263,7 @@ export function createFacebook(client: MetaClient): Connector {
       return { messageId: r.message_id };
     },
 
-    async fetchMetrics(_account, externalId, handle, env, post): Promise<MetricsResult> {
+    async fetchMetrics(account, externalId, handle, env, post): Promise<MetricsResult> {
       const token = (await env.token()).accessToken;
       const isVideo = handle.objectType === 'video';
       if (!isVideo) {
@@ -281,26 +282,39 @@ export function createFacebook(client: MetaClient): Connector {
       // A video or a Reel is a Video node: it has likes and comments (and no `shares` field, nor reactions), and insights of its own
       // kind. A Reel's are not a video's: asking a Reel for total_video_views, or a video for a Reel's plays, fails the whole call.
       const reel = post.placement === 'reel';
-      const counts = await client.get<{ likes?: { summary?: { total_count?: number } }; comments?: { summary?: { total_count?: number } } }>(
-        externalId, token, { fields: 'likes.summary(total_count).limit(0),comments.summary(total_count).limit(0)' });
+      const counts = await client.get<{ likes?: { summary?: { total_count?: number } }; comments?: { summary?: { total_count?: number } }; post_id?: string }>(
+        externalId, token, { fields: `likes.summary(total_count).limit(0),comments.summary(total_count).limit(0)${reel ? ',post_id' : ''}` });
       const metric = reel
-        ? 'fb_reels_total_plays,post_impressions_unique,post_video_avg_time_watched,post_video_social_actions'
+        ? 'fb_reels_total_plays,post_video_avg_time_watched,post_video_social_actions'
         : 'total_video_views,total_video_impressions_unique,total_video_avg_time_watched';
       const insights = await client.get<InsightsAnswer>(`${externalId}/video_insights`, token, { metric });
       const v = valuesOf(insights);
+      // The people a Reel reached are counted on the Page post it makes (`{page}_{post}`), not on the Video node. Without them the
+      // other numbers still stand.
+      let reach = reel ? undefined : num(v.total_video_impressions_unique);
+      let viewers: InsightsAnswer | undefined;
+      if (reel && counts.post_id) {
+        const postId = counts.post_id.includes('_') ? counts.post_id : `${account.externalId}_${counts.post_id}`;
+        try {
+          viewers = await client.get<InsightsAnswer>(`${postId}/insights`, token, { metric: 'post_total_media_view_unique' });
+          reach = num(valuesOf(viewers).post_total_media_view_unique);
+        } catch (err) {
+          env.log.warn({ err: String(err) }, 'could not read the people a Facebook Reel reached');
+        }
+      }
       const avgMs = num(reel ? v.post_video_avg_time_watched : v.total_video_avg_time_watched);
       const social = v.post_video_social_actions;
       const shares = social && typeof social === 'object' ? num((social as Record<string, unknown>).SHARE ?? (social as Record<string, unknown>).share) : undefined;
       return {
         common: {
           views: num(reel ? v.fb_reels_total_plays : v.total_video_views),
-          reach: num(reel ? v.post_impressions_unique : v.total_video_impressions_unique),
+          ...(reach !== undefined ? { reach } : {}),
           likes: counts.likes?.summary?.total_count,
           comments: counts.comments?.summary?.total_count,
           ...(shares !== undefined ? { shares } : {}),
           ...(avgMs !== undefined ? { avgWatchSeconds: avgMs / 1000 } : {}),
         },
-        raw: { counts, insights },
+        raw: { counts, insights, ...(viewers ? { viewers } : {}) },
         note: reel
           ? 'A Reel counts every play, replays included, as a view; reach is the people who saw it. Likes are likes, not every reaction'
           : 'Views are plays of 3 seconds or more; reach is the people who saw it. Facebook gives no share count for a video',

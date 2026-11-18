@@ -53,8 +53,10 @@ export class FakeMeta {
   /** Numbers Instagram gives back; a metric Instagram does not offer for that kind of post is refused, as it does. */
   igInsights: Record<string, number> = { views: 2000, reach: 1500, likes: 120, comments: 14, saved: 30, shares: 22, replies: 5, navigation: 40, ig_reels_avg_watch_time: 6500 };
   fbInsights: Record<string, number> = { post_media_view: 900, total_video_views: 700, total_video_impressions_unique: 650, total_video_avg_time_watched: 8200 };
-  /** A Reel's own insights (they are not a video's): plays, unique viewers, average watch in ms, and comments and shares by kind. */
-  reelInsights: Record<string, unknown> = { fb_reels_total_plays: 1500, blue_reels_play_count: 1200, post_impressions_unique: 1100, post_video_avg_time_watched: 5400, post_video_social_actions: { COMMENT: 4, SHARE: 9 } };
+  /** A Reel's own insights (they are not a video's): plays, average watch in ms, and comments and shares by kind. */
+  reelInsights: Record<string, unknown> = { fb_reels_total_plays: 1500, blue_reels_play_count: 1200, post_video_avg_time_watched: 5400, post_video_social_actions: { COMMENT: 4, SHARE: 9 } };
+  /** What the Page post a Reel makes (`{page}_{n}` for the Reel `v-n`) says: its views and the people who saw it. */
+  reelPostInsights: Record<string, number> = { post_media_view: 1600, post_total_media_view_unique: 1100 };
   fbCounts = { reactions: 41, comments: 6, shares: 3, likes: 30 };
   /** False makes insights calls fail the way a connection made before they were asked for does. */
   insightsPermission = true;
@@ -284,11 +286,15 @@ export class FakeMeta {
       if (bad) return this.err(100, `(#100) The value must be a valid insights metric: ${bad} is not available for this ${isReel ? 'Reel' : 'video'}`);
       return { data: wanted.map((name) => ({ name, period: 'lifetime', values: [{ value: source[name] }] })) };
     }
-    if ((m = /^(\d+_\d+)\/insights$/.exec(c.path))) {
-      if (!this.posts.has(m[1]!)) return this.err(100, 'Object does not exist');
+    if ((m = /^(\d+)_(\d+)\/insights$/.exec(c.path))) {
+      const reelPost = this.reels.get(`v-${m[2]}`)?.page === m[1];
+      if (!this.posts.has(`${m[1]}_${m[2]}`) && !reelPost) return this.err(100, 'Object does not exist');
       if (!this.insightsPermission) return this.err(10, '(#10) Application does not have permission for this action');
       const wanted = String(c.query.metric ?? '').split(',');
-      return { data: wanted.filter((n) => n in this.fbInsights).map((name) => ({ name, period: 'lifetime', values: [{ value: this.fbInsights[name] }] })) };
+      // Meta withdrew the impressions metrics in November 2025: asking for one fails the call.
+      if (wanted.some((n) => n.startsWith('post_impressions'))) return this.err(100, '(#100) The value must be a valid insights metric');
+      const source: Record<string, number> = reelPost ? this.reelPostInsights : this.fbInsights;
+      return { data: wanted.filter((n) => n in source).map((name) => ({ name, period: 'lifetime', values: [{ value: source[name] }] })) };
     }
     if ((m = /^(m-\d+)$/.exec(c.path))) {
       const med = this.media.get(m[1]!);
@@ -372,7 +378,11 @@ export class FakeMeta {
         return this.err(100, `(#100) Tried accessing nonexisting field (${/\bshares\b/.test(fields) ? 'shares' : 'reactions'}) on node type (Video)`);
       }
       if (p.kind === 'video' && fields.includes('likes')) {
-        return { id: m[1], likes: { data: [], summary: { total_count: this.fbCounts.likes } }, comments: { data: [], summary: { total_count: this.fbCounts.comments } } };
+        return {
+          id: m[1], likes: { data: [], summary: { total_count: this.fbCounts.likes } }, comments: { data: [], summary: { total_count: this.fbCounts.comments } },
+          // A Reel's Page post, given as Meta gives it: the bare number, without the Page in front.
+          ...(fields.includes('post_id') && reel ? { post_id: m[1]!.slice(2) } : {}),
+        };
       }
       if (fields.includes('reactions')) {
         return {
