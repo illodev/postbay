@@ -3,11 +3,11 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { DateTime } from 'luxon';
 import { Link } from 'react-router-dom';
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
-import { api, ApiError, type Account, type AccountOptionsReply, type Attempt, type CalendarData, type Capabilities, type Integrations, type Issue, type Plan, type PublicationPrize, type PublicationRow, type VersionDetail } from '../api';
+import { api, ApiError, type Account, type BrandSettings, type AccountOptionsReply, type Attempt, type CalendarData, type Capabilities, type Integrations, type Issue, type Plan, type Prize, type PublicationPrize, type PublicationRow, type VersionDetail } from '../api';
 import { getLocale, t, type Key } from '../i18n';
 import { countHashtags, countLength, countMentions, truncatePreview } from '../lib/text';
 import { ERROR_CLASS_LABEL, fmtBytes, fmtDateTime, isoToZonedInput, NETWORK_LABEL, STEP_LABEL, VISIBILITY_LABEL, zonedToIso } from '../lib/format';
-import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, Menu, MenuItem, MenuSeparator, Tip, Tipped, useConfirm, useToast } from './ui';
+import { Chip, CopyButton, Dialog, ErrorBox, errorMessage, Field, Menu, MenuItem, MenuSeparator, Select, Tip, Tipped, useConfirm, useToast } from './ui';
 import { defaultValues, NetMark, NetworkOptions, sendableOptions, type OptionValues } from './NetworkOptions';
 import { Icon as UiIcon, type IconName } from './icons';
 import { PrizeDialog } from './PrizeDialog';
@@ -294,6 +294,15 @@ export function ScheduleDialog({ version, brandId, zone, initialWhen, onClose }:
   const from = DateTime.now().setZone(zone).toISODate()!;
   const to = DateTime.now().setZone(zone).plus({ days: 28 }).toISODate()!;
   const cal = useQuery({ queryKey: ['calendar', brandId, from, to], queryFn: () => api.get<CalendarData>(`/api/brands/${brandId}/calendar?from=${from}&to=${to}`) });
+  // A prize for all of them at once, where the brand has prizes on: the library's usable ones.
+  const { data: brandSettings } = useQuery({ queryKey: ['brand', brandId], queryFn: () => api.get<BrandSettings>(`/api/brands/${brandId}`) });
+  const prizesOn = !!brandSettings?.prizes?.enabled;
+  const library = useQuery({ queryKey: ['prizes', brandId], queryFn: () => api.get<Prize[]>(`/api/brands/${brandId}/prizes`), enabled: prizesOn });
+  const usablePrizes = (library.data ?? []).filter((x) => x.usable && !x.archived);
+  const [withPrize, setWithPrize] = useState(false);
+  const [prizeId, setPrizeId] = useState<string>('');
+  const [keyword, setKeyword] = useState('');
+  const [prizeNotice, setPrizeNotice] = useState(false);
   const allowed = approvedAccountIds(version);
   const options = (accounts ?? []).filter((a) => allowed.includes(a.id));
   const accountOf = (id: string) => options.find((a) => a.id === id);
@@ -362,11 +371,15 @@ export function ScheduleDialog({ version, brandId, zone, initialWhen, onClose }:
   const issuesId = useId();
 
   const create = useMutation({
-    mutationFn: (items: Record<string, unknown>[]) => api.post<{ publications: { manual: boolean }[] }>(`/api/versions/${version.id}/publications/batch`, { items }),
+    mutationFn: (body: { items: Record<string, unknown>[]; prize?: Record<string, unknown> }) =>
+      api.post<{ publications: { manual: boolean }[]; prize_rules?: { mode: string }[] }>(`/api/versions/${version.id}/publications/batch`, body),
     onSuccess: (r) => {
       invalidate();
       const made = r.publications;
-      toast(made.length > 1 ? t('publications.schedule.doneMany', { count: made.length }) : made[0]?.manual ? t('publications.schedule.doneManual') : t('publications.schedule.doneAuto'));
+      const rules = r.prize_rules ?? [];
+      toast(rules.length ? t('publications.prize.done', { count: made.length })
+        : made.length > 1 ? t('publications.schedule.doneMany', { count: made.length }) : made[0]?.manual ? t('publications.schedule.doneManual') : t('publications.schedule.doneAuto'));
+      if (rules.some((x) => x.mode === 'public_link')) toast(t('publications.prize.pinHint'));
       onClose();
     },
     // The account that stopped it comes to the front.
@@ -398,7 +411,15 @@ export function ScheduleDialog({ version, brandId, zone, initialWhen, onClose }:
         options: sendableOptions(fieldsOf(id), planOf(id)?.placement ?? (d.placement || undefined), valuesOf(id)),
       });
     }
-    create.mutate(items);
+    if (withPrize && (!prizeId || !keyword.trim())) {
+      setFormError(t('publications.prize.needs'));
+      return;
+    }
+    if (withPrize && !prizeNotice) {
+      setFormError(t('publications.prize.needsNotice'));
+      return;
+    }
+    create.mutate({ items, ...(withPrize ? { prize: { prizeId, keyword: keyword.trim(), noticeConfirmed: prizeNotice } } : {}) });
   };
   const toggle = (id: string) => {
     setFormError(null);
@@ -492,6 +513,35 @@ export function ScheduleDialog({ version, brandId, zone, initialWhen, onClose }:
             free={free}
             issuesId={issuesId}
           />
+        )}
+
+        {prizesOn && (
+          <Section title={t('publications.prize.title')} hint={t('publications.prize.hint')}>
+            <label className="check">
+              <input type="checkbox" checked={withPrize} onChange={(e) => setWithPrize(e.target.checked)} />
+              <span>{several ? t('publications.prize.addMany', { count: selected.length }) : t('publications.prize.add')}</span>
+            </label>
+            {withPrize && (library.data && usablePrizes.length === 0 ? (
+              <p className="muted small">{t('publications.prize.none')}</p>
+            ) : (
+              <div className="pb-prize">
+                <Field label={t('publications.prize.which')}>
+                  <Select value={prizeId || undefined} onChange={setPrizeId} label={t('publications.prize.which')} placeholder={t('publications.prize.choose')}
+                    options={usablePrizes.map((x) => ({ value: x.id, label: x.name }))} />
+                </Field>
+                <Field label={t('publications.prize.keyword')} hint={t('publications.prize.keywordHint')}>
+                  <input type="text" value={keyword} maxLength={60} onChange={(e) => setKeyword(e.target.value)} placeholder={t('prizes.rule.keywordPlaceholder')} />
+                </Field>
+                <label className="check">
+                  <input type="checkbox" checked={prizeNotice} onChange={(e) => setPrizeNotice(e.target.checked)} />
+                  <span>
+                    {several ? t('publications.prize.confirmMany') : t('publications.prize.confirm')}
+                    <span className="muted small" style={{ display: 'block' }}>{t('publications.prize.messageHint')}</span>
+                  </span>
+                </label>
+              </div>
+            ))}
+          </Section>
         )}
 
         {formError && <div className="notice notice-bad" role="alert">{formError}</div>}

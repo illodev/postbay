@@ -6,7 +6,7 @@ import type { Ctx } from '../context.js';
 import { sha256Hex } from '../crypto.js';
 import type { Queryable, Row } from '../db.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../errors.js';
-import { english, msg, tr, type Localized } from '../i18n/index.js';
+import { english, localeOf, msg, t, tr, type Localized } from '../i18n/index.js';
 import { audit } from './audit.js';
 import { connectorEnv, loadConnectorAccount, subscribeEvents } from './connectors.js';
 
@@ -279,16 +279,27 @@ export async function setRule(ctx: Ctx, p: Principal, publicationId: string, raw
   const view = await saveRule(ctx, p, publicationId, input);
   // A running rule that answers by private message relies on Meta pushing the comments: make sure the app is subscribed to the
   // account's events (the worker still reads them every few minutes, so this is best effort).
-  if (input.active && view.mode === 'private_reply') {
-    const acc = await ctx.db.one(
-      `select a.id, a.provider_data from publication p join social_account a on a.id = p.social_account_id where p.id = $1`, [publicationId]);
-    if (acc && acc.provider_data?.events?.subscribed !== true) await subscribeEvents(ctx, acc.id);
-  }
+  if (input.active && view.mode === 'private_reply') await ensureSubscribed(ctx, publicationId);
   return view;
 }
 
 async function saveRule(ctx: Ctx, p: Principal, publicationId: string, input: z.infer<typeof ruleInput>) {
-  return ctx.db.tx(async (db) => {
+  return ctx.db.tx((db) => saveRuleIn(ctx, db, p, publicationId, input));
+}
+
+/** A running rule that answers by private message relies on Meta pushing the comments: the app subscribed to the account's events. */
+export async function ensureSubscribed(ctx: Ctx, publicationId: string) {
+  const acc = await ctx.db.one(
+    `select a.id, a.provider_data from publication p join social_account a on a.id = p.social_account_id where p.id = $1`, [publicationId]);
+  if (acc && acc.provider_data?.events?.subscribed !== true) await subscribeEvents(ctx, acc.id);
+}
+
+/** The brand's usual private message, in its language. */
+export const defaultMessage = (brandLocale: string | null | undefined) => t(localeOf(brandLocale), 'prize.defaultMessage');
+
+/** Sets a post's rule inside a transaction that is already open: on its own, or with the posts it was scheduled with (all or none). */
+export async function saveRuleIn(ctx: Ctx, db: Queryable, p: Principal, publicationId: string, input: z.infer<typeof ruleInput>) {
+  {
     await db.query('select 1 from publication where id = $1 for update', [publicationId]);
     const pub = await loadPublication(db, publicationId);
     await authorize(db, p, pub.brand_id, 'publication.schedule');
@@ -332,7 +343,7 @@ async function saveRule(ctx: Ctx, p: Principal, publicationId: string, input: z.
       before ? { keyword: before.keyword, prize_id: before.prize_id, active: before.active } : null,
       { keyword: row.keyword, prize_id: row.prize_id, active: row.active, mode, publication_id: publicationId });
     return ruleView({ ...ctx, db } as Ctx, row, pub.network, pub.manual);
-  });
+  }
 }
 
 export async function listDeliveries(ctx: Ctx, p: Principal, publicationId: string) {

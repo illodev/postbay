@@ -53,6 +53,7 @@ links to the same thing in the web app, times in the brand's zone (`at_local`) a
 | `start_upload`, `finish_upload` | A new version in two steps, see below. `start_uploads` and `finish_uploads` do the same for up to 50 variants per call, each item answering on its own |
 | `schedule_publication` | Schedule an **approved** version on an account it was approved for, at `YYYY-MM-DDTHH:mm` in the brand's time; `dry_run` says first how it would go out and what would stop it |
 | `move_publication`, `cancel_publication` | Move or edit (time, caption, first comment, network settings such as a YouTube title), or cancel, a scheduled publication |
+| `list_prizes`, `create_prize`, `get_prize_rule`, `set_prize` | The [prize](prizes.md) library (add one from a studio piece with an approved version, or a link), and the prize on a scheduled or published post: keyword, message (the brand's usual one by default), and `notice_confirmed`, the person's word that the post's text says the reply is automatic, without which it does not run. Where the network cannot message people `set_prize` returns the public page's link (`public_url`) and says to put it in the first comment. Approvers and admins |
 | `approve_version`, `request_changes` | Decide on a version, only where the brand allows it (below) |
 
 **Uploading.** Postbay cannot read the person's disk and does not fetch files from addresses it is given (that would let anyone make the

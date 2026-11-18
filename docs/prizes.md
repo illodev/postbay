@@ -58,6 +58,17 @@ version may or may not have been approved.
   (`confirmed`, `paused`, or null when the post has no rule or its text did not change), and `prize.rule_changed` is audited with
   `because: publication_text_changed`.
 
+### Several posts at once, and from an assistant
+
+The schedule dialog offers *Give it a prize* for every ticked account at once: a prize of the library, the keyword, and the
+confirmation that every text says the reply is automatic (`POST /api/versions/:id/publications/batch` with `prize`). The rules are set
+in the same transaction as the posts: if one cannot run (prizes off, no confirmation, an account without the permission to message),
+nothing is scheduled and the refusal names the account. The message is the brand's usual one, in its language; each post's own is
+changed afterwards in *Prize…*.
+
+An assistant does the whole way with `list_prizes`, `create_prize` (from the piece of a guide with an approved version), and
+`set_prize` on each publication, passing `notice_confirmed` only on the person's word ([MCP](mcp.md)).
+
 ## How a comment becomes a prize
 
 1. **A comment arrives.** Meta pushes it to `$APP_URL/api/meta/webhook` (signed with the app secret; the handshake uses

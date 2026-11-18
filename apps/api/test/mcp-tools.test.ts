@@ -38,7 +38,7 @@ describe('the tools', () => {
       'finish_upload', 'finish_uploads', 'get_piece', 'get_version', 'list_accounts', 'list_brands', 'list_campaigns', 'list_comments',
       'list_notifications', 'list_pieces', 'move_publication', 'pending_for_me', 'remove_variant_style', 'reply_to_comment', 'request_changes',
       'resolve_comment', 'schedule_publication', 'start_upload', 'start_uploads', 'update_piece',
-    ]);
+    ].concat(['create_prize', 'get_prize_rule', 'list_prizes', 'set_prize']).sort());
     const byName = Object.fromEntries(r.body.result.tools.map((t: any) => [t.name, t]));
     expect(byName.list_pieces.annotations.readOnlyHint).toBe(true);
     expect(byName.cancel_publication.annotations.destructiveHint).toBe(true);
@@ -474,6 +474,46 @@ describe('scheduling', () => {
     } finally {
       await allow(false);
     }
+  });
+});
+
+describe('prizes, the whole way from an assistant', () => {
+  it('adds a piece to the library, puts it on a scheduled post with its keyword only on the person\'s word, and says how it is delivered', async () => {
+    await env.call(env.users.admin, 'PATCH', brandUrl(), { prizes: { enabled: true, retention_days: 30, auto_notice: 'Mensaje automático.' } });
+    // The prize: a piece with an approved version.
+    const guide = await inReview();
+    expect((await env.approve(env.users.approver, guide.versionId, [env.accounts.instagram])).status).toBe(201);
+    expect((await tool(env, as.reviewer.access, 'create_prize', { name: 'La guía', piece_id: guide.pieceId })).error.code).toBe('forbidden');
+    expect((await tool(env, as.approver.access, 'create_prize', { name: 'La guía' })).error.code).toBe('piece_or_url');
+    const unapproved = await inReview();
+    expect((await tool(env, as.approver.access, 'create_prize', { name: 'Sin aprobar', piece_id: unapproved.pieceId })).error.code).toBe('no_approved_version');
+    const made = await tool(env, as.approver.access, 'create_prize', { name: 'La guía', piece_id: guide.pieceId });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    expect(made.data.prize).toMatchObject({ name: 'La guía', kind: 'piece', usable: true, piece: { id: guide.pieceId } });
+    const listed = await tool(env, as.approver.access, 'list_prizes', {});
+    expect(listed.data.prizes.map((x: any) => x.id)).toContain(made.data.prize.id);
+
+    // The post it goes on.
+    const reel = await inReview();
+    expect((await env.approve(env.users.approver, reel.versionId, [env.accounts.instagram])).status).toBe(201);
+    const pub = await tool(env, as.approver.access, 'schedule_publication', { version_id: reel.versionId, account_id: env.accounts.instagram, at: localIn(6), text: 'Comenta GUÍA. La respuesta es automática.' });
+    expect(pub.ok, JSON.stringify(pub.error)).toBe(true);
+    const args = { publication_id: pub.data.id, prize_id: made.data.prize.id, keyword: 'GUÍA' };
+    // Without the person's word about the text, nothing runs.
+    expect((await tool(env, as.approver.access, 'set_prize', { ...args, notice_confirmed: false })).error.code).toBe('notice_required');
+    const set = await tool(env, as.approver.access, 'set_prize', { ...args, notice_confirmed: true });
+    expect(set.ok, JSON.stringify(set.error)).toBe(true);
+    // A post a person publishes by hand cannot be answered by message: a public page, whose link goes in a comment.
+    expect(set.data).toMatchObject({ keyword: 'GUÍA', running: true, delivery: 'public page' });
+    expect(set.data.public_url).toMatch(/\/prize\//);
+    expect(set.data.next).toContain(set.data.public_url);
+    // The brand's usual message, in its language, with the link.
+    expect(set.data.message).toContain('{{link}}');
+    expect((await viaOf('prize.rule_set', (await env.db.one('select id from prize_rule where publication_id = $1', [pub.data.id]))!.id))!.via).toMatchObject({ client_name: 'Claude' });
+    const seen = await tool(env, as.approver.access, 'get_prize_rule', { publication_id: pub.data.id });
+    expect(seen.data).toMatchObject({ prizes_on: true, rule: { keyword: 'GUÍA', running: true } });
+    expect((await tool(env, as.producer.access, 'set_prize', { ...args, notice_confirmed: true })).error.code).toBe('forbidden');
+    await env.call(env.users.admin, 'PATCH', brandUrl(), { prizes: { enabled: false, retention_days: 30, auto_notice: 'Mensaje automático.' } });
   });
 });
 

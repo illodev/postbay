@@ -16,6 +16,11 @@ Only an approved version can be scheduled, and only on an account it was approve
    limits for the text, and anything that would stop it. Show that to the person with the text and first comment you propose.
 4. **After their go-ahead**, call it again without `dry_run`. Report the time in the brand's zone, who publishes it, and the `url`.
 5. **Moving or cancelling:** `move_publication` / `cancel_publication`, always after the person confirms which post and what change.
+6. **The prize, if the piece has one** (its brief usually says which prize and which keyword the caption asks for): `list_prizes`, or
+   `create_prize` from the prize's piece once (it needs an approved version). Then `set_prize` on every publication of the piece. Show the
+   person each text and ask whether it says the reply is automatic and what is done with people's data; pass `notice_confirmed: true` only
+   on their word. Where `set_prize` returns a `public_url` (networks without private messages), put it in the first comment with
+   `move_publication`, or tell the person to pin a comment with it.
 
 If the account is not connected for automatic publishing, Postbay tells a person when it is time and keeps the files and text ready
 for them.

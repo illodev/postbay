@@ -212,6 +212,42 @@ describe('the rule on a post', () => {
     expect(audits.map((a) => a.after.notice_confirmed)).toEqual([false, true]);
   });
 
+  it('goes on every account of a batch at once, in the same transaction: all of them with the prize, or nothing scheduled', async () => {
+    const { users, call, makePiece, newVersion, approve } = env;
+    const { variantId } = await makePiece(users.producer, 'video', '9:16');
+    const v = await newVersion(users.producer, variantId, [{ name: 'reel.mp4', mime: 'video/mp4', kind: 'video' }]);
+    await approve(users.approver, v.body.id, [ig, yt]);
+    prizeId ??= await linkPrize();
+    const items = [
+      { accountId: ig, scheduledAt: at(3 * DAY).toISOString(), text: 'Comment RECIPE. Replies are automatic.' },
+      { accountId: yt, scheduledAt: at(3 * DAY).toISOString(), text: 'The recipe book is in the first comment.', options: { madeForKids: 'no' } },
+    ];
+    const batch = (prize: Record<string, unknown>) => call(users.approver, 'POST', `/api/versions/${v.body.id}/publications/batch`, { items, prize });
+    const count = async () => Number((await env.db.one('select count(*) as n from publication where version_id = $1', [v.body.id]))!.n);
+    // Without the person's word about the texts, nothing is scheduled.
+    const unconfirmed = await batch({ prizeId, keyword: 'Recipe' });
+    expect(unconfirmed.status).toBe(409);
+    expect(unconfirmed.body.error.code).toBe('notice_required');
+    expect(await count()).toBe(0);
+    // Nor with prizes off for the brand.
+    await call(admin(), 'PATCH', brandUrl(''), { prizes: { enabled: false, retention_days: 30, auto_notice: 'This is an automatic message.' } });
+    expect((await batch({ prizeId, keyword: 'Recipe', noticeConfirmed: true })).body.error.code).toBe('prizes_off');
+    expect(await count()).toBe(0);
+    await call(admin(), 'PATCH', brandUrl(''), { prizes: { enabled: true, retention_days: 30, auto_notice: 'This is an automatic message.' } });
+
+    const ok = await batch({ prizeId, keyword: 'Recipe', noticeConfirmed: true });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+    expect(ok.body.publications).toHaveLength(2);
+    const byAccount = Object.fromEntries(ok.body.publications.map((x: any, i: number) => [x.social_account_id, ok.body.prize_rules[i]]));
+    expect(byAccount[ig]).toMatchObject({ mode: 'private_reply', keyword: 'Recipe', public_url: null });
+    expect(byAccount[yt]).toMatchObject({ mode: 'public_link', keyword: 'Recipe' });
+    expect(byAccount[yt].public_url).toMatch(/\/prize\//);
+    const rules = await env.db.query('select message, notice_confirmed, active from prize_rule r join publication p on p.id = r.publication_id where p.version_id = $1', [v.body.id]);
+    expect(rules).toHaveLength(2);
+    // The brand's usual message, in its language, with the link.
+    expect(rules.every((r) => r.notice_confirmed && r.active && r.message.includes('{{link}}'))).toBe(true);
+  });
+
   it('wants the link in the message, and a keyword with something in it', async () => {
     const pub = await published(ig);
     prizeId ??= await linkPrize();

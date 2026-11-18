@@ -18,7 +18,7 @@ a tab with its own date and time, text, first comment, kind of post and network 
 text of the one on show, and from then on each goes its own way. One press schedules them all, or none
 (`POST /api/versions/:id/publications/batch`, `{ items: [...] }`, each item what `POST /api/versions/:id/publications` takes, one per
 account, up to 20): every item goes through every check scheduling one does, in one transaction, and a refusal says which item it was for
-(`details.item`, from 0, and `details.accountId`); the dialog brings that account to the front.
+(`details.item`, from 0, and `details.accountId`); the dialog brings that account to the front. With prizes on, the dialog can also give all of them one prize ([prizes](prizes.md#several-posts-at-once-and-from-an-assistant)).
 
 Scheduling is refused while the brand is paused, on a blocked day, for a time that has passed, or for a version whose stored files are no
 longer the approved ones. A version can be scheduled even while a new version of the same variant is being uploaded: the variant's lock

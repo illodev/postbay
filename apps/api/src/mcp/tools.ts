@@ -15,6 +15,7 @@ import { loadBrand, loadVersion, rulesOf } from '../services/loaders.js';
 import { describeNotification } from '../services/notify.js';
 import * as overview from '../services/overview.js';
 import * as pieces from '../services/pieces.js';
+import * as prizes from '../services/prizes.js';
 import * as pubs from '../services/publications.js';
 import * as versions from '../services/versions.js';
 import type { McpCaller } from './oauth.js';
@@ -42,7 +43,13 @@ Working on a review (making the next version from people's comments):
 2. get_version for the files (\`download_url\`), or work on the piece's own project if it has one (get_piece → source).
 3. Make the new files, then start_upload and finish_upload on the same variant, with \`notes\` saying what changed and \`resolves_comment_ids\` listing only the threads the new version really fixes.
 4. reply_to_comment on every open thread with \`kind\`: fixed, cannot_do (say why) or needs_human.
-5. Never approve the result. If you act as the person who will approve it, tell them they cannot approve their own upload: an agent that makes versions should sign in to Postbay with an account of its own (a member with the producer role).`;
+5. Never approve the result. If you act as the person who will approve it, tell them they cannot approve their own upload: an agent that makes versions should sign in to Postbay with an account of its own (a member with the producer role).
+
+Prizes (comment a keyword, get a file): many pieces carry one, and their caption asks people to comment a keyword (the piece's brief usually says which prize and which keyword). Setting one up, after scheduling:
+1. The prize is usually a PDF piece of the brand, and it hands out that piece's latest approved version: if it has none, it has to be approved first, like any version.
+2. list_prizes; if the prize is not in the library yet, create_prize from that piece (once; then it is reused).
+3. set_prize on every publication of the piece, with the prize and the keyword. Before it, show the person the publication's text and ask whether it tells people the reply is automatic and what is done with their data; pass notice_confirmed true only on their word. If it does not, offer to change the text with move_publication first.
+4. On Instagram and Facebook the file goes by private message. On the other networks set_prize returns a public page (public_url): put its link in the first comment where the network has one (move_publication), or tell the person to pin a comment with it.`;
 
 type Out = Record<string, unknown>;
 
@@ -808,6 +815,97 @@ export function buildMcpServer(ctx: Ctx, caller: McpCaller, locale: Locale): Mcp
   }, run(async (a) => {
     const pub = await pubs.cancelPublication(ctx, p, a.publication_id);
     return { id: pub.id, status: pub.status };
+  }));
+
+  // ───────────────────────────── prizes ─────────────────────────────
+
+  /** A prize of the library as a model reads it. */
+  const prizeOut = (x: Record<string, any>) => ({
+    id: x.id, name: x.name, kind: x.kind, usable: x.usable, why_not_usable: x.unavailable_reason ?? null, archived: x.archived,
+    ...(x.piece ? { piece: { id: x.piece.id, title: x.piece.title, url: link.piece(x.piece.id) } } : {}),
+    ...(x.version ? { hands_out: { version_number: x.version.number, file_name: x.version.file_name } } : {}),
+    ...(x.active_rules !== undefined ? { on_posts: x.active_rules } : {}),
+  });
+  /** A post's rule as a model reads it, with what to do next where the network cannot message people. */
+  const ruleOut = (r: Record<string, any> | null, mode: string) => r ? {
+    keyword: r.keyword, active: r.active, notice_confirmed: r.notice_confirmed, running: !!(r.active && r.notice_confirmed),
+    prize: r.prize ? prizeOut(r.prize) : null, message: r.message, link_hours: r.link_hours,
+    delivery: mode === 'private_reply' ? 'private message to whoever comments the keyword' : 'public page',
+    public_url: mode === 'public_link' ? r.public_url : null, public_until: mode === 'public_link' ? iso(r.public_expires_at) : null,
+    deliveries: r.deliveries,
+  } : null;
+
+  server.registerTool('list_prizes', {
+    title: 'List the prize library',
+    description: 'The prizes of a brand (a file, a link, or a studio piece whose latest approved version is handed out), whether each can be used now, and on how many posts it runs. Approvers and admins.',
+    inputSchema: { brand: brandParam },
+    annotations: read,
+  }, run(async (a) => {
+    const b = await brandOf(a.brand);
+    const list = await prizes.listPrizes(ctx, p, b.id);
+    return { brand: b.name, prizes: list.map(prizeOut), url: link.settings('prizes') };
+  }));
+
+  server.registerTool('create_prize', {
+    title: 'Add a prize to the library',
+    description: 'Adds a prize to the brand\'s library, as the person: a studio piece (usually a PDF guide; it must have an approved version, and whoever downloads gets its latest approved version) or a link. Check list_prizes first: a prize is made once and reused on every post. Approvers and admins.',
+    inputSchema: {
+      brand: brandParam,
+      name: z.string().trim().min(1).max(120).describe('What people are told they get, e.g. the guide\'s title'),
+      piece_id: uuid('The piece to hand out').optional(),
+      url: z.string().url().max(2000).optional().describe('Instead of a piece: a link somewhere else'),
+    },
+    annotations: write,
+  }, run(async (a) => {
+    const b = await brandOf(a.brand);
+    if (!a.piece_id === !a.url) throw badRequest('piece_or_url', 'Give either piece_id or url');
+    const r = await prizes.createPrize(ctx, p, b.id, a.piece_id ? { kind: 'piece', name: a.name, pieceId: a.piece_id } : { kind: 'link', name: a.name, url: a.url });
+    return { brand: b.name, prize: prizeOut(r.prize), url: link.settings('prizes') };
+  }));
+
+  server.registerTool('get_prize_rule', {
+    title: 'See the prize on a publication',
+    description: 'Whether a publication carries a prize, with its keyword, whether it is running (it runs only once a person confirmed the post\'s text says the reply is automatic), how it is delivered there, and how many people got it. Approvers and admins.',
+    inputSchema: { publication_id: uuid('The publication id') },
+    annotations: read,
+  }, run(async (a) => {
+    const r = await prizes.getRule(ctx, p, a.publication_id);
+    return {
+      publication_id: a.publication_id, prizes_on: r.prizes_enabled, delivery: r.mode === 'private_reply' ? 'private message' : 'public page',
+      can_message: r.can_message, rule: ruleOut(r.rule, r.mode), automatic_note: r.auto_notice,
+    };
+  }));
+
+  server.registerTool('set_prize', {
+    title: 'Put a prize on a publication',
+    description: 'Gives a scheduled or published publication a prize, as the person: whoever comments the keyword gets the prize (by private message on Instagram and Facebook; elsewhere through a public page whose link you then put in the first comment or ask the person to pin). Calling it again changes the rule. The rule runs only with notice_confirmed: before calling, show the person the publication\'s text and ask whether it tells people the reply is automatic and what is done with their data, and pass true only on their word. Approvers and admins.',
+    inputSchema: {
+      publication_id: uuid('The publication id (from schedule_publication or calendar)'),
+      prize_id: uuid('A prize of the library (list_prizes or create_prize)'),
+      keyword: z.string().trim().min(1).max(60).describe('The word people comment, as the caption says it (any case, accents ignored, whole word)'),
+      message: z.string().trim().min(1).max(700).optional().describe('The private message, with {{link}} (required), and {{name}}, {{prize}}, {{hours}} if wanted. Leave out for the brand\'s usual one. A note that it is automatic is added to every message.'),
+      link_hours: z.number().int().min(1).max(720).optional().describe('How long each person\'s link works (72 by default)'),
+      public_days: z.number().int().min(1).max(365).optional().describe('Where there is no private message: how many days the public page stays open (30 by default)'),
+      notice_confirmed: z.boolean().describe('The person\'s word that the post\'s text tells people the reply is automatic and what is done with their data. Never assume it.'),
+      active: z.boolean().default(true).describe('false switches the prize off on this post'),
+    },
+    annotations: write,
+  }, run(async (a) => {
+    const pub = await ctx.db.one<{ brand_id: string; piece_id: string; network: string; locale: string }>(
+      `select p.brand_id, p.id as piece_id, sa.network, b.locale from publication pub join variant v on v.id = pub.variant_id join piece p on p.id = v.piece_id
+       join social_account sa on sa.id = pub.social_account_id join brand b on b.id = p.brand_id where pub.id = $1`, [a.publication_id]);
+    if (!pub) throw new AppError(404, 'not_found', 'Not found: check the publication id');
+    const message = a.message ?? prizes.defaultMessage(pub.locale);
+    const rule = await prizes.setRule(ctx, p, a.publication_id, {
+      prizeId: a.prize_id, keyword: a.keyword, message, noticeConfirmed: a.notice_confirmed, active: a.active,
+      ...(a.link_hours !== undefined ? { linkHours: a.link_hours } : {}), ...(a.public_days !== undefined ? { publicDays: a.public_days } : {}),
+    });
+    const out = ruleOut(rule, rule.mode)!;
+    return {
+      publication_id: a.publication_id, network: pub.network, ...out,
+      next: rule.mode === 'public_link' && out.running ? `Put ${rule.public_url} in the post's first comment where the network has one (move_publication), or ask the person to pin a comment with it.` : null,
+      url: link.piece(pub.piece_id),
+    };
   }));
 
   // ───────────────────────────── deciding (behind the brand's setting) ─────────────────────────────

@@ -16,6 +16,7 @@ import { notifyRoles } from './notify.js';
 import { planPublication, wakeDependents, type Plan } from './publisher.js';
 import { loadVariant } from './loaders.js';
 import { storedFilesMatch } from './versions.js';
+import * as prizes from './prizes.js';
 
 const iso = z.iso.datetime({ offset: true });
 
@@ -40,6 +41,16 @@ export const validateInput = scheduleInput.partial({ scheduledAt: true });
 /** Several accounts at once, one item each, every item with its own text, time and settings. */
 export const scheduleManyInput = z.object({
   items: z.array(scheduleInput).min(1).max(20),
+  /**
+   * The same prize on every one of them: whoever comments the keyword gets it. `noticeConfirmed` is the person's word that every text
+   * tells people the reply is automatic and what is done with their data; the message is the brand's usual one unless given.
+   */
+  prize: z.object({
+    prizeId: z.string().uuid(),
+    keyword: z.string().trim().min(1).max(60),
+    message: z.string().trim().min(1).max(700).optional(),
+    noticeConfirmed: z.boolean().default(false),
+  }).optional(),
 });
 
 export const patchInput = z.object({
@@ -199,7 +210,11 @@ export async function scheduleMany(ctx: Ctx, p: Principal, versionId: string, ra
   const input = scheduleManyInput.parse(raw);
   const accounts = input.items.map((i) => i.accountId);
   if (new Set(accounts).size !== accounts.length) throw badRequest('duplicate_account', msg('error.pub.duplicateAccount'));
-  return ctx.db.tx(async (db) => {
+  const named = (err: unknown, item: number, accountId: string) => {
+    if (err instanceof AppError) err.details = { ...(err.details && typeof err.details === 'object' ? err.details : {}), item, accountId };
+    return err;
+  };
+  const out = await ctx.db.tx(async (db) => {
     const version = await loadVersion(db, versionId);
     const by = await schedulerOf(ctx, db, p, version.brand_id, version.piece_id);
     const publications: Row[] = [];
@@ -207,12 +222,32 @@ export async function scheduleMany(ctx: Ctx, p: Principal, versionId: string, ra
       try {
         publications.push(await scheduleVersion(ctx, db, p, versionId, one, by));
       } catch (err) {
-        if (err instanceof AppError) err.details = { ...(err.details && typeof err.details === 'object' ? err.details : {}), item, accountId: one.accountId };
-        throw err;
+        throw named(err, item, one.accountId);
       }
     }
-    return { publications };
+    // The prize goes on every one of them in the same transaction: a post its rule cannot run on schedules nothing.
+    const prizeRules: Row[] = [];
+    if (input.prize) {
+      const brand = await loadBrand(db, version.brand_id);
+      const rule = prizes.ruleInput.parse({
+        prizeId: input.prize.prizeId, keyword: input.prize.keyword, message: input.prize.message ?? prizes.defaultMessage(brand.locale as string),
+        noticeConfirmed: input.prize.noticeConfirmed, active: true,
+      });
+      for (const [item, pub] of publications.entries()) {
+        try {
+          prizeRules.push(await prizes.saveRuleIn(ctx, db, p, pub.id as string, rule));
+        } catch (err) {
+          throw named(err, item, input.items[item]!.accountId);
+        }
+      }
+    }
+    return {
+      publications,
+      prize_rules: prizeRules.map((r) => ({ publication_id: r.publication_id as string, mode: r.mode as string, keyword: r.keyword as string, public_url: r.mode === 'public_link' ? (r.public_url as string) : null })),
+    };
   });
+  for (const r of out.prize_rules) if (r.mode === 'private_reply') await prizes.ensureSubscribed(ctx, r.publication_id);
+  return out;
 }
 
 /** Whether this principal may schedule in the brand, and as whom. */

@@ -282,3 +282,8 @@ button.pb-detail-line:hover .pb-detail-more { color: var(--text); }
   .pb-file { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'kind size' 'name btn'; }
   .pb-att-time { margin-left: 0; flex-basis: 100%; }
 }
+
+/* The prize of the schedule dialog: which one and its keyword side by side, the confirmation under them. */
+.pb-prize { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-top: 12px; }
+.pb-prize > .check { grid-column: 1 / -1; }
+@media (max-width: 640px) { .pb-prize { grid-template-columns: minmax(0, 1fr); } }
